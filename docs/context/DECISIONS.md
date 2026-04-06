@@ -33,7 +33,7 @@ Use Vite + React + TypeScript for the frontend and an Express + TypeScript serve
 ### Consequences
 
 - (+) Fast frontend developer experience with a boring, well-known toolchain.
-- (+) A single Node deployment target works well on Azure App Service.
+- (+) A single Node runtime fits naturally in a container image for Azure Container Apps.
 - (-) Frontend and backend build outputs must be coordinated in CI.
 
 ### Alternatives Considered
@@ -70,7 +70,7 @@ Copy the ai-landscape template into Lucifer and customize the key architecture, 
 
 ---
 
-## ADR-003: Deploy through Azure App Service with GitHub Actions
+## ADR-003: Deploy Docker images through Azure Container Apps with GitHub Actions
 
 **Date**: 2026-04-06
 **Status**: Accepted
@@ -78,19 +78,19 @@ Copy the ai-landscape template into Lucifer and customize the key architecture, 
 
 ### Context
 
-The app needs a deployment path to Azure that fits a single Node runtime and can be automated from GitHub.
+The app needs a deployment path to Azure that fits a single Node runtime, embraces containerization, and can be automated from GitHub.
 
 ### Decision
 
-Deploy the built Node application to Azure App Service using a dedicated GitHub Actions workflow driven by a publish profile secret and app-name repository variable.
+Build a Docker image from the repository and deploy it to Azure Container Apps using GitHub Actions plus Azure credentials and Azure Container Registry.
 
 ### Consequences
 
-- (+) Deployment stays close to the application runtime and is easy to trigger from GitHub.
+- (+) Deployment stays close to the application runtime and uses the same Docker artifact across environments.
 - (+) CI and deployment conventions are visible in the repository.
-- (-) Deployment requires repository-level Azure credentials to be configured.
+- (-) Deployment requires repository-level Azure credentials and registry configuration.
 
 ### Alternatives Considered
 
-- **Azure Static Web Apps**: Rejected because the starter includes an Express runtime.
+- **Azure App Service source deployment**: Rejected because the project now standardizes on container delivery.
 - **Manual portal deployments**: Rejected because they are harder to reproduce and review.

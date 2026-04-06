@@ -46,18 +46,18 @@ export function App() {
         <h1>Lucifer</h1>
         <p className="hero-copy">
           A Node + React starter wired for local development, GitHub Actions,
-          and Azure App Service deployment.
+          and Docker-based Azure Container Apps deployment.
         </p>
         <div className="hero-actions">
           <a href="/api/health" target="_blank" rel="noreferrer">
             API health
           </a>
           <a
-            href="https://learn.microsoft.com/azure/app-service/"
+            href="https://learn.microsoft.com/azure/container-apps/"
             target="_blank"
             rel="noreferrer"
           >
-            Azure App Service docs
+            Azure Container Apps docs
           </a>
         </div>
       </section>

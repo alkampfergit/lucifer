@@ -17,7 +17,7 @@
 | `web-shell` | B | Starter happy path + boundary validation | Current | No end-to-end browser flow yet | 2026-04-06 |
 | `platform-api` | B | Health endpoint covered | Current | No persistent storage or auth yet | 2026-04-06 |
 | `shared` | B | Not applicable yet | Current | Domain reserved for future contracts | 2026-04-06 |
-| CI / deployment | B | Lint, test, build, deploy workflow present | Current | Azure publish profile must be configured | 2026-04-06 |
+| CI / deployment | B | Lint, test, build, Docker validation, deploy workflow present | Current | Azure credentials and registry settings must be configured | 2026-04-06 |
 
 ## Update Rules
 

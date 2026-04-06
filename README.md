@@ -1,6 +1,6 @@
 # Lucifer
 
-Lucifer is a starter Node + React web application bootstrapped with the ai-landscape harness-engineering template. It ships with a Vite frontend, an Express backend, CI checks, and an Azure App Service deployment workflow.
+Lucifer is a starter Node + React web application bootstrapped with the ai-landscape harness-engineering template. It ships with a Vite frontend, an Express backend, CI checks, a Docker image, and an Azure Container Apps deployment workflow.
 
 ## Stack
 
@@ -27,17 +27,21 @@ The Vite frontend runs on `http://localhost:5173` and proxies `/api/*` requests 
 - `npm run lint` — run ESLint across the repo
 - `npm run test` — run unit and integration tests
 - `npm run check:structure` — verify layered domain imports
+- `docker build -t lucifer:test .` — build the production container locally
 
 ## Azure deployment
 
-The repo includes `.github/workflows/azure-webapp.yml` for Azure App Service deployment.
+The repo includes `.github/workflows/azure-container-apps.yml` for Azure Container Apps deployment via Docker.
 
 Configure these GitHub settings before using it:
 
-- Repository variable: `AZURE_WEBAPP_NAME`
-- Repository secret: `AZURE_WEBAPP_PUBLISH_PROFILE`
+- Repository secret: `AZURE_CREDENTIALS`
+- Repository variable: `AZURE_CONTAINER_APP_NAME`
+- Repository variable: `AZURE_CONTAINER_APP_ENVIRONMENT`
+- Repository variable: `AZURE_CONTAINER_REGISTRY_NAME`
+- Repository variable: `AZURE_RESOURCE_GROUP`
 
-Then either push to `main` or trigger the workflow manually. Azure should use `npm start` as the startup command.
+Then either push to `main` or trigger the workflow manually. The workflow builds the Docker image from `Dockerfile`, pushes it to Azure Container Registry, and updates the target Container App.
 
 ## Repository structure
 
@@ -49,8 +53,9 @@ Then either push to `main` or trigger the workflow manually. Azure should use `n
 │   ├── PULL_REQUEST_TEMPLATE.md
 │   ├── copilot-instructions.md
 │   └── workflows/
-│       ├── azure-webapp.yml
+│       ├── azure-container-apps.yml
 │       └── ci.yml
+├── .dockerignore
 ├── docs/
 │   ├── architecture/
 │   ├── context/
@@ -69,6 +74,7 @@ Then either push to `main` or trigger the workflow manually. Azure should use `n
 ├── AGENTS.md
 ├── BOOTSTRAP.md
 ├── CLAUDE.md
+├── Dockerfile
 ├── README.md
 └── package.json
 ```

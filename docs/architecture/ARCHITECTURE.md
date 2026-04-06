@@ -57,8 +57,8 @@ Anti-patterns:
 | Event store | None | Not needed for the initial starter |
 | Cache | None | Add only when a concrete need exists |
 | Message bus | None | Cross-domain communication is synchronous today |
-| CI/CD | GitHub Actions | `ci.yml` validates and `azure-webapp.yml` deploys |
-| Observability | Console logs + Azure App Service metrics | Expand to structured telemetry when features grow |
+| CI/CD | GitHub Actions | `ci.yml` validates and `azure-container-apps.yml` deploys |
+| Observability | Console logs + Azure Container Apps logs/metrics | Expand to structured telemetry when features grow |
 
 ## Key Architectural Decisions
 
@@ -67,4 +67,4 @@ For the full list, see [DECISIONS.md](../context/DECISIONS.md).
 Most impactful decisions:
 1. [ADR-001]: Use Vite React frontend with an Express delivery tier.
 2. [ADR-002]: Initialize the repository with the ai-landscape harness-engineering template.
-3. [ADR-003]: Deploy through Azure App Service using GitHub Actions.
+3. [ADR-003]: Deploy Docker images through Azure Container Apps using GitHub Actions.

@@ -1,0 +1,11 @@
+.git
+.github
+.claude
+coverage
+dist
+docs
+extra
+meta
+node_modules
+npm-debug.log
+templates
