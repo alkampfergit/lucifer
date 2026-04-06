@@ -1,5 +1,7 @@
 # Template Foundation Cleanup — Implementation Plan
 
+> **Status:** Archived reference plan copied from the ai-landscape template. The work described here has already been executed in the upstream template and is kept for historical context.
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Restructure the ai-landscape template to eliminate skill duplication, add bootstrapping and output templates, and make all docs language-agnostic.
