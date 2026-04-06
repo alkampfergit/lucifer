@@ -1,0 +1,88 @@
+# AGENTS.md — Canonical Agent Entry Point
+
+> This is the canonical instruction file for the repository.
+> Tool-specific bootstrap files may exist, but they must only point here.
+> Treat this file as the map and the linked docs as the system of record.
+
+## Harness Model
+
+- Humans define the product direction, deployment target, and review standards.
+- Agents execute inside the repository using repository-local knowledge and checks.
+- When a task fails, encode the missing guidance in docs, scripts, or CI.
+- Keep this file short and stable. Push detail into the linked docs, skills, and checks.
+
+## Identity
+
+- **Project**: Lucifer
+- **Purpose**: Azure-ready Node + React starter application with harness-engineering repo scaffolding
+- **Style**: TypeScript-first, layered domains, Vite frontend, Express backend
+
+## Default Rules
+
+1. The repository is the single source of truth. If knowledge matters, store it here.
+2. Use progressive disclosure. Load only the docs and skills relevant to the task.
+3. Follow the task lifecycle before changing code: understand, plan, implement, validate, review, merge.
+4. Prefer boring, legible, well-understood patterns over clever abstractions.
+5. Enforce important rules mechanically with CI, linting, structural tests, or scripts.
+6. When behavior, process, or architecture changes, update the repository documentation in the same change.
+7. Tool-specific files must not redefine repository policy. They are adapters, not alternate sources of truth.
+
+## Shared Engineering Invariants
+
+- Dependencies flow one direction only: Types → Config → Repository → Service → Runtime → UI/API.
+- Validate and parse data at boundaries. Never trust unvalidated input shapes.
+- Prefer result-like flows for expected failures and reserve thrown errors for exceptional conditions.
+- Keep frontend and backend contracts explicit and versionable.
+- Every public API should have at least one happy-path test.
+- No linter or rule override without a documented decision.
+
+## Where to Look
+
+| What you need | Where to find it |
+|---|---|
+| System architecture map | [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md) |
+| Dependency direction rules | [docs/architecture/DEPENDENCY-RULES.md](docs/architecture/DEPENDENCY-RULES.md) |
+| Domain boundaries and contracts | [docs/architecture/DOMAIN-BOUNDARIES.md](docs/architecture/DOMAIN-BOUNDARIES.md) |
+| Design principles | [docs/design/DESIGN-PRINCIPLES.md](docs/design/DESIGN-PRINCIPLES.md) |
+| Preferred patterns and anti-patterns | [docs/design/PATTERNS.md](docs/design/PATTERNS.md) |
+| Code standards and style | [docs/quality/CODE-STANDARDS.md](docs/quality/CODE-STANDARDS.md) |
+| Quality grades and risk areas | [docs/quality/QUALITY-GRADES.md](docs/quality/QUALITY-GRADES.md) |
+| Task workflow | [docs/workflows/TASK-LIFECYCLE.md](docs/workflows/TASK-LIFECYCLE.md) |
+| Review checklist | [docs/workflows/REVIEW-CHECKLIST.md](docs/workflows/REVIEW-CHECKLIST.md) |
+| Terminology | [docs/context/GLOSSARY.md](docs/context/GLOSSARY.md) |
+| Decisions and ADRs | [docs/context/DECISIONS.md](docs/context/DECISIONS.md) |
+| Repeatable task workflows | [.claude/skills/](.claude/skills/) |
+| Output templates | [templates/](templates/) |
+| Bootstrap prompt | [BOOTSTRAP.md](BOOTSTRAP.md) |
+| Human reference files | [extra/](extra/) |
+
+## Before You Write Code
+
+1. Read the architecture, design, and quality docs for the domain you will touch.
+2. Load the relevant skill from `.claude/skills/` before doing repeatable work.
+3. Write a plan before changes that cross domains or touch multiple files.
+4. Validate changes with `npm run lint`, `npm run test`, and `npm run build`.
+5. Self-review against the review checklist before considering the task complete.
+
+## Skills
+
+Skills are reusable workflows for repeatable tasks.
+They live in `.claude/skills/` as the single source of truth.
+
+| Skill | Purpose | Location |
+|---|---|---|
+| `new-feature` | End-to-end workflow for adding a feature | [.claude/skills/new-feature/SKILL.md](.claude/skills/new-feature/SKILL.md) |
+| `bug-fix` | Structured workflow for reproducing and fixing bugs | [.claude/skills/bug-fix/SKILL.md](.claude/skills/bug-fix/SKILL.md) |
+| `refactor` | Safe refactoring with preservation guarantees | [.claude/skills/refactor/SKILL.md](.claude/skills/refactor/SKILL.md) |
+| `add-domain` | Bootstrap a new domain scaffold | [.claude/skills/add-domain/SKILL.md](.claude/skills/add-domain/SKILL.md) |
+| `doc-gardening` | Keep documentation accurate | [.claude/skills/doc-gardening/SKILL.md](.claude/skills/doc-gardening/SKILL.md) |
+| `meta` | Capture reusable learnings | [.claude/skills/meta/SKILL.md](.claude/skills/meta/SKILL.md) |
+
+## Tool-Specific Bootstrap Files
+
+- [CLAUDE.md](CLAUDE.md) exists only because Claude Code auto-loads it.
+- [.github/copilot-instructions.md](.github/copilot-instructions.md) exists only because GitHub Copilot supports workspace instructions there.
+- If any bootstrap file disagrees with this file, AGENTS.md wins.
+
+---
+*Last verified: 2026-04-06. If this file feels stale, run the `doc-gardening` skill.*
