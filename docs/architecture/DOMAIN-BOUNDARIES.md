@@ -49,8 +49,12 @@
 
 | Source Domain | Target Domain | Mechanism | Contract Location |
 |---|---|---|---|
-| `web-shell` | `platform-api` | HTTP GET `/api/health` | `server/src/domains/platform-api/types/health_report.ts` |
+| `web-shell` | `platform-api` | HTTP GET `/api/health` | Server response shape: `server/src/domains/platform-api/types/health_report.ts`; browser validation contract: `src/domains/web-shell/types/health_status.ts` |
 | `platform-api` | `web-shell` | Static asset hosting | `dist/client/index.html` |
+
+> Note: `/api/health` does not yet live in a true shared DTO module. The browser-side
+> `HealthStatus` contract in `web-shell` must remain in sync with the server's
+> `health_report` shape until this contract is moved into `shared`.
 
 ## Rules for Modifying Boundaries
 

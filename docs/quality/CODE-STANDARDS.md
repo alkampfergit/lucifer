@@ -8,7 +8,7 @@
 - **One concept per file**.
 - **Max file length**: 300 lines.
 - **Max function length**: 30 lines.
-- **Naming convention**: Files use `snake_case`. Types/classes use `PascalCase`. Functions/variables use `camelCase`.
+- **Naming convention**: Files use `snake_case` by default. React component files may use `PascalCase` (e.g. `App.tsx`). Conventional frontend entrypoint files may use their framework-standard names (e.g. `main.tsx`). Types/classes use `PascalCase`. Functions/variables use `camelCase`.
 
 ## Import Ordering
 

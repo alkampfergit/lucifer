@@ -43,4 +43,16 @@ describe('fetchHealthStatus', () => {
       'Health response did not match the expected contract',
     )
   })
+
+  it('rejects non-2xx responses', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 503,
+      }),
+    )
+
+    await expect(fetchHealthStatus()).rejects.toThrow('Health request failed with status 503')
+  })
 })

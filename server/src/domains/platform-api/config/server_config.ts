@@ -10,7 +10,11 @@ export interface ServerConfig {
 function parsePort(value: string | undefined): number {
   const parsedPort = Number.parseInt(value ?? '3001', 10)
 
-  return Number.isFinite(parsedPort) ? parsedPort : 3001
+  if (Number.isInteger(parsedPort) && parsedPort >= 1 && parsedPort <= 65535) {
+    return parsedPort
+  }
+
+  return 3001
 }
 
 export function getServerConfig(): ServerConfig {
