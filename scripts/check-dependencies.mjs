@@ -84,6 +84,12 @@ for (const filePath of domainRoots.flatMap(listFiles)) {
     }
 
     const targetLayerIndex = layerOrder.indexOf(targetMetadata.layerName)
+
+    // Same-layer imports are always allowed (e.g. test files importing the unit under test).
+    if (targetMetadata.layerName === sourceMetadata.layerName) {
+      continue
+    }
+
     const allowList = layerAllowList[sourceMetadata.layerName]
 
     if (allowList !== undefined) {
