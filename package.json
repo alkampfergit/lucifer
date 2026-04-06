@@ -4,10 +4,11 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "dev": "concurrently -k -n web,api \"npm run dev:web\" \"npm run dev:server\"",
     "dev:web": "vite",
     "dev:server": "tsx watch server/src/index.ts",
-    "build": "npm run check:structure && npm run build:web && npm run build:server",
+    "build": "npm run clean && npm run check:structure && npm run build:web && npm run build:server",
     "build:web": "vite build",
     "build:server": "tsc -p tsconfig.server.json",
     "start": "node dist/server/index.js",

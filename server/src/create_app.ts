@@ -12,15 +12,17 @@ export function createApp() {
   const getHealthReport = createHealthReportService(config, metadataRepository)
   const app = express()
   const indexPath = path.join(config.clientDistPath, 'index.html')
+  const hasBuiltClient = fs.existsSync(indexPath)
+  const indexMarkup = hasBuiltClient ? fs.readFileSync(indexPath, 'utf8') : null
 
   app.disable('x-powered-by')
   app.use(express.json())
   registerHealthRoutes(app, getHealthReport)
 
-  if (fs.existsSync(indexPath)) {
+  if (hasBuiltClient && indexMarkup !== null) {
     app.use(express.static(config.clientDistPath))
     app.get(/^(?!\/api\/).*/, (_request, response) => {
-      response.sendFile(indexPath)
+      response.type('html').send(indexMarkup)
     })
   }
 
