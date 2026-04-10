@@ -73,10 +73,10 @@ export function createApp(options: CreateAppOptions = {}) {
       approvalChannel = createTelegramApprovalChannel(token, chatId, pendingStore, approvalStore, auditLog)
     }
 
-    registerExecuteRoutes(
-      app, gatewayConfig, apiKeyStore, commandRulesStore,
+    registerExecuteRoutes({
+      router: app, config: gatewayConfig, apiKeyStore, commandRulesStore,
       approvalStore, pendingStore, auditLog, approvalChannel,
-    )
+    })
 
     // Clean up expired approvals and stale pending requests periodically
     cleanupInterval = setInterval(() => {
