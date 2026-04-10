@@ -55,6 +55,9 @@ export function createTelegramApprovalChannel(
       );
     }
 
+    // Store decision metadata so the Promise resolve can read the actual values
+    decisionMeta.set(requestId, { matchType: matchType as ApprovalMatchType, duration });
+
     auditLog.append({
       ts: new Date().toISOString(),
       type: decision === 'approved' ? 'approved' : 'denied',
@@ -74,8 +77,36 @@ export function createTelegramApprovalChannel(
     );
   });
 
+  // Track per-request decision metadata from callbacks
+  const decisionMeta = new Map<string, { matchType: ApprovalMatchType; duration: string }>();
+
   return {
     async requestApproval(command, apiKeyName, ip, requestId, riskAnalysis) {
+      // Wire Promise callbacks BEFORE sending the notification to avoid race condition
+      const approvalPromise = new Promise<{ decision: ApprovalDecision; matchType: ApprovalMatchType; duration: string }>((resolve, reject) => {
+        const pending = pendingStore.get(requestId);
+        if (!pending) {
+          reject(new Error('Request not found in pending store'));
+          return;
+        }
+
+        const originalResolve = pending.resolve;
+        const originalReject = pending.reject;
+
+        pending.resolve = (decision: ApprovalDecision) => {
+          const meta = decisionMeta.get(requestId) ?? { matchType: 'exact' as ApprovalMatchType, duration: '2' };
+          decisionMeta.delete(requestId);
+          originalResolve(decision);
+          resolve({ decision, matchType: meta.matchType, duration: meta.duration });
+        };
+
+        pending.reject = (reason: Error) => {
+          decisionMeta.delete(requestId);
+          originalReject(reason);
+          reject(reason);
+        };
+      });
+
       let text = `\u{1f6a8} **Command Request**\n\n`;
       text += `From: \`${apiKeyName}\` (${ip})\n`;
       text += `ID: \`${requestId}\`\n\n`;
@@ -119,28 +150,7 @@ export function createTelegramApprovalChannel(
 
       log.info({ requestId, command, chatId }, 'Telegram approval request sent');
 
-      return new Promise((resolve, reject) => {
-        const pending = pendingStore.get(requestId);
-        if (!pending) {
-          reject(new Error('Request not found in pending store'));
-          return;
-        }
-
-        const originalResolve = pending.resolve;
-        const originalReject = pending.reject;
-
-        pending.resolve = (decision: ApprovalDecision) => {
-          const matchType: ApprovalMatchType = 'exact';
-          const duration = 'unknown';
-          originalResolve(decision);
-          resolve({ decision, matchType, duration });
-        };
-
-        pending.reject = (reason: Error) => {
-          originalReject(reason);
-          reject(reason);
-        };
-      });
+      return approvalPromise;
     },
 
     async start() {

@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lucifer Approvals</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace; background: #0d1117; color: #c9d1d9; min-height: 100vh; }
+  .header { background: #161b22; border-bottom: 1px solid #30363d; padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; }
+  .header h1 { font-size: 18px; font-weight: 600; }
+  .status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #8b949e; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; }
+  .status-dot.connected { background: #3fb950; }
+  .status-dot.disconnected { background: #f85149; animation: pulse 2s infinite; }
+  .status-dot.connecting { background: #d29922; animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .container { max-width: 900px; margin: 0 auto; padding: 24px; }
+  .login-form { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 32px; max-width: 400px; margin: 80px auto; }
+  .login-form h2 { margin-bottom: 16px; font-size: 16px; }
+  .login-form input { width: 100%; padding: 8px 12px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 14px; margin-bottom: 12px; }
+  .login-form button { width: 100%; padding: 8px 12px; background: #238636; border: none; border-radius: 6px; color: #fff; font-size: 14px; cursor: pointer; }
+  .login-form button:hover { background: #2ea043; }
+  .login-error { color: #f85149; font-size: 13px; margin-bottom: 8px; display: none; }
+  .empty-state { text-align: center; padding: 80px 24px; color: #8b949e; font-size: 15px; }
+  .loading { text-align: center; padding: 80px 24px; color: #8b949e; }
+  .error-banner { background: #f8514922; border: 1px solid #f85149; border-radius: 6px; padding: 12px 16px; margin-bottom: 16px; color: #f85149; font-size: 13px; display: none; }
+  .toast { position: fixed; bottom: 24px; right: 24px; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px 20px; font-size: 13px; opacity: 0; transition: opacity 0.3s; pointer-events: none; z-index: 100; }
+  .toast.visible { opacity: 1; }
+  .toast.success { border-color: #3fb950; color: #3fb950; }
+  .toast.error { border-color: #f85149; color: #f85149; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; margin-bottom: 12px; overflow: hidden; transition: all 0.3s; }
+  .card.deciding { opacity: 0.6; pointer-events: none; }
+  .card.approved { border-color: #3fb950; background: #3fb95010; }
+  .card.denied { border-color: #f85149; background: #f8514910; }
+  .card.slide-out { opacity: 0; transform: translateX(100px); max-height: 0; margin-bottom: 0; padding: 0; }
+  .card-body { padding: 16px; }
+  .command-line { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 15px; color: #f0f6fc; background: #0d1117; padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; word-break: break-all; display: flex; align-items: flex-start; gap: 10px; }
+  .risk-badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; white-space: nowrap; flex-shrink: 0; }
+  .risk-safe { background: #23894422; color: #3fb950; }
+  .risk-warning { background: #d2992222; color: #d29922; }
+  .risk-danger { background: #f8514922; color: #f85149; }
+  .meta { font-size: 12px; color: #8b949e; margin-bottom: 12px; display: flex; gap: 16px; flex-wrap: wrap; }
+  .meta span { display: inline-flex; align-items: center; gap: 4px; }
+  .warnings { font-size: 12px; color: #d29922; margin-bottom: 12px; padding: 8px 12px; background: #d2992210; border-radius: 4px; }
+  .warnings li { margin-left: 16px; margin-bottom: 2px; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn { padding: 6px 14px; border: 1px solid #30363d; border-radius: 6px; background: #21262d; color: #c9d1d9; font-size: 13px; cursor: pointer; transition: all 0.15s; }
+  .btn:hover { background: #30363d; }
+  .btn-approve { border-color: #238636; color: #3fb950; }
+  .btn-approve:hover { background: #238636; color: #fff; }
+  .btn-deny { border-color: #da3633; color: #f85149; }
+  .btn-deny:hover { background: #da3633; color: #fff; }
+  .btn-group-label { font-size: 11px; color: #8b949e; margin-right: 4px; align-self: center; }
+</style>
+</head>
+<body>
+
+<div id="login-view">
+  <div class="login-form">
+    <h2>Lucifer Admin</h2>
+    <div class="login-error" id="login-error">Invalid secret</div>
+    <input type="password" id="secret-input" placeholder="Admin secret" autocomplete="off">
+    <button onclick="doLogin()">Connect</button>
+  </div>
+</div>
+
+<div id="app-view" style="display:none">
+  <div class="header">
+    <h1>Lucifer Approvals</h1>
+    <div class="status">
+      <div class="status-dot connecting" id="status-dot"></div>
+      <span id="status-text">Connecting...</span>
+    </div>
+  </div>
+  <div class="container">
+    <div class="error-banner" id="error-banner"></div>
+    <div id="loading" class="loading">Loading...</div>
+    <div id="empty" class="empty-state" style="display:none">No pending approval requests</div>
+    <div id="cards"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let secret = '';
+let evtSource = null;
+let reconnectTimer = null;
+const pending = new Map();
+
+function doLogin() {
+  secret = document.getElementById('secret-input').value.trim();
+  if (!secret) return;
+  document.getElementById('login-error').style.display = 'none';
+
+  // Test auth with a pending list request
+  fetch('/api/v1/admin/approvals/pending', {
+    headers: { 'Authorization': 'Bearer ' + secret }
+  }).then(r => {
+    if (!r.ok) throw new Error('auth');
+    return r.json();
+  }).then(() => {
+    sessionStorage.setItem('lucifer_secret', secret);
+    showApp();
+  }).catch(() => {
+    document.getElementById('login-error').style.display = 'block';
+  });
+}
+
+function showApp() {
+  document.getElementById('login-view').style.display = 'none';
+  document.getElementById('app-view').style.display = 'block';
+  connectSSE();
+}
+
+async function connectSSE() {
+  setStatus('connecting');
+  try {
+    const ticketRes = await fetch('/api/v1/admin/approvals/stream-ticket', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + secret, 'Content-Type': 'application/json' }
+    });
+    if (!ticketRes.ok) throw new Error('ticket');
+    const { ticket } = await ticketRes.json();
+
+    if (evtSource) evtSource.close();
+    evtSource = new EventSource('/api/v1/admin/approvals/stream?ticket=' + ticket);
+
+    evtSource.addEventListener('init', (e) => {
+      const data = JSON.parse(e.data);
+      pending.clear();
+      data.pending.forEach(r => pending.set(r.requestId, r));
+      renderCards();
+      setStatus('connected');
+      document.getElementById('loading').style.display = 'none';
+    });
+
+    evtSource.addEventListener('new_request', (e) => {
+      const req = JSON.parse(e.data);
+      pending.set(req.requestId, req);
+      renderCards();
+    });
+
+    evtSource.addEventListener('request_decided', (e) => {
+      const data = JSON.parse(e.data);
+      const card = document.getElementById('card-' + data.requestId);
+      if (card) {
+        card.classList.add(data.decision === 'approved' ? 'approved' : 'denied');
+        setTimeout(() => {
+          card.classList.add('slide-out');
+          setTimeout(() => {
+            pending.delete(data.requestId);
+            renderCards();
+          }, 300);
+        }, 800);
+      } else {
+        pending.delete(data.requestId);
+        renderCards();
+      }
+    });
+
+    evtSource.onerror = () => {
+      setStatus('disconnected');
+      evtSource.close();
+      evtSource = null;
+      scheduleReconnect();
+    };
+  } catch {
+    setStatus('disconnected');
+    scheduleReconnect();
+  }
+}
+
+function scheduleReconnect() {
+  if (reconnectTimer) return;
+  showError('Connection lost. Reconnecting...');
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    hideError();
+    connectSSE();
+  }, 3000);
+}
+
+function setStatus(state) {
+  const dot = document.getElementById('status-dot');
+  const text = document.getElementById('status-text');
+  dot.className = 'status-dot ' + state;
+  text.textContent = state === 'connected' ? 'Connected' : state === 'connecting' ? 'Connecting...' : 'Disconnected';
+}
+
+function showError(msg) { const el = document.getElementById('error-banner'); el.textContent = msg; el.style.display = 'block'; }
+function hideError() { document.getElementById('error-banner').style.display = 'none'; }
+
+function showToast(msg, type) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast visible ' + type;
+  setTimeout(() => el.classList.remove('visible'), 3000);
+}
+
+function renderCards() {
+  const container = document.getElementById('cards');
+  const empty = document.getElementById('empty');
+  if (pending.size === 0) {
+    container.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+
+  // Preserve existing cards, add new ones
+  const existingIds = new Set();
+  for (const child of container.children) {
+    existingIds.add(child.id.replace('card-', ''));
+  }
+
+  for (const [id, req] of pending) {
+    if (existingIds.has(id)) continue;
+    container.insertAdjacentHTML('afterbegin', buildCard(req));
+  }
+
+  // Remove cards no longer pending
+  for (const child of [...container.children]) {
+    const cid = child.id.replace('card-', '');
+    if (!pending.has(cid) && !child.classList.contains('slide-out')) {
+      child.remove();
+    }
+  }
+}
+
+function buildCard(req) {
+  const risk = req.riskAnalysis || { level: 'safe', warnings: [] };
+  const riskClass = 'risk-' + risk.level;
+  const riskLabel = risk.level.toUpperCase();
+  const prefix = req.command.split(/\s+/).slice(0, 2).join(' ');
+  const warnings = risk.warnings && risk.warnings.length > 0
+    ? '<ul class="warnings">' + risk.warnings.map(w => '<li>' + escHtml(w) + '</li>').join('') + '</ul>'
+    : '';
+  const ts = new Date(req.createdAt).toLocaleTimeString();
+
+  return '<div class="card" id="card-' + req.requestId + '">' +
+    '<div class="card-body">' +
+      '<div class="command-line">' +
+        '<span class="risk-badge ' + riskClass + '">' + riskLabel + '</span>' +
+        '<code>' + escHtml(req.command) + '</code>' +
+      '</div>' +
+      '<div class="meta">' +
+        '<span>Key: <strong>' + escHtml(req.apiKeyName) + '</strong></span>' +
+        '<span>IP: ' + escHtml(req.ip) + '</span>' +
+        '<span>ID: ' + req.requestId.slice(0, 8) + '</span>' +
+        '<span>' + ts + '</span>' +
+      '</div>' +
+      warnings +
+      '<div class="actions">' +
+        '<span class="btn-group-label">Exact:</span>' +
+        '<button class="btn btn-approve" onclick="decide(\'' + req.requestId + '\',\'approve\',\'exact\',\'2\')">2h</button>' +
+        '<button class="btn btn-approve" onclick="decide(\'' + req.requestId + '\',\'approve\',\'exact\',\'8\')">8h</button>' +
+        '<button class="btn btn-approve" onclick="decide(\'' + req.requestId + '\',\'approve\',\'exact\',\'permanent\')">Permanent</button>' +
+        '<span class="btn-group-label" style="margin-left:8px">Prefix "' + escHtml(prefix) + '":</span>' +
+        '<button class="btn btn-approve" onclick="decide(\'' + req.requestId + '\',\'approve\',\'prefix\',\'2\')">2h</button>' +
+        '<button class="btn btn-approve" onclick="decide(\'' + req.requestId + '\',\'approve\',\'prefix\',\'8\')">8h</button>' +
+        '<span style="flex-grow:1"></span>' +
+        '<button class="btn btn-deny" onclick="decide(\'' + req.requestId + '\',\'deny\',\'exact\',\'0\')">Deny</button>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function decide(requestId, action, matchType, duration) {
+  const card = document.getElementById('card-' + requestId);
+  if (card) card.classList.add('deciding');
+
+  try {
+    const res = await fetch('/api/v1/admin/approvals/' + requestId + '/decide', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + secret, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, matchType, duration })
+    });
+    if (res.status === 409) {
+      showToast('Request already decided', 'error');
+      pending.delete(requestId);
+      renderCards();
+      return;
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || 'Request failed');
+    }
+    // SSE will handle the UI update via request_decided event
+  } catch (err) {
+    if (card) card.classList.remove('deciding');
+    showToast(err.message || 'Failed to submit decision', 'error');
+  }
+}
+
+// Auto-login if secret is in sessionStorage
+(function init() {
+  const saved = sessionStorage.getItem('lucifer_secret');
+  if (saved) {
+    secret = saved;
+    showApp();
+  }
+  // Enter key on login
+  document.getElementById('secret-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') doLogin();
+  });
+})();
+</script>
+</body>
+</html>

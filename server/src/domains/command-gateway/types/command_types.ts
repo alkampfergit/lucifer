@@ -99,7 +99,7 @@ export interface LuciferConfig {
 
 export interface AuditEntry {
   ts: string;
-  type: 'request' | 'rule_match' | 'approval_check' | 'telegram_sent' | 'approved' | 'denied' | 'executed' | 'error';
+  type: 'request' | 'rule_match' | 'approval_check' | 'telegram_sent' | 'web_sent' | 'approved' | 'denied' | 'executed' | 'error';
   requestId: string;
   command?: string;
   apiKeyName?: string;
@@ -130,4 +130,5 @@ export interface ApprovalChannel {
 
   start(): Promise<void>;
   stop(): Promise<void>;
+  cancel?(requestId: string): void;
 }
