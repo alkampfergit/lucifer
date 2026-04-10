@@ -5,17 +5,20 @@ description: >
   exhausted. Use when an open PR has failing or pending checks and you need to
   watch GitHub checks with gh, remediate SonarCloud issues with the sonar
   skill, inspect failed workflow jobs or code scanning alerts, push fixes, and
-  repeat.
+  repeat, or when the user wants to close a release PR by confirming a tag,
+  rebasing on master, fast-forwarding master, tagging, pushing, and closing the
+  PR with gh.
 metadata:
   author: codex
-  version: 1.0.0
+  version: 1.1.0
   category: workflow
 ---
 
 # Skill: GitHub PR Fixer
 
 Use this skill to drive a PR to green with `gh` and the existing `sonar`
-skill.
+skill, and to close a ready PR when the user explicitly asks for release
+closure.
 
 This workflow is validated against PR `#3` in `alkampfergit/lucifer`
 (`release/0.3.3` to `master`) on 2026-04-10:
@@ -33,6 +36,13 @@ This workflow is validated against PR `#3` in `alkampfergit/lucifer`
 - Push access is available.
 - For Sonar remediation, use the repository project key
   `alkampfergit_lucifer` unless the user overrides it.
+
+## Route by task
+
+| User wants | What to do |
+|------------|------------|
+| Fix failing or pending checks | Follow Steps 1-7 |
+| Close a ready PR and cut a release tag | Follow Steps 1-2, confirm the release tag, then use Step 8 |
 
 ## Round limit
 
@@ -190,6 +200,93 @@ When stopping, report:
 - Which checks still fail
 - Which rounds were attempted
 - The exact blocking check names and URLs
+
+## Step 8: Close a release PR
+
+Use this path only when the user explicitly asks to close the pull request.
+
+### 8.1 Determine the release tag proposal
+
+Start from `master` and inspect the latest tag:
+
+```bash
+git fetch origin --tags
+git checkout master
+git pull --ff-only origin master
+git tag --sort=-v:refname | head -20
+```
+
+Then inspect the PR branch name:
+
+```bash
+gh pr view "$PR_NUMBER" --json headRefName,baseRefName,url,title
+```
+
+If the head branch matches `release/<semver>`, treat that version as the
+proposed tag. In this repository, `release/0.3.3` implies proposed tag
+`0.3.3`.
+
+Before doing any release operation, ask the user to confirm the tag or propose
+another one. Do not create or push a tag without explicit confirmation.
+
+What to report in the confirmation prompt:
+
+- latest tag currently on `master`
+- proposed next tag
+- source branch name
+
+### 8.2 Rebase the branch if needed
+
+After the user confirms the tag, ensure the PR branch is current with `master`.
+
+```bash
+git checkout "$HEAD_BRANCH"
+git fetch origin
+git rebase origin/master
+git push --force-with-lease
+```
+
+If the branch is already up to date, do not rebase just for the sake of it.
+
+### 8.3 Ensure checks are green before release
+
+Wait again before merging or tagging:
+
+```bash
+gh pr checks "$PR_NUMBER" --watch --fail-fast
+```
+
+Do not proceed to release if required checks are failing.
+
+### 8.4 Fast-forward `master`, tag, push, close PR
+
+Use fast-forward only. Do not create a merge commit.
+
+```bash
+git checkout master
+git fetch origin
+git pull --ff-only origin master
+git merge --ff-only "$HEAD_BRANCH"
+git tag "$CONFIRMED_TAG"
+git push origin master
+git push origin "$CONFIRMED_TAG"
+gh pr close "$PR_NUMBER"
+```
+
+If the user wants the PR closed with a comment, include one:
+
+```bash
+gh pr close "$PR_NUMBER" --comment "Released as $CONFIRMED_TAG"
+```
+
+### 8.5 Release guardrails
+
+- Never infer final tag approval from branch naming alone.
+- Never create a tag before the user confirms the version.
+- Never merge to `master` with anything other than fast-forward for this flow.
+- Never close the PR before `master` and the tag are pushed successfully.
+- If `git merge --ff-only` fails, stop and explain why instead of forcing a
+  merge.
 
 ## Guardrails
 
