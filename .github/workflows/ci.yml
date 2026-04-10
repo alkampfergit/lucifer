@@ -3,6 +3,9 @@ name: CI
 on:
   pull_request:
   push:
+    branches:
+      - '**'
+  workflow_dispatch:
 
 jobs:
   validate:
@@ -75,14 +78,14 @@ jobs:
           echo "Branch: $BRANCH"
 
           if [ "$BRANCH" = "master" ] || [ "$BRANCH" = "main" ]; then
-            CHANNEL="stable"
             if [ "$COMMITS_SINCE" = "0" ]; then
+              CHANNEL="stable"
               VERSION="${BASE_VERSION}"
             else
-              # Bump patch for commits after tag on master
-              IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE_VERSION"
-              NEXT_PATCH=$((PATCH + 1))
-              VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}"
+              # Intermediate build on master — use rc prerelease, not a semver bump.
+              # The next stable version is decided by the human who creates the tag.
+              CHANNEL="rc"
+              VERSION="${BASE_VERSION}-rc.${COMMITS_SINCE}.${SHORT_SHA}"
             fi
           elif echo "$BRANCH" | grep -qE '^release/'; then
             CHANNEL="beta"
@@ -100,7 +103,7 @@ jobs:
 
   publish-npm:
     needs: [validate, version]
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -130,13 +133,15 @@ jobs:
             npm publish --access public --provenance
           elif [ "$CHANNEL" = "beta" ]; then
             npm publish --tag beta --access public --provenance
+          elif [ "$CHANNEL" = "rc" ]; then
+            npm publish --tag rc --access public --provenance
           else
             npm publish --tag alpha --access public --provenance
           fi
 
   build-docker:
     needs: [validate, version]
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
