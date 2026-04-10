@@ -2,14 +2,13 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import { writeFileSync, readFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { createHash } from 'node:crypto';
 import Database from 'better-sqlite3';
-import { createApp } from '../../../create_app.js';
 import { createApprovalStore } from '../repository/approval_store.js';
 import { createAuditLog } from '../repository/audit_log.js';
 import { loadGatewayConfig } from '../config/gateway_config.js';
 import { createApiKeyStore } from '../repository/api_key_store.js';
 import { createCommandRulesStore } from '../repository/command_rules_store.js';
+import { createTestAppContext, type TestAppContext } from '../../../test/integration-setup.js';
 
 function shapeOf(obj: Record<string, unknown>): Record<string, string> {
   const shape: Record<string, string> = {};
@@ -28,70 +27,22 @@ function shapeOf(obj: Record<string, unknown>): Record<string, string> {
 
 // --- API test setup ---
 
-const TEST_DIR = join(process.cwd(), '.test-contracts');
-const CONFIG_DIR = join(TEST_DIR, 'config');
-const DATA_DIR = join(TEST_DIR, 'data');
-
-const TEST_KEY = 'luc_contracttest456';
-const TEST_SALT = 'contractsalt12345';
-const TEST_HASH = createHash('sha256').update(TEST_SALT + TEST_KEY).digest('hex');
-
-let app: ReturnType<typeof createApp>['app'];
-let stopFn: () => Promise<void>;
+let ctx: TestAppContext;
 
 beforeAll(async () => {
-  mkdirSync(CONFIG_DIR, { recursive: true });
-  mkdirSync(DATA_DIR, { recursive: true });
-
-  const configPath = join(CONFIG_DIR, 'lucifer.json');
-
-  writeFileSync(configPath, JSON.stringify({
-    port: 0,
-    approvalTimeoutSeconds: 5,
-    executionTimeoutSeconds: 10,
-    maxConcurrentExecutions: 3,
-    maxOutputBytes: 1024,
-    rateLimitPerMinute: 100,
-    onApprovalTimeout: 'deny',
-    dataDir: '../data',
-  }));
-
-  writeFileSync(join(CONFIG_DIR, 'api-keys.json'), JSON.stringify({
-    keys: [{
-      id: 'contract-test',
-      name: 'contract',
-      keyHash: TEST_HASH,
-      salt: TEST_SALT,
-      allowedIps: [],
-      createdAt: new Date().toISOString(),
-      active: true,
-    }],
-  }));
-
-  writeFileSync(join(CONFIG_DIR, 'command-rules.json'), JSON.stringify({
-    rules: [
-      { prefix: 'echo ', action: 'always_approve' },
-      { prefix: 'git ', action: 'telegram_approve' },
-    ],
-    defaultAction: 'always_deny',
-  }));
-
-  const result = createApp({ configPath, autoApprove: true });
-  app = result.app;
-  stopFn = result.stop;
-  await result.start();
+  ctx = createTestAppContext('contracts');
+  await ctx.start();
 });
 
 afterAll(async () => {
-  await stopFn();
-  rmSync(TEST_DIR, { recursive: true, force: true });
+  await ctx.stop();
 });
 
 // --- Group 1: API response contracts ---
 
 describe('API response contracts', () => {
   it('ErrorResponse shape on missing API key', async () => {
-    const res = await request(app).post('/api/v1/execute').send({ command: 'echo hi' });
+    const res = await request(ctx.app).post('/api/v1/execute').send({ command: 'echo hi' });
     expect(res.status).toBe(401);
     expect(shapeOf(res.body)).toMatchInlineSnapshot(`
       {
@@ -103,9 +54,9 @@ describe('API response contracts', () => {
   });
 
   it('ErrorResponse shape on missing command', async () => {
-    const res = await request(app)
+    const res = await request(ctx.app)
       .post('/api/v1/execute')
-      .set('x-api-key', TEST_KEY)
+      .set('x-api-key', ctx.testKey)
       .send({});
     expect(res.status).toBe(400);
     expect(shapeOf(res.body)).toMatchInlineSnapshot(`
@@ -118,9 +69,9 @@ describe('API response contracts', () => {
   });
 
   it('ExecutionResult shape on success', async () => {
-    const res = await request(app)
+    const res = await request(ctx.app)
       .post('/api/v1/execute')
-      .set('x-api-key', TEST_KEY)
+      .set('x-api-key', ctx.testKey)
       .send({ command: 'echo contract-test' });
     expect(res.status).toBe(200);
     expect(shapeOf(res.body)).toMatchInlineSnapshot(`
@@ -136,9 +87,9 @@ describe('API response contracts', () => {
   });
 
   it('ExecutionResult shape on failed command', async () => {
-    const res = await request(app)
+    const res = await request(ctx.app)
       .post('/api/v1/execute')
-      .set('x-api-key', TEST_KEY)
+      .set('x-api-key', ctx.testKey)
       .send({ command: 'echo x && exit 1' });
     expect(res.status).toBe(200);
     expect(shapeOf(res.body)).toMatchInlineSnapshot(`
@@ -154,9 +105,9 @@ describe('API response contracts', () => {
   });
 
   it('PendingApproval shape on 202', async () => {
-    const res = await request(app)
+    const res = await request(ctx.app)
       .post('/api/v1/execute')
-      .set('x-api-key', TEST_KEY)
+      .set('x-api-key', ctx.testKey)
       .send({ command: 'git status' });
     expect(res.status).toBe(202);
     expect(shapeOf(res.body)).toMatchInlineSnapshot(`
@@ -168,9 +119,9 @@ describe('API response contracts', () => {
   });
 
   it('StatusNotFound shape on 404', async () => {
-    const res = await request(app)
+    const res = await request(ctx.app)
       .get('/api/v1/status/nonexistent')
-      .set('x-api-key', TEST_KEY);
+      .set('x-api-key', ctx.testKey);
     expect(res.status).toBe(404);
     expect(shapeOf(res.body)).toMatchInlineSnapshot(`
       {
@@ -404,7 +355,7 @@ describe('Telegram data contracts', () => {
 
 describe('Health endpoint contract', () => {
   it('HealthReport shape', async () => {
-    const res = await request(app).get('/api/health');
+    const res = await request(ctx.app).get('/api/health');
     expect(res.status).toBe(200);
     expect(shapeOf(res.body)).toMatchInlineSnapshot(`
       {

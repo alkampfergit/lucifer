@@ -3,7 +3,6 @@ import request from 'supertest';
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { createApp } from '../../../create_app.js';
 import express from 'express';
 import Database from 'better-sqlite3';
 import { registerExecuteRoutes } from './register_execute_routes.js';
@@ -13,70 +12,24 @@ import { createApiKeyStore } from '../repository/api_key_store.js';
 import { createCommandRulesStore } from '../repository/command_rules_store.js';
 import { createPendingRequestStore } from '../repository/pending_request_store.js';
 import type { ApprovalChannel, ApprovalDecision, ApprovalMatchType, ShellRiskAnalysis } from '../types/command_types.js';
+import { createTestAppContext, type TestAppContext } from '../../../test/integration-setup.js';
 
-const TEST_DIR = join(process.cwd(), '.test-integration');
-const CONFIG_DIR = join(TEST_DIR, 'config');
-const DATA_DIR = join(TEST_DIR, 'data');
-
-const TEST_KEY = 'luc_integrationtest123';
-const TEST_SALT = 'intsalt123456789';
-const TEST_HASH = createHash('sha256').update(TEST_SALT + TEST_KEY).digest('hex');
-
-let app: ReturnType<typeof createApp>['app'];
-let stopFn: () => Promise<void>;
+let ctx: TestAppContext;
 
 beforeAll(async () => {
-  mkdirSync(CONFIG_DIR, { recursive: true });
-  mkdirSync(DATA_DIR, { recursive: true });
-
-  const configPath = join(CONFIG_DIR, 'lucifer.json');
-
-  writeFileSync(configPath, JSON.stringify({
-    port: 0,
-    approvalTimeoutSeconds: 5,
-    executionTimeoutSeconds: 10,
-    maxConcurrentExecutions: 3,
-    maxOutputBytes: 1024,
-    rateLimitPerMinute: 100,
-    onApprovalTimeout: 'deny',
-    dataDir: '../data',
-  }));
-
-  writeFileSync(join(CONFIG_DIR, 'api-keys.json'), JSON.stringify({
-    keys: [{
-      id: 'int-test',
-      name: 'integration',
-      keyHash: TEST_HASH,
-      salt: TEST_SALT,
-      allowedIps: [],
-      createdAt: new Date().toISOString(),
-      active: true,
-    }],
-  }));
-
-  writeFileSync(join(CONFIG_DIR, 'command-rules.json'), JSON.stringify({
-    rules: [
-      { prefix: 'echo ', action: 'always_approve' },
-      { prefix: 'rm ', action: 'always_deny' },
-      { prefix: 'git ', action: 'telegram_approve' },
-    ],
-    defaultAction: 'always_deny',
-  }));
-
-  const result = createApp({ configPath, autoApprove: true });
-  app = result.app;
-  stopFn = result.stop;
-  await result.start();
+  ctx = createTestAppContext('integration', {
+    extraRules: [{ prefix: 'rm ', action: 'always_deny' }],
+  });
+  await ctx.start();
 });
 
 afterAll(async () => {
-  await stopFn();
-  rmSync(TEST_DIR, { recursive: true, force: true });
+  await ctx.stop();
 });
 
 describe('POST /api/v1/execute integration', () => {
   it('returns 401 for missing API key', async () => {
-    const res = await request(app)
+    const res = await request(ctx.app)
       .post('/api/v1/execute')
       .send({ command: 'echo hi' });
 
@@ -85,7 +38,7 @@ describe('POST /api/v1/execute integration', () => {
   });
 
   it('returns 401 for invalid API key', async () => {
-    const res = await request(app)
+    const res = await request(ctx.app)
       .post('/api/v1/execute')
       .set('x-api-key', 'wrong_key')
       .send({ command: 'echo hi' });
@@ -95,9 +48,9 @@ describe('POST /api/v1/execute integration', () => {
   });
 
   it('returns 400 for missing command', async () => {
-    const res = await request(app)
+    const res = await request(ctx.app)
       .post('/api/v1/execute')
-      .set('x-api-key', TEST_KEY)
+      .set('x-api-key', ctx.testKey)
       .send({});
 
     expect(res.status).toBe(400);
@@ -105,9 +58,9 @@ describe('POST /api/v1/execute integration', () => {
   });
 
   it('executes always_approve command immediately', async () => {
-    const res = await request(app)
+    const res = await request(ctx.app)
       .post('/api/v1/execute')
-      .set('x-api-key', TEST_KEY)
+      .set('x-api-key', ctx.testKey)
       .send({ command: 'echo integration-test' });
 
     expect(res.status).toBe(200);
@@ -117,9 +70,9 @@ describe('POST /api/v1/execute integration', () => {
   });
 
   it('rejects always_deny command with 403', async () => {
-    const res = await request(app)
+    const res = await request(ctx.app)
       .post('/api/v1/execute')
-      .set('x-api-key', TEST_KEY)
+      .set('x-api-key', ctx.testKey)
       .send({ command: 'rm -rf /tmp/test' });
 
     expect(res.status).toBe(403);
@@ -127,9 +80,9 @@ describe('POST /api/v1/execute integration', () => {
   });
 
   it('rejects unmatched command with default deny', async () => {
-    const res = await request(app)
+    const res = await request(ctx.app)
       .post('/api/v1/execute')
-      .set('x-api-key', TEST_KEY)
+      .set('x-api-key', ctx.testKey)
       .send({ command: 'whoami' });
 
     expect(res.status).toBe(403);
@@ -137,9 +90,9 @@ describe('POST /api/v1/execute integration', () => {
   });
 
   it('returns pending_approval for telegram_approve command (async default)', async () => {
-    const res = await request(app)
+    const res = await request(ctx.app)
       .post('/api/v1/execute')
-      .set('x-api-key', TEST_KEY)
+      .set('x-api-key', ctx.testKey)
       .send({ command: 'git status' });
 
     expect(res.status).toBe(202);
@@ -149,9 +102,9 @@ describe('POST /api/v1/execute integration', () => {
 
   it('returns 400 for command exceeding max length', async () => {
     const longCommand = 'echo ' + 'x'.repeat(5000);
-    const res = await request(app)
+    const res = await request(ctx.app)
       .post('/api/v1/execute')
-      .set('x-api-key', TEST_KEY)
+      .set('x-api-key', ctx.testKey)
       .send({ command: longCommand });
 
     expect(res.status).toBe(400);
@@ -159,9 +112,9 @@ describe('POST /api/v1/execute integration', () => {
   });
 
   it('returns 400 for invalid cwd', async () => {
-    const res = await request(app)
+    const res = await request(ctx.app)
       .post('/api/v1/execute')
-      .set('x-api-key', TEST_KEY)
+      .set('x-api-key', ctx.testKey)
       .send({ command: 'echo hi', cwd: '../../../etc' });
 
     expect(res.status).toBe(400);
@@ -169,9 +122,9 @@ describe('POST /api/v1/execute integration', () => {
   });
 
   it('captures non-zero exit codes', async () => {
-    const res = await request(app)
+    const res = await request(ctx.app)
       .post('/api/v1/execute')
-      .set('x-api-key', TEST_KEY)
+      .set('x-api-key', ctx.testKey)
       .send({ command: 'echo fail && exit 1' });
 
     expect(res.status).toBe(200);
@@ -182,14 +135,14 @@ describe('POST /api/v1/execute integration', () => {
 
 describe('GET /api/v1/status/:requestId', () => {
   it('returns 401 for missing API key', async () => {
-    const res = await request(app).get('/api/v1/status/some-id');
+    const res = await request(ctx.app).get('/api/v1/status/some-id');
     expect(res.status).toBe(401);
   });
 
   it('returns 404 for unknown requestId', async () => {
-    const res = await request(app)
+    const res = await request(ctx.app)
       .get('/api/v1/status/nonexistent-id')
-      .set('x-api-key', TEST_KEY);
+      .set('x-api-key', ctx.testKey);
 
     expect(res.status).toBe(404);
     expect(res.body.code).toBe('NOT_FOUND');
@@ -197,18 +150,18 @@ describe('GET /api/v1/status/:requestId', () => {
 
   it('returns status for a pending telegram_approve request', async () => {
     // First create a pending request
-    const execRes = await request(app)
+    const execRes = await request(ctx.app)
       .post('/api/v1/execute')
-      .set('x-api-key', TEST_KEY)
+      .set('x-api-key', ctx.testKey)
       .send({ command: 'git log --oneline' });
 
     expect(execRes.status).toBe(202);
     const { requestId } = execRes.body;
 
     // Poll for status (auto-approve runs async, might be completed or pending)
-    const statusRes = await request(app)
+    const statusRes = await request(ctx.app)
       .get(`/api/v1/status/${requestId}`)
-      .set('x-api-key', TEST_KEY);
+      .set('x-api-key', ctx.testKey);
 
     expect([200, 404]).toContain(statusRes.status);
     if (statusRes.status === 200) {
@@ -219,7 +172,7 @@ describe('GET /api/v1/status/:requestId', () => {
 
 describe('GET /api/health', () => {
   it('returns health status', async () => {
-    const res = await request(app).get('/api/health');
+    const res = await request(ctx.app).get('/api/health');
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('ok');
   });
@@ -333,6 +286,18 @@ describe('MockApprovalChannel integration', () => {
   let mockChannel: MockChannel;
   let db: Database.Database;
 
+  async function approveAndWaitForCompletion(requestId: string): Promise<void> {
+    await waitForCondition(() => mockChannel.pendingApprovals.size >= 1, 5000);
+    const [pendingId] = mockChannel.pendingApprovals.keys();
+    mockChannel.approveNext(pendingId);
+    await waitForCondition(async () => {
+      const statusRes = await request(mockApp)
+        .get(`/api/v1/status/${requestId}`)
+        .set('x-api-key', MOCK_KEY);
+      return statusRes.status === 200 && statusRes.body.status === 'completed';
+    }, 5000);
+  }
+
   beforeAll(() => {
     mkdirSync(MOCK_CONFIG_DIR, { recursive: true });
 
@@ -431,20 +396,7 @@ describe('MockApprovalChannel integration', () => {
     expect(execRes.body.status).toBe('pending_approval');
     const { requestId } = execRes.body;
 
-    // Wait for approval request to register in mock channel
-    await waitForCondition(() => mockChannel.pendingApprovals.size >= 1, 5000);
-
-    // Approve the request
-    const [pendingId] = mockChannel.pendingApprovals.keys();
-    mockChannel.approveNext(pendingId);
-
-    // Wait for the command to complete
-    await waitForCondition(async () => {
-      const statusRes = await request(mockApp)
-        .get(`/api/v1/status/${requestId}`)
-        .set('x-api-key', MOCK_KEY);
-      return statusRes.status === 200 && statusRes.body.status === 'completed';
-    }, 5000);
+    await approveAndWaitForCompletion(requestId);
 
     // Verify final result
     const statusRes = await request(mockApp)
@@ -500,20 +452,7 @@ describe('MockApprovalChannel integration', () => {
 
     const { requestId } = execRes.body;
 
-    // Wait for the async approval request to register in the mock channel
-    await waitForCondition(() => mockChannel.pendingApprovals.size >= 1, 5000);
-
-    // Approve the pending request
-    const [pendingId] = mockChannel.pendingApprovals.keys();
-    mockChannel.approveNext(pendingId);
-
-    // Wait for async execution to complete (poll the completed results cache)
-    await waitForCondition(async () => {
-      const statusRes = await request(mockApp)
-        .get(`/api/v1/status/${requestId}`)
-        .set('x-api-key', MOCK_KEY);
-      return statusRes.status === 200 && statusRes.body.status === 'completed';
-    }, 5000);
+    await approveAndWaitForCompletion(requestId);
 
     // Final status check
     const statusRes = await request(mockApp)
