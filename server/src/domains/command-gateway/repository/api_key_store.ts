@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import type { ApiKeyConfig, ApiKeysConfig } from '../types/command_types.js';
 import { loadJsonConfig } from '../../../lib/json_config_loader.js';
 import { createChildLogger } from '../../../lib/logger.js';
@@ -24,8 +24,12 @@ function isApiKeysConfig(data: unknown): data is ApiKeysConfig {
   return d.keys.every(isValidKeyEntry);
 }
 
-export function hashApiKey(key: string, salt: string): string {
+function hashLegacyApiKey(key: string, salt: string): string {
   return createHash('sha256').update(salt + key).digest('hex');
+}
+
+export function hashApiKey(key: string, salt: string): string {
+  return scryptSync(key, salt, 64).toString('hex');
 }
 
 export function generateApiKey(): { key: string; salt: string; keyHash: string } {
@@ -54,7 +58,9 @@ export function createApiKeyStore(configPath: string): ApiKeyStore {
     findByKey(rawKey: string): ApiKeyConfig | undefined {
       for (const keyConfig of config.keys) {
         if (!keyConfig.active) continue;
-        const hash = hashApiKey(rawKey, keyConfig.salt);
+        const hash = keyConfig.keyHash.length === 64
+          ? hashLegacyApiKey(rawKey, keyConfig.salt)
+          : hashApiKey(rawKey, keyConfig.salt);
         if (hash.length === keyConfig.keyHash.length && timingSafeEqual(Buffer.from(hash), Buffer.from(keyConfig.keyHash))) {
           return keyConfig;
         }

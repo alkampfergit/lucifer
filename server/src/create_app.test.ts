@@ -4,8 +4,8 @@ import { describe, expect, it, vi, afterEach } from 'vitest'
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { createHash } from 'node:crypto'
 import { createApp } from './create_app.js'
+import { hashApiKey } from './domains/command-gateway/repository/api_key_store.js'
 import { closeDatabase } from './domains/command-gateway/repository/database.js'
 
 describe('createApp', () => {
@@ -68,7 +68,7 @@ describe('createApp boot scenarios', () => {
 
     const testKey = 'luc_boottest789'
     const testSalt = 'bootsalt12345678'
-    const testHash = createHash('sha256').update(testSalt + testKey).digest('hex')
+    const testHash = hashApiKey(testKey, testSalt)
 
     writeFileSync(join(tempDir, 'lucifer.json'), JSON.stringify({
       port: 0,

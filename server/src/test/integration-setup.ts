@@ -1,7 +1,7 @@
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { createHash } from 'node:crypto';
 import { createApp } from '../create_app.js';
+import { hashApiKey } from '../domains/command-gateway/repository/api_key_store.js';
 
 export interface TestAppContext {
   app: ReturnType<typeof createApp>['app'];
@@ -23,7 +23,7 @@ export function createTestAppContext(
 
   const testKey = `luc_${label}key123`;
   const testSalt = `${label}salt123456789`;
-  const testHash = createHash('sha256').update(testSalt + testKey).digest('hex');
+  const testHash = hashApiKey(testKey, testSalt);
 
   mkdirSync(configDir, { recursive: true });
   mkdirSync(dataDir, { recursive: true });

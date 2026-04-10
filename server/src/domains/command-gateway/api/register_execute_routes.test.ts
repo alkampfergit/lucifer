@@ -2,13 +2,12 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { createHash } from 'node:crypto';
 import express from 'express';
 import Database from 'better-sqlite3';
 import { registerExecuteRoutes } from './register_execute_routes.js';
 import { createApprovalStore } from '../repository/approval_store.js';
 import { createAuditLog } from '../repository/audit_log.js';
-import { createApiKeyStore } from '../repository/api_key_store.js';
+import { createApiKeyStore, hashApiKey } from '../repository/api_key_store.js';
 import { createCommandRulesStore } from '../repository/command_rules_store.js';
 import { createPendingRequestStore } from '../repository/pending_request_store.js';
 import type { ApprovalChannel, ApprovalDecision, ApprovalMatchType, ShellRiskAnalysis } from '../types/command_types.js';
@@ -279,7 +278,7 @@ describe('MockApprovalChannel integration', () => {
 
   const MOCK_KEY = 'luc_mockapprovaltest456';
   const MOCK_SALT = 'mocksalt123456789';
-  const MOCK_HASH = createHash('sha256').update(MOCK_SALT + MOCK_KEY).digest('hex');
+  const MOCK_HASH = hashApiKey(MOCK_KEY, MOCK_SALT);
 
   let mockApp: express.Express;
   let timeoutApp: express.Express;
