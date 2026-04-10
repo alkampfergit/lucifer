@@ -7,7 +7,13 @@
 ## Boundary Map
 
 ```
-┌─────────────────┐   HTTP JSON   ┌────────────────────┐
+                              ┌────────────────────┐
+                              │  command-gateway   │
+                              │ Auth, Rules, Exec  │
+                              │ Telegram, SQLite   │
+                              └────────┬───────────┘
+                                       │
+┌─────────────────┐   HTTP JSON   ┌────┴───────────────┐
 │    web-shell    │ ────────────► │    platform-api    │
 │ React + Vite UI │               │ Express + Node API │
 └────────┬────────┘               └─────────┬──────────┘
@@ -36,6 +42,16 @@
 - **Public API surface**: `/api/health` and the static site entrypoint.
 - **Data ownership**: Process environment and server-generated health metadata.
 
+### command-gateway
+
+- **Responsibility**: Authenticate API callers, match commands against policy rules, manage Telegram approval flow, execute approved commands, and log all activity.
+- **Bounded context**: API key validation, command-rules matching, SQLite approval/audit storage, Telegram bot integration, child process execution.
+- **Published events**: None (approval decisions stored in SQLite, audit log appended).
+- **Consumed events**: Telegram callback queries (inline button presses).
+- **Public API surface**: `POST /api/v1/execute`, `GET /api/v1/status/:requestId`.
+- **Data ownership**: SQLite database (`data/lucifer.db`) for approvals and audit log. Reads JSON config files (`api-keys.json`, `command-rules.json`) owned by the operator.
+- **Key interfaces**: `ApprovalChannel` (abstracts Telegram vs auto-approve vs future channels).
+
 ### shared
 
 - **Responsibility**: Hold contracts and utilities that may be safely reused across domains.
@@ -51,6 +67,11 @@
 |---|---|---|---|
 | `web-shell` | `platform-api` | HTTP GET `/api/health` | Server response shape: `server/src/domains/platform-api/types/health_report.ts`; browser validation contract: `src/domains/web-shell/types/health_status.ts` |
 | `platform-api` | `web-shell` | Static asset hosting | `dist/client/index.html` |
+| External caller | `command-gateway` | HTTP POST `/api/v1/execute` | Request: `{ command, cwd? }` + `x-api-key` header; Response: `ExecutionResult` |
+| External caller | `command-gateway` | HTTP GET `/api/v1/status/:requestId` | Response: `{ requestId, status, stdout?, stderr?, exitCode? }` |
+| `command-gateway` | Telegram Bot API | HTTPS (telegraf) | Inline keyboard messages + callback queries |
+| `command-gateway` | SQLite | `better-sqlite3` | `data/lucifer.db` (approvals + audit_log tables) |
+| `command-gateway` | JSON config | `fs.readFileSync` | `config/api-keys.json`, `config/command-rules.json` |
 
 > Note: `/api/health` does not yet live in a true shared DTO module. The browser-side
 > `HealthStatus` contract in `web-shell` must remain in sync with the server's

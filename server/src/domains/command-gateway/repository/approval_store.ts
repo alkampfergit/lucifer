@@ -18,15 +18,17 @@ export interface ApprovalStore {
 }
 
 export function createApprovalStore(db: Database.Database): ApprovalStore {
+  const APPROVAL_COLUMNS = `id, command, match_type as matchType, duration, approved_at as approvedAt, expires_at as expiresAt, approved_by as approvedBy`;
+
   const findExact = db.prepare<[string, string], CommandApproval>(
-    `SELECT * FROM approvals
+    `SELECT ${APPROVAL_COLUMNS} FROM approvals
      WHERE match_type = 'exact' AND command = ?
      AND (expires_at IS NULL OR expires_at > ?)
      ORDER BY approved_at DESC LIMIT 1`,
   );
 
   const findPrefix = db.prepare<[string, string], CommandApproval>(
-    `SELECT * FROM approvals
+    `SELECT ${APPROVAL_COLUMNS} FROM approvals
      WHERE match_type = 'prefix' AND ? LIKE (command || '%')
      AND (expires_at IS NULL OR expires_at > ?)
      ORDER BY LENGTH(command) DESC LIMIT 1`,
@@ -42,7 +44,7 @@ export function createApprovalStore(db: Database.Database): ApprovalStore {
   );
 
   const selectAll = db.prepare<[number, number], CommandApproval>(
-    `SELECT * FROM approvals ORDER BY approved_at DESC LIMIT ? OFFSET ?`,
+    `SELECT ${APPROVAL_COLUMNS} FROM approvals ORDER BY approved_at DESC LIMIT ? OFFSET ?`,
   );
 
   const deleteById = db.prepare<[number]>(
