@@ -28,16 +28,48 @@ setInterval(() => {
   }
 }, 60_000);
 
-export function registerExecuteRoutes(
-  router: Router,
-  config: LuciferConfig,
-  apiKeyStore: ApiKeyStore,
-  commandRulesStore: CommandRulesStore,
-  approvalStore: ApprovalStore,
-  pendingStore: PendingRequestStore,
-  auditLog: AuditLog,
-  approvalChannel: ApprovalChannel,
-): void {
+interface ValidationError {
+  statusCode: number;
+  body: ErrorResponse;
+}
+
+function validateExecuteInput(command: unknown, cwd: unknown): ValidationError | null {
+  if (!command || typeof command !== 'string') {
+    return {
+      statusCode: 400,
+      body: { code: 'MISSING_COMMAND', message: 'Request body must include a "command" string', retryable: false },
+    };
+  }
+  if (command.length > 4096) {
+    return {
+      statusCode: 400,
+      body: { code: 'COMMAND_TOO_LONG', message: 'Command exceeds 4096 character limit', retryable: false },
+    };
+  }
+  if (cwd !== undefined) {
+    if (typeof cwd !== 'string' || cwd.includes('..') || !cwd.startsWith('/')) {
+      return {
+        statusCode: 400,
+        body: { code: 'INVALID_CWD', message: 'cwd must be an absolute path without ".." components', retryable: false },
+      };
+    }
+  }
+  return null;
+}
+
+export interface ExecuteRouteDeps {
+  router: Router;
+  config: LuciferConfig;
+  apiKeyStore: ApiKeyStore;
+  commandRulesStore: CommandRulesStore;
+  approvalStore: ApprovalStore;
+  pendingStore: PendingRequestStore;
+  auditLog: AuditLog;
+  approvalChannel: ApprovalChannel;
+}
+
+export function registerExecuteRoutes(deps: ExecuteRouteDeps): void {
+  const { router, config, apiKeyStore, commandRulesStore, approvalStore, pendingStore, auditLog, approvalChannel } = deps;
   const rateLimiter = createRateLimiter(
     process.env.NODE_ENV === 'development' ? 1000 : config.rateLimitPerMinute,
   );
@@ -45,37 +77,16 @@ export function registerExecuteRoutes(
   router.post('/api/v1/execute', async (req: Request, res: Response) => {
     const rawKey = req.headers['x-api-key'] as string | undefined;
     const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.socket.remoteAddress ?? 'unknown';
-    const { command, cwd } = req.body as { command?: string; cwd?: string };
+    const { command: rawCommand, cwd } = req.body as { command?: string; cwd?: string };
 
-    if (!command || typeof command !== 'string') {
-      res.status(400).json({
-        code: 'MISSING_COMMAND',
-        message: 'Request body must include a "command" string',
-        retryable: false,
-      } satisfies ErrorResponse);
+    const validationError = validateExecuteInput(rawCommand, cwd);
+    if (validationError) {
+      res.status(validationError.statusCode).json(validationError.body);
       return;
     }
 
-    if (command.length > 4096) {
-      res.status(400).json({
-        code: 'COMMAND_TOO_LONG',
-        message: 'Command exceeds 4096 character limit',
-        retryable: false,
-      } satisfies ErrorResponse);
-      return;
-    }
-
-    // Validate cwd if provided
-    if (cwd !== undefined) {
-      if (typeof cwd !== 'string' || cwd.includes('..') || !cwd.startsWith('/')) {
-        res.status(400).json({
-          code: 'INVALID_CWD',
-          message: 'cwd must be an absolute path without ".." components',
-          retryable: false,
-        } satisfies ErrorResponse);
-        return;
-      }
-    }
+    // After validation, command is guaranteed to be a string
+    const command = rawCommand!;
 
     const authResult = authenticateRequest(apiKeyStore, rateLimiter, rawKey, ip);
     if (!authResult.ok) {
@@ -192,10 +203,10 @@ export function registerExecuteRoutes(
         });
 
         // Fire and forget the approval request + execution
-        processApprovalAsync(
+        processApprovalAsync({
           requestId, command, apiKeyName, ip, cwd, riskAnalysis,
           config, approvalChannel, pendingStore, auditLog, abortController,
-        );
+        });
       }
 
       res.status(202).json({
@@ -337,19 +348,22 @@ export function registerExecuteRoutes(
   });
 }
 
-async function processApprovalAsync(
-  requestId: string,
-  command: string,
-  apiKeyName: string,
-  ip: string,
-  cwd: string | undefined,
-  riskAnalysis: ReturnType<typeof analyzeCommandRisk>,
-  config: LuciferConfig,
-  approvalChannel: ApprovalChannel,
-  pendingStore: PendingRequestStore,
-  auditLog: AuditLog,
-  abortController: AbortController,
-): Promise<void> {
+interface ApprovalAsyncContext {
+  requestId: string;
+  command: string;
+  apiKeyName: string;
+  ip: string;
+  cwd: string | undefined;
+  riskAnalysis: ReturnType<typeof analyzeCommandRisk>;
+  config: LuciferConfig;
+  approvalChannel: ApprovalChannel;
+  pendingStore: PendingRequestStore;
+  auditLog: AuditLog;
+  abortController: AbortController;
+}
+
+async function processApprovalAsync(ctx: ApprovalAsyncContext): Promise<void> {
+  const { requestId, command, apiKeyName, ip, cwd, riskAnalysis, config, approvalChannel, pendingStore, auditLog, abortController } = ctx;
   try {
     const approvalResult = await Promise.race([
       approvalChannel.requestApproval(command, apiKeyName, ip, requestId, riskAnalysis),

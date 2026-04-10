@@ -117,7 +117,8 @@ async function runLog(limit: number) {
     return;
   }
 
-  for (const entry of entries.reverse()) {
+  const reversed = [...entries].reverse();
+  for (const entry of reversed) {
     const time = entry.ts.replace('T', ' ').replace(/\.\d+Z$/, 'Z');
     const parts = [time, entry.type.toUpperCase().padEnd(16)];
     if (entry.command) parts.push(entry.command);
@@ -239,7 +240,9 @@ async function main() {
   process.on('SIGINT', shutdown);
 }
 
-main().catch(err => {
+try {
+  await main();
+} catch (err) {
   console.error('Fatal error:', err);
   process.exit(1);
-});
+}
