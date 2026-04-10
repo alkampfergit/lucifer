@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -lt 2 || $# -gt 3 ]]; then
-  echo "Usage: $0 <project-key> <issue-key> [context-lines]" >&2
+if [[ $# -lt 2 || $# -gt 4 ]]; then
+  echo "Usage: $0 <project-key> <issue-key> [context-lines] [pull-request]" >&2
   exit 1
 fi
 
 project_key="$1"
 issue_key="$2"
 context_lines="${3:-2}"
+pull_request="${4:-${SONARCLOUD_PULL_REQUEST:-}}"
 base_url="${SONARCLOUD_BASE_URL:-https://sonarcloud.io}"
 
 tmp_dir="$(mktemp -d)"
@@ -20,9 +21,12 @@ snippet_json="$tmp_dir/snippet.json"
 snippet_text="$tmp_dir/snippet.txt"
 suggested_fix_text="$tmp_dir/suggested_fix.txt"
 
-curl -sS \
-  "$base_url/api/issues/search?componentKeys=$project_key&issues=$issue_key&additionalFields=_all&ps=1" \
-  >"$issue_json"
+issue_query="$base_url/api/issues/search?componentKeys=$project_key&issues=$issue_key&additionalFields=_all&ps=1"
+if [[ -n "$pull_request" ]]; then
+  issue_query="${issue_query}&pullRequest=${pull_request}"
+fi
+
+curl -sS "$issue_query" >"$issue_json"
 
 if [[ "$(jq '.issues | length' "$issue_json")" -eq 0 ]]; then
   echo "Issue not found for project '$project_key': $issue_key" >&2
@@ -43,9 +47,12 @@ curl -sS \
   "$base_url/api/rules/show?organization=$organization&key=$rule_key" \
   >"$rule_json"
 
-curl -sS \
-  "$base_url/api/sources/lines?key=$component_key&from=$from_line&to=$to_line" \
-  >"$snippet_json"
+snippet_query="$base_url/api/sources/lines?key=$component_key&from=$from_line&to=$to_line"
+if [[ -n "$pull_request" ]]; then
+  snippet_query="${snippet_query}&pullRequest=${pull_request}"
+fi
+
+curl -sS "$snippet_query" >"$snippet_json"
 
 jq -r '.sources[] | "\(.line):\(.code)"' "$snippet_json" \
   | perl -pe 's/<[^>]+>//g; s/&gt;/>/g; s/&lt;/</g; s/&amp;/&/g; s/&quot;/"/g; s/&#39;/'"'"'/g;' \
@@ -119,6 +126,7 @@ jq -n \
   '{
     issue: {
       key: $issue[0].issues[0].key,
+      pullRequest: ($issue[0].issues[0].pullRequest // empty),
       rule: $issue[0].issues[0].rule,
       severity: $issue[0].issues[0].severity,
       type: $issue[0].issues[0].type,

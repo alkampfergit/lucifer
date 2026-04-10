@@ -8,7 +8,7 @@ description: >
   for high-severity, medium-severity, or BUG issues.
 metadata:
   author: codex
-  version: 1.1.0
+  version: 1.2.0
   category: workflow
   required-inputs:
     - sonarcloud project key from the user prompt
@@ -16,6 +16,8 @@ metadata:
     - severity counts
     - issue details grouped by severity
     - fix-target issue list for high, medium, and BUG requests
+    - current-PR quality gate, issue, and security hotspot summary
+    - verified SonarCloud analysis link for the current PR
     - per-issue source snippets and rule metadata
     - per-issue suggested fixes
 ---
@@ -30,6 +32,17 @@ Use the helper script when the user wants rich detail for each violation:
 - Script: `scripts/fetch_issue_details.sh`
 - Output: one JSON object with issue metadata, rule metadata, flow locations,
   a plain-text source snippet around the failing line, and a suggested fix.
+
+Use these helper scripts for PR-scoped SonarCloud work:
+
+- Script: `scripts/fetch_pr_analysis.sh`
+- Output: one JSON object with the current PR from `gh`, SonarCloud PR
+  analysis metadata, quality gate status, PR issues, PR security hotspots, and
+  a verified canonical SonarCloud analysis URL.
+
+- Script: `scripts/fetch_hotspot_details.sh`
+- Output: one JSON object with hotspot metadata, rule metadata, a plain-text
+  source snippet, and a suggested fix.
 
 ## Scope
 
@@ -231,6 +244,135 @@ The script returns:
 - a plain-text code snippet around the failing location
 - a `suggestedFix` field with a concrete change recommendation
 
+### 9. Get SonarCloud results for the current PR
+
+When the user asks for Sonar results "for the current PR", use `gh` to resolve
+the PR number from the checked-out branch first. Do not guess the PR number
+from branch names or environment variables if `gh` can answer it directly.
+
+Use:
+
+```bash
+gh pr view --json number,url,headRefName,baseRefName,headRefOid,state
+```
+
+If the user explicitly names a PR number, use:
+
+```bash
+gh pr view <pr-number> --json number,url,headRefName,baseRefName,headRefOid,state
+```
+
+Then fetch the matching SonarCloud PR analysis:
+
+```bash
+curl -sS \
+  "$SONARCLOUD_BASE_URL/api/project_pull_requests/list?project=$SONARCLOUD_PROJECT_KEY"
+```
+
+Select the PR whose `.key` matches the GitHub PR number.
+
+Fetch the PR quality gate:
+
+```bash
+curl -sS \
+  "$SONARCLOUD_BASE_URL/api/qualitygates/project_status?projectKey=$SONARCLOUD_PROJECT_KEY&pullRequest=$PR_NUMBER"
+```
+
+Fetch PR issues:
+
+```bash
+curl -sS \
+  "$SONARCLOUD_BASE_URL/api/issues/search?componentKeys=$SONARCLOUD_PROJECT_KEY&pullRequest=$PR_NUMBER&ps=500&additionalFields=_all"
+```
+
+Fetch PR security hotspots:
+
+```bash
+curl -sS \
+  "$SONARCLOUD_BASE_URL/api/hotspots/search?projectKey=$SONARCLOUD_PROJECT_KEY&pullRequest=$PR_NUMBER&ps=500"
+```
+
+Use the helper script for the full combined payload:
+
+```bash
+.claude/skills/sonar/scripts/fetch_pr_analysis.sh \
+  "$SONARCLOUD_PROJECT_KEY" \
+  "$PR_NUMBER"
+```
+
+Or omit the PR number to let the script resolve the current PR with `gh`:
+
+```bash
+.claude/skills/sonar/scripts/fetch_pr_analysis.sh \
+  "$SONARCLOUD_PROJECT_KEY"
+```
+
+### 10. Verify the SonarCloud analysis link for the current PR
+
+Use `gh` to confirm the PR has a SonarCloud check run:
+
+```bash
+gh pr view "$PR_NUMBER" --json statusCheckRollup \
+  | jq '.statusCheckRollup[] | select(.name == "SonarCloud Code Analysis")'
+```
+
+GitHub may expose `detailsUrl` as only `https://sonarcloud.io`, which is not
+the deep link to the PR analysis page. In that case, construct the canonical
+analysis URL yourself:
+
+```bash
+analysis_url="$SONARCLOUD_BASE_URL/project/overview?id=$SONARCLOUD_PROJECT_KEY&pullRequest=$PR_NUMBER"
+curl -sS -o /dev/null -w '%{http_code}\n' "$analysis_url"
+```
+
+Treat the SonarCloud PR analysis link as verified only when all three checks
+pass:
+
+1. `gh` shows a `SonarCloud Code Analysis` check run on the PR
+2. `api/project_pull_requests/list` contains the same PR number
+3. the canonical analysis URL returns HTTP `200`
+
+`fetch_pr_analysis.sh` performs those checks and returns:
+
+- `github.sonarCheck`
+- `analysis.verified`
+- `analysis.analysisUrl`
+- `analysis.verification`
+- `analysis.sonarPullRequest`
+
+### 11. Get detailed fix data for PR issues and security hotspots
+
+For PR issues, use the PR-aware issue helper:
+
+```bash
+.claude/skills/sonar/scripts/fetch_issue_details.sh \
+  "$SONARCLOUD_PROJECT_KEY" \
+  "$ISSUE_KEY" \
+  2 \
+  "$PR_NUMBER"
+```
+
+This scopes both the issue lookup and the source snippet to the PR when the
+issue only exists on new code in the pull request.
+
+For PR security hotspots, use:
+
+```bash
+.claude/skills/sonar/scripts/fetch_hotspot_details.sh \
+  "$SONARCLOUD_PROJECT_KEY" \
+  "$HOTSPOT_KEY" \
+  "$PR_NUMBER" \
+  2
+```
+
+This returns:
+
+- hotspot key, file path, status, line, and message
+- hotspot rule metadata and probability/category data
+- hotspot risk description and fix recommendations
+- a PR-scoped plain-text snippet around the hotspot
+- a `suggestedFix` field with a concrete remediation recommendation
+
 ## Special Tasks
 
 Use these shortcuts when the prompt is not just "list issues" but asks for a
@@ -334,6 +476,26 @@ Then:
 5. if the prompt asks to implement fixes, fetch detailed payloads and work the
    selected issues in priority order
 
+When the user says something like:
+
+`Check Sonar for the current PR and give me what to fix`
+
+extract:
+
+- SonarCloud project key from the prompt
+- task mode: current PR analysis
+
+Then:
+
+1. use `gh pr view` to determine the current PR number
+2. use `gh pr view --json statusCheckRollup` to verify the SonarCloud check is present
+3. query `api/project_pull_requests/list` and verify the PR exists in SonarCloud
+4. construct `project/overview?id=...&pullRequest=...` and verify it returns HTTP `200`
+5. fetch the PR quality gate, PR issues, and PR security hotspots
+6. if issues exist, fetch details for each issue with `fetch_issue_details.sh`
+7. if hotspots exist, fetch details for each hotspot with `fetch_hotspot_details.sh`
+8. report the gate status, analysis link, issues, hotspots, and concrete fix guidance
+
 ## Output Shape
 
 When reporting results, group them by severity and include a few fields per
@@ -373,6 +535,16 @@ For a detailed violation report, include:
 - `snippet`
 - `rule metadata`
 - `suggested fix`
+
+For a PR analysis report, also include:
+
+- `pr.number`
+- `analysis.analysisUrl`
+- `analysis.verified`
+- `qualityGate.status`
+- failing quality gate conditions
+- `issues.total`
+- `hotspots.total`
 
 ## Troubleshooting
 
