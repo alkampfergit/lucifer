@@ -103,42 +103,34 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
-      contents: read
       id-token: write
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           registry-url: https://registry.npmjs.org
 
-      - name: Install dependencies
-        run: npm ci
+      - run: npm ci
 
-      - name: Build
-        run: npm run build
+      - run: npm run build
 
-      - name: Set package version
+      - name: Set version and publish
         run: |
           VERSION="${{ needs.version.outputs.version }}"
           CHANNEL="${{ needs.version.outputs.channel }}"
-          echo "Publishing version: $VERSION (channel: $CHANNEL)"
+          echo "Publishing lucifer-gate@${VERSION} (tag: ${CHANNEL})"
           npm version "$VERSION" --no-git-tag-version --allow-same-version
 
-      - name: Publish to npm
-        run: |
-          CHANNEL="${{ needs.version.outputs.channel }}"
-          echo "Publishing lucifer-gate@${{ needs.version.outputs.version }} to npm (tag: $CHANNEL)"
           if [ "$CHANNEL" = "stable" ]; then
             npm publish --access public --provenance
           elif [ "$CHANNEL" = "beta" ]; then
-            npm publish --access public --tag beta --provenance
+            npm publish --tag beta --access public --provenance
           else
-            npm publish --access public --tag alpha --provenance
+            npm publish --tag alpha --access public --provenance
           fi
 
   build-docker:
