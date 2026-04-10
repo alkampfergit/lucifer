@@ -11,6 +11,10 @@
 - When a task fails, encode the missing guidance in docs, scripts, or CI.
 - Keep this file short and stable. Push detail into the linked docs, skills, and checks.
 
+## External verification
+
+- SonarCloud is enabled on public project alkampfergit_lucifer
+
 ## Identity
 
 - **Project**: Lucifer Gate
@@ -84,6 +88,7 @@ They live in `.claude/skills/` as the single source of truth.
 | `add-domain` | Bootstrap a new domain scaffold | [.claude/skills/add-domain/SKILL.md](.claude/skills/add-domain/SKILL.md) |
 | `doc-gardening` | Keep documentation accurate | [.claude/skills/doc-gardening/SKILL.md](.claude/skills/doc-gardening/SKILL.md) |
 | `meta` | Capture reusable learnings | [.claude/skills/meta/SKILL.md](.claude/skills/meta/SKILL.md) |
+| `sonar` | Fetch SonarCloud issues and split them by severity | [.claude/skills/sonar/SKILL.md](.claude/skills/sonar/SKILL.md) |
 
 ## Tool-Specific Bootstrap Files
 
