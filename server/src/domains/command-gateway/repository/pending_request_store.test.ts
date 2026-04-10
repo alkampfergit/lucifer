@@ -116,7 +116,7 @@ describe('PendingRequestStore', () => {
 
       expect(removed).toBe(1);
       expect(request.reject).toHaveBeenCalledWith(expect.any(Error));
-      const errorArg = (request.reject as ReturnType<typeof vi.fn>).mock.calls[0][0] as Error;
+      const errorArg = (request.reject as ReturnType<typeof vi.fn>).mock.calls[0][0];
       expect(errorArg.message).toBe('Approval timed out');
       expect(abortSpy).toHaveBeenCalled();
       expect(store.get('req-1')).toBeUndefined();

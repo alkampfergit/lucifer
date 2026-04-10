@@ -13,9 +13,15 @@ import { createCommandRulesStore } from '../repository/command_rules_store.js';
 
 function shapeOf(obj: Record<string, unknown>): Record<string, string> {
   const shape: Record<string, string> = {};
-  for (const key of Object.keys(obj).sort()) {
+  for (const key of Object.keys(obj).sort((a, b) => a.localeCompare(b))) {
     const value = obj[key];
-    shape[key] = value === null ? 'null' : value === undefined ? 'undefined' : typeof value;
+    if (value === null) {
+      shape[key] = 'null';
+    } else if (value === undefined) {
+      shape[key] = 'undefined';
+    } else {
+      shape[key] = typeof value;
+    }
   }
   return shape;
 }

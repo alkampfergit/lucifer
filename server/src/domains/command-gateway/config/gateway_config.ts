@@ -2,17 +2,21 @@ import { resolve } from 'node:path';
 import type { LuciferConfig } from '../types/command_types.js';
 import { loadJsonConfig } from '../../../lib/json_config_loader.js';
 
+function checkOptionalType(d: Record<string, unknown>, key: string, expectedType: string): boolean {
+  return d[key] === undefined || typeof d[key] === expectedType;
+}
+
 function isLuciferConfig(data: unknown): data is LuciferConfig {
   if (typeof data !== 'object' || data === null) return false;
   const d = data as Record<string, unknown>;
-  if (typeof d.port !== 'undefined' && typeof d.port !== 'number') return false;
-  if (typeof d.approvalTimeoutSeconds !== 'undefined' && typeof d.approvalTimeoutSeconds !== 'number') return false;
-  if (typeof d.executionTimeoutSeconds !== 'undefined' && typeof d.executionTimeoutSeconds !== 'number') return false;
-  if (typeof d.maxConcurrentExecutions !== 'undefined' && typeof d.maxConcurrentExecutions !== 'number') return false;
-  if (typeof d.maxOutputBytes !== 'undefined' && typeof d.maxOutputBytes !== 'number') return false;
-  if (typeof d.rateLimitPerMinute !== 'undefined' && typeof d.rateLimitPerMinute !== 'number') return false;
-  if (typeof d.onApprovalTimeout !== 'undefined' && d.onApprovalTimeout !== 'deny' && d.onApprovalTimeout !== 'approve-with-warning') return false;
-  if (typeof d.dataDir !== 'undefined' && typeof d.dataDir !== 'string') return false;
+  if (!checkOptionalType(d, 'port', 'number')) return false;
+  if (!checkOptionalType(d, 'approvalTimeoutSeconds', 'number')) return false;
+  if (!checkOptionalType(d, 'executionTimeoutSeconds', 'number')) return false;
+  if (!checkOptionalType(d, 'maxConcurrentExecutions', 'number')) return false;
+  if (!checkOptionalType(d, 'maxOutputBytes', 'number')) return false;
+  if (!checkOptionalType(d, 'rateLimitPerMinute', 'number')) return false;
+  if (d.onApprovalTimeout !== undefined && d.onApprovalTimeout !== 'deny' && d.onApprovalTimeout !== 'approve-with-warning') return false;
+  if (!checkOptionalType(d, 'dataDir', 'string')) return false;
   return true;
 }
 

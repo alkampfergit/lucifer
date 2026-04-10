@@ -8,14 +8,14 @@ function isCommandRulesConfig(data: unknown): data is CommandRulesConfig {
   if (typeof data !== 'object' || data === null) return false;
   const d = data as Record<string, unknown>;
   if (!Array.isArray(d.rules)) return false;
-  const validActions = ['always_approve', 'telegram_approve', 'always_deny'];
+  const validActions = new Set(['always_approve', 'telegram_approve', 'always_deny']);
   for (const rule of d.rules) {
     if (typeof rule !== 'object' || rule === null) return false;
     const r = rule as Record<string, unknown>;
     if (typeof r.prefix !== 'string') return false;
-    if (typeof r.action !== 'string' || !validActions.includes(r.action)) return false;
+    if (typeof r.action !== 'string' || !validActions.has(r.action)) return false;
   }
-  if (d.defaultAction !== undefined && !validActions.includes(d.defaultAction as string)) return false;
+  if (d.defaultAction !== undefined && !validActions.has(d.defaultAction as string)) return false;
   return true;
 }
 

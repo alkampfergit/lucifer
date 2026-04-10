@@ -18,11 +18,12 @@ const mockBot = {
   telegram: { sendMessage: mockSendMessage },
 };
 
+// Must use a real function (not arrow) so it can be called with `new`
+function MockTelegraf() {
+  return mockBot;
+}
+
 vi.mock('telegraf', () => {
-  // Must use a real function (not arrow) so it can be called with `new`
-  function MockTelegraf() {
-    return mockBot;
-  }
   return {
     Telegraf: MockTelegraf,
     Markup: {
@@ -87,7 +88,7 @@ function addPendingRequest(
 function createCtx(data: string | undefined, chatId: number = 12345, fromId: number = 67890) {
   return {
     callbackQuery: {
-      ...(data !== undefined ? { data } : {}),
+      ...(data === undefined ? {} : { data }),
       message: { chat: { id: chatId } },
       from: { id: fromId },
     },
