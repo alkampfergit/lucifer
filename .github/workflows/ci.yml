@@ -3,8 +3,6 @@ name: CI
 on:
   pull_request:
   push:
-    branches:
-      - main
 
 permissions:
   contents: read
@@ -15,6 +13,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -37,5 +38,145 @@ jobs:
       - name: Build
         run: npm run build
 
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.calc.outputs.version }}
+      channel: ${{ steps.calc.outputs.channel }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Calculate version
+        id: calc
+        run: |
+          # Get the nearest tag (semver format)
+          NEAREST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0")
+          echo "Nearest tag: $NEAREST_TAG"
+
+          # Strip leading 'v' if present
+          BASE_VERSION="${NEAREST_TAG#v}"
+          echo "Base version: $BASE_VERSION"
+
+          # Count commits since tag
+          COMMITS_SINCE=$(git rev-list "${NEAREST_TAG}..HEAD" --count 2>/dev/null || echo "0")
+          echo "Commits since tag: $COMMITS_SINCE"
+
+          # Short SHA for uniqueness
+          SHORT_SHA=$(git rev-parse --short=7 HEAD)
+          echo "Short SHA: $SHORT_SHA"
+
+          # Determine channel based on branch
+          BRANCH="${GITHUB_REF_NAME}"
+          # For PRs, use the head ref
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            BRANCH="${GITHUB_HEAD_REF}"
+          fi
+          echo "Branch: $BRANCH"
+
+          if [ "$BRANCH" = "master" ] || [ "$BRANCH" = "main" ]; then
+            CHANNEL="stable"
+            if [ "$COMMITS_SINCE" = "0" ]; then
+              VERSION="${BASE_VERSION}"
+            else
+              # Bump patch for commits after tag on master
+              IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE_VERSION"
+              NEXT_PATCH=$((PATCH + 1))
+              VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}"
+            fi
+          elif echo "$BRANCH" | grep -qE '^release/'; then
+            CHANNEL="beta"
+            VERSION="${BASE_VERSION}-beta.${COMMITS_SINCE}.${SHORT_SHA}"
+          else
+            CHANNEL="alpha"
+            VERSION="${BASE_VERSION}-alpha.${COMMITS_SINCE}.${SHORT_SHA}"
+          fi
+
+          echo "Computed version: $VERSION"
+          echo "Channel: $CHANNEL"
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
+
+  publish-npm:
+    needs: [validate, version]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Set package version
+        run: |
+          VERSION="${{ needs.version.outputs.version }}"
+          CHANNEL="${{ needs.version.outputs.channel }}"
+          echo "Publishing version: $VERSION (channel: $CHANNEL)"
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+
+      - name: Publish to npm
+        if: env.NPM_TOKEN != ''
+        run: |
+          CHANNEL="${{ needs.version.outputs.channel }}"
+          echo "Publishing lucifer-gate@${{ needs.version.outputs.version }} to npm (tag: $CHANNEL)"
+          if [ "$CHANNEL" = "stable" ]; then
+            npm publish --access public
+          elif [ "$CHANNEL" = "beta" ]; then
+            npm publish --access public --tag beta
+          else
+            npm publish --access public --tag alpha
+          fi
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Skip npm publish (no token)
+        if: env.NPM_TOKEN == ''
+        run: echo "NPM_TOKEN not set, skipping publish. Version would be ${{ needs.version.outputs.version }} (${{ needs.version.outputs.channel }})"
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  build-docker:
+    needs: [validate, version]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build Docker image
-        run: docker build -t lucifer:test .
+        run: |
+          VERSION="${{ needs.version.outputs.version }}"
+          CHANNEL="${{ needs.version.outputs.channel }}"
+          echo "Building Docker image: lucifer-gate:${VERSION}"
+
+          docker build \
+            --tag "lucifer-gate:${VERSION}" \
+            --tag "lucifer-gate:${CHANNEL}" \
+            --label "org.opencontainers.image.version=${VERSION}" \
+            --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+            --label "org.opencontainers.image.revision=${{ github.sha }}" \
+            .
+
+          echo "Docker image built successfully"
+          docker images lucifer-gate
