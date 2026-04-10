@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { ApiKeyConfig, ApiKeysConfig } from '../types/command_types.js';
 import { loadJsonConfig } from '../../../lib/json_config_loader.js';
 import { createChildLogger } from '../../../lib/logger.js';
@@ -8,7 +8,18 @@ const log = createChildLogger('api-key-store');
 function isApiKeysConfig(data: unknown): data is ApiKeysConfig {
   if (typeof data !== 'object' || data === null) return false;
   const d = data as Record<string, unknown>;
-  return Array.isArray(d.keys);
+  if (!Array.isArray(d.keys)) return false;
+  for (const key of d.keys) {
+    if (typeof key !== 'object' || key === null) return false;
+    const k = key as Record<string, unknown>;
+    if (typeof k.id !== 'string') return false;
+    if (typeof k.name !== 'string') return false;
+    if (typeof k.keyHash !== 'string') return false;
+    if (typeof k.salt !== 'string') return false;
+    if (typeof k.createdAt !== 'string') return false;
+    if (typeof k.active !== 'boolean') return false;
+  }
+  return true;
 }
 
 export function hashApiKey(key: string, salt: string): string {
@@ -42,7 +53,7 @@ export function createApiKeyStore(configPath: string): ApiKeyStore {
       for (const keyConfig of config.keys) {
         if (!keyConfig.active) continue;
         const hash = hashApiKey(rawKey, keyConfig.salt);
-        if (hash === keyConfig.keyHash) {
+        if (hash.length === keyConfig.keyHash.length && timingSafeEqual(Buffer.from(hash), Buffer.from(keyConfig.keyHash))) {
           return keyConfig;
         }
       }

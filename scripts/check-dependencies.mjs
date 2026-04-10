@@ -30,6 +30,7 @@ function listFiles(rootPath) {
       return listFiles(entryPath)
     }
 
+    if (/\.test\.(ts|tsx)$/.test(entry.name)) return []
     return /\.(ts|tsx)$/.test(entry.name) ? [entryPath] : []
   })
 }
