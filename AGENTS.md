@@ -13,9 +13,9 @@
 
 ## Identity
 
-- **Project**: Lucifer
-- **Purpose**: Azure-ready Node + React starter application with harness-engineering repo scaffolding
-- **Style**: TypeScript-first, layered domains, Vite frontend, Express backend
+- **Project**: Lucifer Gate
+- **Purpose**: AI agent command firewall with Telegram-based human approval. Gates shell commands through API key auth + configurable command rules + Telegram approval for humans-in-the-loop.
+- **Style**: TypeScript-first, layered domains, Vite frontend, Express backend, SQLite for runtime state, JSON for config
 
 ## Default Rules
 

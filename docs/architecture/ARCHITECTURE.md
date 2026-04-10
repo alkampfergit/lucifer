@@ -6,18 +6,20 @@
 ## System Overview
 
 ```
-Lucifer follows a layered domain architecture across a React frontend and an Express backend.
-The frontend owns the web shell and boundary validation for API responses.
-The backend owns HTTP APIs, static asset hosting, and Azure-ready runtime configuration.
+Lucifer Gate is an AI agent command firewall with Telegram-based human approval.
+It follows a layered domain architecture across a React frontend and an Express backend.
+The backend owns command authentication, rule matching, Telegram approval, command execution,
+and audit logging. Runtime state lives in SQLite, configuration in JSON files.
 ```
 
 ## Domain Map
 
 | Domain | Description | Status | Quality Grade |
 |---|---|---|---|
-| `web-shell` | React UI, client-side state, and browser API access | Active | See QUALITY |
+| `command-gateway` | Core domain: API key auth, command rules, approval flow, execution, audit | Active | See QUALITY |
 | `platform-api` | Express HTTP endpoints, server bootstrap, and deployment runtime | Active | See QUALITY |
-| `shared` | Cross-domain contracts and utilities safe to reuse | Active | See QUALITY |
+| `web-shell` | React UI, client-side state, and browser API access | Active | See QUALITY |
+| `shared` | Cross-domain contracts and utilities safe to reuse | Planned | See QUALITY |
 
 ## Layer Structure (per domain)
 

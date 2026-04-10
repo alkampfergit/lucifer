@@ -94,3 +94,87 @@ Build a Docker image from the repository and deploy it to Azure Container Apps u
 
 - **Azure App Service source deployment**: Rejected because the project now standardizes on container delivery.
 - **Manual portal deployments**: Rejected because they are harder to reproduce and review.
+
+---
+
+## ADR-004: Telegram as the approval channel for command gating
+
+**Date**: 2026-04-10
+**Status**: Accepted
+**Deciders**: alkampfergit
+
+### Context
+
+Lucifer needs a human-in-the-loop approval mechanism for commands from AI agents. The channel must be accessible on mobile, support interactive buttons, and be usable without building custom UI.
+
+### Decision
+
+Use Telegram Bot API (via telegraf) as the sole approval channel for v1. Approvals arrive as inline keyboard messages with buttons for exact/prefix approval at various durations.
+
+### Consequences
+
+- (+) Mobile-accessible, real-time notifications, no custom UI needed for v1
+- (+) Inline keyboards provide a natural UX for approve/deny decisions
+- (-) Requires users to set up a Telegram bot via @BotFather
+- (-) Single-channel dependency; Telegram outages block all approval-gated commands
+
+### Alternatives Considered
+
+- **Web-based approval UI**: Rejected for v1; requires building and hosting a separate interface
+- **Slack**: Viable but Telegram was preferred for the specific use case (personal tool)
+- **Email**: Rejected; too slow for real-time command approval
+
+---
+
+## ADR-005: Hybrid storage (JSON config + SQLite runtime)
+
+**Date**: 2026-04-10
+**Status**: Accepted
+**Deciders**: alkampfergit
+
+### Context
+
+Lucifer needs persistent storage for API keys, command rules, approval decisions, and audit logs. The original requirement was "no database, simple configuration files."
+
+### Decision
+
+Use JSON files for human-editable configuration (lucifer.json, api-keys.json, command-rules.json) and SQLite (better-sqlite3) for runtime state (approval decisions and audit log). SQLite is still a single file on disk with no external server dependency.
+
+### Consequences
+
+- (+) Config files are human-readable and editable with any text editor
+- (+) SQLite provides concurrent-safe writes, queryable audit data, and WAL mode
+- (+) No external database server or service required
+- (-) SQLite is not human-readable; requires CLI tools or the `lucifer log`/`stats` commands
+
+### Alternatives Considered
+
+- **All JSON files**: Rejected because concurrent writes between server and CLI admin are unsafe without file locking
+- **Full external database (Postgres, etc.)**: Rejected; too heavy for a single-instance tool
+
+---
+
+## ADR-006: Exact-match and prefix-match command approvals
+
+**Date**: 2026-04-10
+**Status**: Accepted
+**Deciders**: alkampfergit
+
+### Context
+
+When a human approves a command via Telegram, should that approval apply only to the exact command string, or to all commands sharing the same prefix?
+
+### Decision
+
+Support both exact and prefix matching. The Telegram approval buttons offer both options. Prefix approvals are capped at 8 hours maximum (never permanent) to limit privilege escalation risk.
+
+### Consequences
+
+- (+) Reduces approval fatigue for commonly used command prefixes (e.g., "git pull")
+- (+) Exact-match remains available for one-off commands
+- (-) Prefix matching can inadvertently approve dangerous variants (e.g., "git push --force" matching "git push")
+
+### Alternatives Considered
+
+- **Exact-match only**: Rejected because AI agents generate many command variants, causing fatal approval fatigue
+- **Glob/regex patterns**: Deferred to future version; adds complexity and config management burden

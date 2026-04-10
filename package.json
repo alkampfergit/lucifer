@@ -1,8 +1,11 @@
 {
-  "name": "lucifer",
-  "private": true,
+  "name": "lucifer-gate",
   "version": "0.1.0",
+  "description": "AI agent command firewall with Telegram-based human approval",
   "type": "module",
+  "bin": {
+    "lucifer-gate": "dist/server/cli.js"
+  },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "dev": "concurrently -k -n web,api \"npm run dev:web\" \"npm run dev:server\"",
@@ -19,14 +22,18 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "better-sqlite3": "^12.8.0",
     "express": "^5.2.1",
+    "pino": "^10.3.1",
     "react": "^19.2.4",
-    "react-dom": "^19.2.4"
+    "react-dom": "^19.2.4",
+    "telegraf": "^4.16.3"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^5.0.6",
     "@types/node": "^24.12.2",
     "@types/react": "^19.2.14",
@@ -39,6 +46,7 @@
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.4.0",
     "jsdom": "^29.0.1",
+    "pino-pretty": "^13.1.3",
     "supertest": "^7.2.2",
     "tsx": "^4.21.0",
     "typescript": "~6.0.2",
