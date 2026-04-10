@@ -4,16 +4,18 @@ description: >
   Fetch SonarCloud issues for a project and break them down by severity using
   the SonarCloud Web API. Use when a prompt includes a SonarCloud project key
   and you need current issue counts or issue details for BLOCKER, CRITICAL,
-  MAJOR, MINOR, and INFO severities.
+  MAJOR, MINOR, and INFO severities, or when the user wants a fix-target list
+  for high-severity, medium-severity, or BUG issues.
 metadata:
   author: codex
-  version: 1.0.0
+  version: 1.1.0
   category: workflow
   required-inputs:
     - sonarcloud project key from the user prompt
   outputs:
     - severity counts
     - issue details grouped by severity
+    - fix-target issue list for high, medium, and BUG requests
     - per-issue source snippets and rule metadata
     - per-issue suggested fixes
 ---
@@ -229,6 +231,78 @@ The script returns:
 - a plain-text code snippet around the failing location
 - a `suggestedFix` field with a concrete change recommendation
 
+## Special Tasks
+
+Use these shortcuts when the prompt is not just "list issues" but asks for a
+remediation target set.
+
+### Task: Fix high-severity, medium-severity, and all BUG issues
+
+Interpret Sonar severity language explicitly:
+
+- `high`: `BLOCKER` and `CRITICAL`
+- `medium`: `MAJOR`
+- `all bugs`: any issue with `type=BUG`, regardless of severity
+
+When the user asks to "fix high and medium and all bugs", build the target set
+as:
+
+1. all `BUG` issues
+2. all `BLOCKER` and `CRITICAL` issues
+3. all `MAJOR` issues
+
+De-duplicate by issue key before reporting because a `BUG` may also have one of
+those severities.
+
+Recommended query:
+
+```bash
+curl -sS \
+  "$SONARCLOUD_BASE_URL/api/issues/search?componentKeys=$SONARCLOUD_PROJECT_KEY&ps=500&additionalFields=_all" \
+  | jq '
+      .issues
+      | map(select(
+          .type == "BUG"
+          or .severity == "BLOCKER"
+          or .severity == "CRITICAL"
+          or .severity == "MAJOR"
+        ))
+      | unique_by(.key)'
+```
+
+Recommended reporting order:
+
+1. `BUG` issues first
+2. remaining `BLOCKER`
+3. remaining `CRITICAL`
+4. remaining `MAJOR`
+
+For each target issue, report at minimum:
+
+- `key`
+- `type`
+- `severity`
+- `component`
+- `line`
+- `rule`
+- `message`
+- `effort`
+
+If the user wants to actually fix them, fetch the detailed payload for each
+target issue with `fetch_issue_details.sh`, then implement fixes in this order:
+
+1. `BUG` issues
+2. `BLOCKER` or `CRITICAL` issues
+3. `MAJOR` issues
+
+Do not claim there are bugs just because there are critical code smells. Sonar
+`type` and Sonar `severity` are different dimensions and must be reported
+separately.
+
+If no issues match the target set, say that explicitly and include the query
+date plus the full severity and type counts so the user can see why nothing was
+selected.
+
 ## Prompt Handling
 
 When the user says something like:
@@ -241,6 +315,24 @@ extract:
 
 Then run the workflow with that key. Never replace the prompt-provided key with
 an example key from this skill.
+
+When the user says something like:
+
+`Fix high and medium Sonar issues and all bugs for alkampfergit_lucifer`
+
+extract:
+
+- SonarCloud project key: `alkampfergit_lucifer`
+- task mode: remediation target set
+
+Then:
+
+1. fetch the full issue list
+2. filter to `type=BUG` plus severities `BLOCKER`, `CRITICAL`, and `MAJOR`
+3. de-duplicate by issue key
+4. report the selected issues in the recommended order above
+5. if the prompt asks to implement fixes, fetch detailed payloads and work the
+   selected issues in priority order
 
 ## Output Shape
 
