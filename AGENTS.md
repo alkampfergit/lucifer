@@ -89,6 +89,7 @@ They live in `.claude/skills/` as the single source of truth.
 | `doc-gardening` | Keep documentation accurate | [.claude/skills/doc-gardening/SKILL.md](.claude/skills/doc-gardening/SKILL.md) |
 | `meta` | Capture reusable learnings | [.claude/skills/meta/SKILL.md](.claude/skills/meta/SKILL.md) |
 | `sonar` | Fetch SonarCloud issues and split them by severity | [.claude/skills/sonar/SKILL.md](.claude/skills/sonar/SKILL.md) |
+| `github-pr-fixer` | Watch the current PR, fix failing checks, and loop push/recheck up to three rounds | [.claude/skills/github-pr-fixer/SKILL.md](.claude/skills/github-pr-fixer/SKILL.md) |
 
 ## Tool-Specific Bootstrap Files
 
