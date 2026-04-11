@@ -26,7 +26,7 @@ import { runTelegramPairing } from './telegram_pairing.js';
 /** Extract the 6-digit code from the sendMessage mock call text. */
 function extractCodeFromSendMessage(): string {
   const text = mockSendMessage.mock.calls[0][1] as string;
-  const match = text.match(/`(\d{6})`/);
+  const match = /`(\d{6})`/.exec(text);
   if (!match) throw new Error('Could not extract code from sendMessage');
   return match[1];
 }
@@ -92,7 +92,7 @@ describe('runTelegramPairing', () => {
     await runTelegramPairing('token', io);
 
     // io.choose should have been called with Bob (date 2000) first
-    const options = (io.choose as ReturnType<typeof vi.fn>).mock.calls[0][1] as string[];
+    const options = vi.mocked(io.choose).mock.calls[0][1];
     expect(options[0]).toContain('Bob');
     expect(options[1]).toContain('Alice');
   });
@@ -107,7 +107,7 @@ describe('runTelegramPairing', () => {
     const io = createFakeIO();
     await runTelegramPairing('token', io);
 
-    const options = (io.choose as ReturnType<typeof vi.fn>).mock.calls[0][1] as string[];
+    const options = vi.mocked(io.choose).mock.calls[0][1];
     expect(options).toHaveLength(2);
     // Alice (date 3000) should now be first
     expect(options[0]).toContain('Alice');

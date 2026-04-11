@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import { updateJsonConfig } from './json_config_writer.js';
 
 describe('updateJsonConfig', () => {
@@ -9,7 +10,7 @@ describe('updateJsonConfig', () => {
   let filePath: string;
 
   beforeEach(() => {
-    dir = join(tmpdir(), `lucifer-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    dir = join(tmpdir(), `lucifer-test-${Date.now()}-${randomUUID()}`);
     mkdirSync(dir, { recursive: true });
     filePath = join(dir, 'config.json');
   });

@@ -208,7 +208,7 @@ function createReadlinePairingIO(): PairingIO & { close(): void } {
 
       while (true) {
         const answer = await rl.question(`\nEnter number (1-${options.length}): `);
-        const num = parseInt(answer.trim(), 10);
+        const num = Number.parseInt(answer.trim(), 10);
         if (num >= 1 && num <= options.length) return num - 1;
         console.log(`Please enter a number between 1 and ${options.length}.`);
       }
