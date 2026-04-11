@@ -85,6 +85,47 @@ function checkAdminAuth(adminSecret: string, req: Request, res: Response): boole
   return true;
 }
 
+interface DecideInput {
+  action: string;
+  matchType?: string;
+  duration?: string;
+}
+
+interface ValidatedDecision {
+  decision: ApprovalDecision;
+  matchType: ApprovalMatchType;
+  duration: string;
+}
+
+function validateDecideInput(body: DecideInput): ValidatedDecision | ErrorResponse {
+  const { action, matchType, duration } = body;
+
+  if (!action || (action !== 'approve' && action !== 'deny')) {
+    return { code: 'INVALID_ACTION', message: 'action must be "approve" or "deny"', retryable: false };
+  }
+
+  const decision: ApprovalDecision = action === 'approve' ? 'approved' : 'denied';
+
+  if (decision === 'approved') {
+    if (!matchType || (matchType !== 'exact' && matchType !== 'prefix')) {
+      return { code: 'INVALID_MATCH_TYPE', message: 'matchType must be "exact" or "prefix" when approving', retryable: false };
+    }
+    if (!duration || !['2', '8', 'permanent'].includes(duration)) {
+      return { code: 'INVALID_DURATION', message: 'duration must be "2", "8", or "permanent" when approving', retryable: false };
+    }
+  }
+
+  return {
+    decision,
+    matchType: (matchType as ApprovalMatchType) ?? 'exact',
+    duration: duration ?? '0',
+  };
+}
+
+function isValidationError(result: ValidatedDecision | ErrorResponse): result is ErrorResponse {
+  return 'code' in result;
+}
+
 export interface ApprovalRouteDeps {
   router: Router;
   adminSecret: string;
@@ -182,45 +223,13 @@ export function registerApprovalRoutes(deps: ApprovalRouteDeps): void {
     if (!checkAdminAuth(adminSecret, req, res)) return;
 
     const requestId = Array.isArray(req.params.requestId) ? req.params.requestId[0] : req.params.requestId;
-    const { action, matchType, duration } = req.body as {
-      action?: string;
-      matchType?: string;
-      duration?: string;
-    };
-
-    // Validate input
-    if (!action || (action !== 'approve' && action !== 'deny')) {
-      res.status(400).json({
-        code: 'INVALID_ACTION',
-        message: 'action must be "approve" or "deny"',
-        retryable: false,
-      } satisfies ErrorResponse);
+    const validated = validateDecideInput(req.body as DecideInput);
+    if (isValidationError(validated)) {
+      res.status(400).json(validated);
       return;
     }
 
-    const decision: ApprovalDecision = action === 'approve' ? 'approved' : 'denied';
-
-    if (decision === 'approved') {
-      if (!matchType || (matchType !== 'exact' && matchType !== 'prefix')) {
-        res.status(400).json({
-          code: 'INVALID_MATCH_TYPE',
-          message: 'matchType must be "exact" or "prefix" when approving',
-          retryable: false,
-        } satisfies ErrorResponse);
-        return;
-      }
-      if (!duration || !['2', '8', 'permanent'].includes(duration)) {
-        res.status(400).json({
-          code: 'INVALID_DURATION',
-          message: 'duration must be "2", "8", or "permanent" when approving',
-          retryable: false,
-        } satisfies ErrorResponse);
-        return;
-      }
-    }
-
-    const resolvedMatchType: ApprovalMatchType = (matchType as ApprovalMatchType) ?? 'exact';
-    const resolvedDuration = duration ?? '0';
+    const { decision, matchType: resolvedMatchType, duration: resolvedDuration } = validated;
 
     // Try to resolve via web channel
     const pending = webChannel.getPendingRequests().find(p => p.requestId === requestId);

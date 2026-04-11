@@ -24,7 +24,7 @@
   .login-error { color: #f85149; font-size: 13px; margin-bottom: 8px; display: none; }
   .empty-state { text-align: center; padding: 80px 24px; color: #8b949e; font-size: 15px; }
   .loading { text-align: center; padding: 80px 24px; color: #8b949e; }
-  .error-banner { background: #f8514922; border: 1px solid #f85149; border-radius: 6px; padding: 12px 16px; margin-bottom: 16px; color: #f85149; font-size: 13px; display: none; }
+  .error-banner { background: #f8514922; border: 1px solid #f85149; border-radius: 6px; padding: 12px 16px; margin-bottom: 16px; color: #ff7b72; font-size: 13px; display: none; }
   .toast { position: fixed; bottom: 24px; right: 24px; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px 20px; font-size: 13px; opacity: 0; transition: opacity 0.3s; pointer-events: none; z-index: 100; }
   .toast.visible { opacity: 1; }
   .toast.success { border-color: #3fb950; color: #3fb950; }
@@ -37,12 +37,12 @@
   .card-body { padding: 16px; }
   .command-line { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 15px; color: #f0f6fc; background: #0d1117; padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; word-break: break-all; display: flex; align-items: flex-start; gap: 10px; }
   .risk-badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; white-space: nowrap; flex-shrink: 0; }
-  .risk-safe { background: #23894422; color: #3fb950; }
-  .risk-warning { background: #d2992222; color: #d29922; }
-  .risk-danger { background: #f8514922; color: #f85149; }
+  .risk-safe { background: #23894433; color: #56d364; }
+  .risk-warning { background: #d2992233; color: #e3b341; }
+  .risk-danger { background: #f8514933; color: #ff7b72; }
   .meta { font-size: 12px; color: #8b949e; margin-bottom: 12px; display: flex; gap: 16px; flex-wrap: wrap; }
   .meta span { display: inline-flex; align-items: center; gap: 4px; }
-  .warnings { font-size: 12px; color: #d29922; margin-bottom: 12px; padding: 8px 12px; background: #d2992210; border-radius: 4px; }
+  .warnings { font-size: 12px; color: #e3b341; margin-bottom: 12px; padding: 8px 12px; background: #d2992215; border-radius: 4px; }
   .warnings li { margin-left: 16px; margin-bottom: 2px; }
   .actions { display: flex; gap: 8px; flex-wrap: wrap; }
   .btn { padding: 6px 14px; border: 1px solid #30363d; border-radius: 6px; background: #21262d; color: #c9d1d9; font-size: 13px; cursor: pointer; transition: all 0.15s; }
@@ -185,7 +185,8 @@ function setStatus(state) {
   const dot = document.getElementById('status-dot');
   const text = document.getElementById('status-text');
   dot.className = 'status-dot ' + state;
-  text.textContent = state === 'connected' ? 'Connected' : state === 'connecting' ? 'Connecting...' : 'Disconnected';
+  const labels = { connected: 'Connected', connecting: 'Connecting...', disconnected: 'Disconnected' };
+  text.textContent = labels[state] || 'Unknown';
 }
 
 function showError(msg) { const el = document.getElementById('error-banner'); el.textContent = msg; el.style.display = 'block'; }
@@ -219,8 +220,9 @@ function renderCards() {
     container.insertAdjacentHTML('afterbegin', buildCard(req));
   }
 
-  // Remove cards no longer pending
-  for (const child of [...container.children]) {
+  // Remove cards no longer pending (copy to array since we mutate during iteration)
+  const children = Array.from(container.children);
+  for (const child of children) {
     const cid = child.id.replace('card-', '');
     if (!pending.has(cid) && !child.classList.contains('slide-out')) {
       child.remove();
@@ -267,7 +269,7 @@ function buildCard(req) {
 }
 
 function escHtml(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
 }
 
 async function decide(requestId, action, matchType, duration) {

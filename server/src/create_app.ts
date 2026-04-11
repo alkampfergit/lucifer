@@ -5,7 +5,7 @@ import { getServerConfig } from './domains/platform-api/config/server_config.js'
 import { registerHealthRoutes } from './domains/platform-api/api/register_health_routes.js'
 import { createRuntimeMetadataRepository } from './domains/platform-api/repository/runtime_metadata_repository.js'
 import { createHealthReportService } from './domains/platform-api/service/create_health_report.js'
-import { loadGatewayConfig } from './domains/command-gateway/config/gateway_config.js'
+import { loadGatewayConfig, getAdminSecret } from './domains/command-gateway/config/gateway_config.js'
 import { getDatabase, closeDatabase } from './domains/command-gateway/repository/database.js'
 import { createApprovalStore } from './domains/command-gateway/repository/approval_store.js'
 import { createAuditLog } from './domains/command-gateway/repository/audit_log.js'
@@ -18,7 +18,6 @@ import { createAutoApproveChannel } from './domains/command-gateway/service/auto
 import { createWebApprovalChannel } from './domains/command-gateway/service/web_approval_channel.js'
 import { createMultiApprovalChannel } from './domains/command-gateway/service/multi_approval_channel.js'
 import { registerApprovalRoutes } from './domains/command-gateway/api/register_approval_routes.js'
-import { getAdminSecret } from './domains/command-gateway/config/gateway_config.js'
 import type { ApprovalChannel } from './domains/command-gateway/types/command_types.js'
 import { createChildLogger } from './lib/logger.js'
 
@@ -27,6 +26,46 @@ const log = createChildLogger('app')
 export interface CreateAppOptions {
   configPath?: string
   autoApprove?: boolean
+}
+
+interface GatewayDeps {
+  app: ReturnType<typeof express>
+  pendingStore: ReturnType<typeof createPendingRequestStore>
+  approvalStore: ReturnType<typeof createApprovalStore>
+  auditLog: ReturnType<typeof createAuditLog>
+  gatewayConfig: ReturnType<typeof loadGatewayConfig>
+}
+
+function initApprovalChannel(deps: GatewayDeps, autoApprove: boolean): ApprovalChannel {
+  if (autoApprove) {
+    return createAutoApproveChannel()
+  }
+
+  const channels: ApprovalChannel[] = []
+  const { app, pendingStore, approvalStore, auditLog, gatewayConfig } = deps
+
+  const telegramToken = process.env.LUCIFER_TELEGRAM_TOKEN
+  const chatId = gatewayConfig.telegramChatId ?? process.env.LUCIFER_TELEGRAM_CHAT_ID
+  if (telegramToken && chatId) {
+    channels.push(createTelegramApprovalChannel(telegramToken, chatId, pendingStore, approvalStore, auditLog))
+  }
+
+  const adminSecret = getAdminSecret()
+  if (adminSecret) {
+    const webChannel = createWebApprovalChannel()
+    channels.push(webChannel)
+    registerApprovalRoutes({ router: app, adminSecret, webChannel, approvalStore, auditLog })
+    log.info('Web approval UI enabled at /admin/approvals')
+  }
+
+  if (channels.length === 0) {
+    throw new Error(
+      'No approval channels configured. Set LUCIFER_TELEGRAM_TOKEN + LUCIFER_TELEGRAM_CHAT_ID for Telegram, ' +
+      'or LUCIFER_ADMIN_SECRET for web UI, or use --auto-approve for development.',
+    )
+  }
+
+  return channels.length === 1 ? channels[0] : createMultiApprovalChannel(channels)
 }
 
 export function createApp(options: CreateAppOptions = {}) {
@@ -64,36 +103,10 @@ export function createApp(options: CreateAppOptions = {}) {
     const commandRulesStore = createCommandRulesStore(commandRulesPath)
     const pendingStore = createPendingRequestStore()
 
-    if (options.autoApprove) {
-      approvalChannel = createAutoApproveChannel()
-    } else {
-      const channels: ApprovalChannel[] = []
-
-      // Telegram channel (if configured)
-      const telegramToken = process.env.LUCIFER_TELEGRAM_TOKEN
-      const chatId = gatewayConfig.telegramChatId ?? process.env.LUCIFER_TELEGRAM_CHAT_ID
-      if (telegramToken && chatId) {
-        channels.push(createTelegramApprovalChannel(telegramToken, chatId, pendingStore, approvalStore, auditLog))
-      }
-
-      // Web approval channel (if admin secret is set)
-      const adminSecret = getAdminSecret()
-      if (adminSecret) {
-        const webChannel = createWebApprovalChannel()
-        channels.push(webChannel)
-        registerApprovalRoutes({ router: app, adminSecret, webChannel, approvalStore, auditLog })
-        log.info('Web approval UI enabled at /admin/approvals')
-      }
-
-      if (channels.length === 0) {
-        throw new Error(
-          'No approval channels configured. Set LUCIFER_TELEGRAM_TOKEN + LUCIFER_TELEGRAM_CHAT_ID for Telegram, ' +
-          'or LUCIFER_ADMIN_SECRET for web UI, or use --auto-approve for development.',
-        )
-      }
-
-      approvalChannel = channels.length === 1 ? channels[0] : createMultiApprovalChannel(channels)
-    }
+    approvalChannel = initApprovalChannel(
+      { app, pendingStore, approvalStore, auditLog, gatewayConfig },
+      options.autoApprove ?? false,
+    )
 
     registerExecuteRoutes({
       router: app, config: gatewayConfig, apiKeyStore, commandRulesStore,
