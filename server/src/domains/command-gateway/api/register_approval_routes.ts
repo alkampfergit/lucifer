@@ -3,6 +3,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import type { Router, Request, Response } from 'express';
+import rateLimit from 'express-rate-limit';
 import type { ApprovalMatchType, ApprovalDecision, ErrorResponse } from '../types/command_types.js';
 import type { ApprovalStore, AuditLog } from '../types/store_interfaces.js';
 import type { WebApprovalChannelHandle } from '../service/web_approval_channel.js';
@@ -11,31 +12,6 @@ import { createChildLogger } from '../../../lib/logger.js';
 const log = createChildLogger('admin-routes');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-// Per-IP request rate limiter (sliding window)
-const RATE_WINDOW_MS = 60_000;
-const RATE_MAX_REQUESTS = 60;
-const requestCounts = new Map<string, { count: number; resetAt: number }>();
-
-function rateLimit(req: Request, res: Response): boolean {
-  const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.socket.remoteAddress ?? 'unknown';
-  const now = Date.now();
-  const entry = requestCounts.get(ip);
-  if (!entry || now > entry.resetAt) {
-    requestCounts.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS });
-    return true;
-  }
-  entry.count++;
-  if (entry.count > RATE_MAX_REQUESTS) {
-    res.status(429).json({
-      code: 'RATE_LIMITED',
-      message: 'Too many requests. Try again later.',
-      retryable: true,
-    } satisfies ErrorResponse);
-    return false;
-  }
-  return true;
-}
 
 // Rate limiter for admin auth failures
 interface AuthRateLimit {
@@ -120,6 +96,15 @@ export interface ApprovalRouteDeps {
 export function registerApprovalRoutes(deps: ApprovalRouteDeps): void {
   const { router, adminSecret, webChannel, approvalStore, auditLog } = deps;
 
+  // Rate limiter middleware for admin API routes
+  const adminRateLimiter = rateLimit({
+    windowMs: 60_000,
+    max: 60,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { code: 'RATE_LIMITED', message: 'Too many requests. Try again later.', retryable: true },
+  });
+
   // Load HTML page at startup -- try compiled location first, then source
   const possiblePaths = [
     path.join(__dirname, 'approval_page.html'),
@@ -137,15 +122,13 @@ export function registerApprovalRoutes(deps: ApprovalRouteDeps): void {
   });
 
   // List pending requests
-  router.get('/api/v1/admin/approvals/pending', (req: Request, res: Response) => {
-    if (!rateLimit(req, res)) return;
+  router.get('/api/v1/admin/approvals/pending', adminRateLimiter, (req: Request, res: Response) => {
     if (!checkAdminAuth(adminSecret, req, res)) return;
     res.json({ pending: webChannel.getPendingRequests() });
   });
 
   // Exchange bearer token for one-time SSE ticket
-  router.post('/api/v1/admin/approvals/stream-ticket', (req: Request, res: Response) => {
-    if (!rateLimit(req, res)) return;
+  router.post('/api/v1/admin/approvals/stream-ticket', adminRateLimiter, (req: Request, res: Response) => {
     if (!checkAdminAuth(adminSecret, req, res)) return;
     const token = randomUUID();
     sseTickets.set(token, { token, createdAt: Date.now() });
@@ -195,8 +178,7 @@ export function registerApprovalRoutes(deps: ApprovalRouteDeps): void {
   });
 
   // Approve or deny a request
-  router.post('/api/v1/admin/approvals/:requestId/decide', (req: Request, res: Response) => {
-    if (!rateLimit(req, res)) return;
+  router.post('/api/v1/admin/approvals/:requestId/decide', adminRateLimiter, (req: Request, res: Response) => {
     if (!checkAdminAuth(adminSecret, req, res)) return;
 
     const requestId = Array.isArray(req.params.requestId) ? req.params.requestId[0] : req.params.requestId;
