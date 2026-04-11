@@ -2,12 +2,17 @@
 
 import { writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { resolve, join } from 'node:path';
+import { createInterface } from 'node:readline/promises';
 import { createApp } from './create_app.js';
 import { generateApiKey } from './domains/command-gateway/repository/api_key_store.js';
 import { getDatabase } from './domains/command-gateway/repository/database.js';
 import { createAuditLog } from './domains/command-gateway/repository/audit_log.js';
 import { createApprovalStore } from './domains/command-gateway/repository/approval_store.js';
+import { runTelegramPairing } from './domains/command-gateway/service/telegram_pairing.js';
+import { getTelegramToken } from './domains/command-gateway/config/gateway_config.js';
+import { updateJsonConfig } from './lib/json_config_writer.js';
 import { logger } from './lib/logger.js';
+import type { PairingIO } from './domains/command-gateway/service/telegram_pairing.js';
 
 const args = process.argv.slice(2);
 
@@ -16,10 +21,11 @@ function printHelp() {
 lucifer-gate - AI Agent Command Firewall
 
 Usage:
-  lucifer-gate [options]        Start the server
-  lucifer-gate --init [dir]     Generate starter config files
-  lucifer-gate log [--limit N]  Query audit log
-  lucifer-gate stats            Show approval statistics
+  lucifer-gate [options]              Start the server
+  lucifer-gate --init [dir]           Generate starter config files
+  lucifer-gate pair [--config <path>] Pair a Telegram chat for approvals
+  lucifer-gate log [--limit N]        Query audit log
+  lucifer-gate stats                  Show approval statistics
 
 Server options:
   --config <path>    Path to lucifer.json (default: ./config/lucifer.json)
@@ -30,9 +36,10 @@ Server options:
 
 Environment variables:
   LUCIFER_TELEGRAM_TOKEN   Telegram bot token (required for production)
-  LUCIFER_TELEGRAM_CHAT_ID Telegram chat ID for approvals
+  LUCIFER_TELEGRAM_CHAT_ID Telegram chat ID for approvals (or use 'pair' command)
   LUCIFER_ADMIN_SECRET     Admin API bearer token (optional)
   PORT                     Server port (default: 3001)
+  LOG_LEVEL                Log level: debug, info, warn, error (default: debug / info in production)
 `);
 }
 
@@ -63,6 +70,7 @@ function initConfig(targetDir: string) {
     rateLimitPerMinute: 10,
     onApprovalTimeout: 'deny',
     dataDir: '../data',
+    logFile: 'lucifer.log',
   }, null, 2) + '\n');
 
   writeFileSync(apiKeysPath, JSON.stringify({
@@ -102,8 +110,11 @@ function initConfig(targetDir: string) {
   console.log('  # Dev mode (no Telegram needed):');
   console.log(`  LUCIFER_TELEGRAM_TOKEN=skip lucifer-gate --config ${luciferJsonPath} --auto-approve`);
   console.log('');
-  console.log('  # Production (set your Telegram bot token):');
-  console.log(`  LUCIFER_TELEGRAM_TOKEN=your_token LUCIFER_TELEGRAM_CHAT_ID=your_chat_id lucifer-gate --config ${luciferJsonPath}`);
+  console.log('  # Production — pair your Telegram chat first:');
+  console.log(`  LUCIFER_TELEGRAM_TOKEN=your_token lucifer-gate pair --config ${luciferJsonPath}`);
+  console.log('');
+  console.log('  # Then start the server:');
+  console.log(`  LUCIFER_TELEGRAM_TOKEN=your_token lucifer-gate --config ${luciferJsonPath}`);
 }
 
 async function runLog(limit: number) {
@@ -181,6 +192,70 @@ async function runStats() {
   }
 }
 
+function createReadlinePairingIO(): PairingIO & { close(): void } {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+
+  return {
+    print(msg: string) {
+      console.log(msg);
+    },
+
+    async choose(prompt: string, options: string[]): Promise<number> {
+      console.log(`\n${prompt}`);
+      for (let i = 0; i < options.length; i++) {
+        console.log(`  ${i + 1}. ${options[i]}`);
+      }
+
+      while (true) {
+        const answer = await rl.question(`\nEnter number (1-${options.length}): `);
+        const num = parseInt(answer.trim(), 10);
+        if (num >= 1 && num <= options.length) return num - 1;
+        console.log(`Please enter a number between 1 and ${options.length}.`);
+      }
+    },
+
+    async confirm(prompt: string): Promise<boolean> {
+      const answer = await rl.question(`${prompt} [y/N] `);
+      return /^y(es)?$/i.test(answer.trim());
+    },
+
+    async prompt(msg: string): Promise<string> {
+      return rl.question(`${msg} `);
+    },
+
+    close() {
+      rl.close();
+    },
+  };
+}
+
+async function runPair() {
+  const configPath = resolve(getArgValue('--config') ?? './config/lucifer.json');
+
+  let token: string;
+  try {
+    token = getTelegramToken();
+  } catch {
+    console.error(
+      'LUCIFER_TELEGRAM_TOKEN environment variable is required for pairing.\n' +
+      'Create a bot via @BotFather on Telegram and set the token:\n\n' +
+      '  LUCIFER_TELEGRAM_TOKEN=your_token lucifer-gate pair',
+    );
+    process.exit(1);
+  }
+
+  const io = createReadlinePairingIO();
+  try {
+    const result = await runTelegramPairing(token, io);
+    updateJsonConfig(configPath, { telegramChatId: result.chatId });
+    console.log(`\nChat ID ${result.chatId} saved to ${configPath}`);
+    console.log('You can now start Lucifer without LUCIFER_TELEGRAM_CHAT_ID:');
+    console.log(`\n  LUCIFER_TELEGRAM_TOKEN=your_token lucifer-gate --config ${configPath}`);
+  } finally {
+    io.close();
+  }
+}
+
 function getArgValue(flag: string): string | undefined {
   const idx = args.indexOf(flag);
   if (idx === -1 || idx >= args.length - 1) return undefined;
@@ -196,6 +271,11 @@ async function main() {
   if (args[0] === '--init' || args[0] === 'init') {
     const dir = args[1] ?? '.';
     initConfig(dir);
+    return;
+  }
+
+  if (args[0] === 'pair') {
+    await runPair();
     return;
   }
 

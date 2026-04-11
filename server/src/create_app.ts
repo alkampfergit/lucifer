@@ -19,7 +19,7 @@ import { createWebApprovalChannel } from './domains/command-gateway/service/web_
 import { createMultiApprovalChannel } from './domains/command-gateway/service/multi_approval_channel.js'
 import { registerApprovalRoutes } from './domains/command-gateway/api/register_approval_routes.js'
 import type { ApprovalChannel } from './domains/command-gateway/types/command_types.js'
-import { createChildLogger } from './lib/logger.js'
+import { createChildLogger, addLogFile } from './lib/logger.js'
 
 const log = createChildLogger('app')
 
@@ -90,6 +90,13 @@ export function createApp(options: CreateAppOptions = {}) {
   // Resolve dataDir relative to config directory
   const resolvedDataDir = path.resolve(configDir, gatewayConfig.dataDir)
   gatewayConfig.dataDir = resolvedDataDir
+
+  // Enable file logging (logFile is relative to dataDir)
+  if (gatewayConfig.logFile) {
+    const logPath = path.resolve(resolvedDataDir, gatewayConfig.logFile)
+    addLogFile(logPath)
+    log.info({ logFile: logPath }, 'File logging enabled')
+  }
 
   let approvalChannel: ApprovalChannel | undefined
   let cleanupInterval: ReturnType<typeof setInterval> | undefined
