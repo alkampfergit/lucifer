@@ -1,6 +1,7 @@
 # Dependency Rules
 
-> These rules are **mechanically enforced** by linters and CI.
+> These rules are enforced by the repository structure check in
+> `scripts/check-dependencies.mjs` and run during `npm run build`.
 > Violations block the build. When a violation is detected, the error message
 > includes remediation instructions — read and follow them.
 
@@ -12,7 +13,7 @@ Within every domain, imports flow in **one direction only**:
 Types → Config → Repository → Service → Runtime → UI/API
 ```
 
-A layer may **only** import from layers to its LEFT.
+A layer may only import from layers to its left.
 
 ### What this means concretely
 
@@ -30,16 +31,16 @@ A layer may **only** import from layers to its LEFT.
 
 ## Cross-Domain Dependencies
 
-| Rule                                                           | Enforcement       |
-|----------------------------------------------------------------|-------------------|
-| Domain A cannot import Domain B's internal types               | Linter + CI       |
-| Cross-domain communication uses shared contracts only          | Structural test   |
-| No circular domain-to-domain dependencies                      | Dependency graph CI|
-| Shared utilities must be stateless and side-effect-free        | Review checklist   |
+| Rule | Enforcement |
+|---|---|
+| A domain file cannot use relative imports into another domain | `scripts/check-dependencies.mjs` |
+| UI and API layers may only import from `types` and `service` within the same domain | `scripts/check-dependencies.mjs` |
+| Non-UI/API layers cannot import "to the right" | `scripts/check-dependencies.mjs` |
+| Shared utilities must stay stateless and side-effect-free | Review + tests |
 
 ## Boundary Validation Rule
 
-**All data crossing a boundary must be parsed and validated.**
+All data crossing a boundary must be parsed and validated.
 
 Boundaries include:
 - API request/response handlers
@@ -47,25 +48,26 @@ Boundaries include:
 - Database reads (map to typed shapes, never use raw dictionaries)
 - External service calls
 
+Current repository patterns:
+
+- Request bodies are validated explicitly in route handlers.
+- Config files are loaded through typed guards before use.
+- Browser-facing HTTP responses are checked with domain type guards.
+
 Anti-pattern: passing raw JSON or untyped dictionaries through service layers.
 
 ## How Violations Are Reported
 
-When the linter detects a dependency violation, the error message follows this format:
+When the structure check detects a violation, the output follows this shape:
 
 ```
-DEPENDENCY VIOLATION: [source-layer] cannot import from [target-layer]
-  File: src/domains/orders/service/order_processor.ts
-  Import: from '../runtime/server_config'
-
-  FIX: Move the needed type/value to the Config or Types layer,
-  or inject it through the Service layer's constructor/parameters.
-  See: docs/architecture/DEPENDENCY-RULES.md
+DEPENDENCY VIOLATION(S):
+- src/domains/... cannot import ...
 ```
 
-**Agent instruction**: When you see this error, do NOT suppress it.
-Follow the remediation in the error message. If the fix requires a structural
-change, document it as a decision in [DECISIONS.md](../context/DECISIONS.md).
+When this happens, do not suppress the rule. Move the dependency to a legal
+layer, route the interaction through a public contract, or document a real
+architectural change in [DECISIONS.md](../context/DECISIONS.md).
 
 ## Adding New Rules
 

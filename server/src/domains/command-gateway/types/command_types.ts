@@ -95,6 +95,7 @@ export interface LuciferConfig {
   rateLimitPerMinute: number;
   onApprovalTimeout: 'deny' | 'approve-with-warning';
   dataDir: string;
+  logFile?: string;
 }
 
 export interface AuditEntry {

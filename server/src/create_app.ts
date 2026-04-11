@@ -19,7 +19,7 @@ import { createWebApprovalChannel } from './domains/command-gateway/service/web_
 import { createMultiApprovalChannel } from './domains/command-gateway/service/multi_approval_channel.js'
 import { registerApprovalRoutes } from './domains/command-gateway/api/register_approval_routes.js'
 import type { ApprovalChannel } from './domains/command-gateway/types/command_types.js'
-import { createChildLogger } from './lib/logger.js'
+import { createChildLogger, addLogFile } from './lib/logger.js'
 
 const log = createChildLogger('app')
 
@@ -73,9 +73,6 @@ export function createApp(options: CreateAppOptions = {}) {
   const metadataRepository = createRuntimeMetadataRepository()
   const getHealthReport = createHealthReportService(serverConfig, metadataRepository)
   const app = express()
-  const indexPath = path.join(serverConfig.clientDistPath, 'index.html')
-  const hasBuiltClient = fs.existsSync(indexPath)
-  const indexMarkup = hasBuiltClient ? fs.readFileSync(indexPath, 'utf8') : null
 
   app.disable('x-powered-by')
   app.use(express.json())
@@ -90,6 +87,13 @@ export function createApp(options: CreateAppOptions = {}) {
   // Resolve dataDir relative to config directory
   const resolvedDataDir = path.resolve(configDir, gatewayConfig.dataDir)
   gatewayConfig.dataDir = resolvedDataDir
+
+  // Enable file logging (logFile is relative to dataDir)
+  if (gatewayConfig.logFile) {
+    const logPath = path.resolve(resolvedDataDir, gatewayConfig.logFile)
+    addLogFile(logPath)
+    log.info({ logFile: logPath }, 'File logging enabled')
+  }
 
   let approvalChannel: ApprovalChannel | undefined
   let cleanupInterval: ReturnType<typeof setInterval> | undefined
@@ -127,13 +131,6 @@ export function createApp(options: CreateAppOptions = {}) {
   // TLS warning
   if (process.env.NODE_ENV === 'production') {
     log.warn('Ensure HTTPS is configured for production. API keys are transmitted in headers.')
-  }
-
-  if (hasBuiltClient && indexMarkup !== null) {
-    app.use(express.static(serverConfig.clientDistPath))
-    app.get(/^(?!\/api\/).*/, (_request, response) => {
-      response.type('html').send(indexMarkup)
-    })
   }
 
   async function start() {

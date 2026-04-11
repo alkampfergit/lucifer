@@ -14,10 +14,10 @@
 
 | Domain / Area | Grade | Test Coverage | Doc Status | Known Issues | Last Reviewed |
 |---|---|---|---|---|---|
-| `web-shell` | B | Starter happy path + boundary validation | Current | No end-to-end browser flow yet | 2026-04-06 |
-| `platform-api` | B | Health endpoint covered | Current | No persistent storage or auth yet | 2026-04-06 |
-| `shared` | B | Not applicable yet | Current | Domain reserved for future contracts | 2026-04-06 |
-| CI / deployment | B | Lint, test, build, Docker validation, deploy workflow present | Current | Azure credentials and registry settings must be configured | 2026-04-06 |
+| `command-gateway` | B | Service, repository, and execute-route coverage present | Updated | Admin approval routes lack the same test depth as execute flow; in-memory pending/completed state is process-local | 2026-04-11 |
+| `platform-api` | B | Health service and app bootstrap coverage present | Updated | Very small surface today; server composition complexity lives mostly outside this domain | 2026-04-11 |
+| CLI / operator workflows | B | Pairing workflow and config writer/loader covered | Updated | `log` and `stats` flows rely on integration by convention rather than dedicated command-level tests | 2026-04-11 |
+| CI / deployment | B | Lint, test, build, Docker validation, deploy workflow present | Updated | Azure credentials and registry settings must still be configured per environment | 2026-04-11 |
 
 ## Update Rules
 

@@ -19,7 +19,7 @@ Write an ADR when:
 ## ADR-001: Use Vite React frontend with an Express delivery tier
 
 **Date**: 2026-04-06
-**Status**: Accepted
+**Status**: Superseded by ADR-008
 **Deciders**: alkampfergit
 
 ### Context
@@ -178,3 +178,75 @@ Support both exact and prefix matching. The Telegram approval buttons offer both
 
 - **Exact-match only**: Rejected because AI agents generate many command variants, causing fatal approval fatigue
 - **Glob/regex patterns**: Deferred to future version; adds complexity and config management burden
+
+---
+
+## ADR-007: Unify approval surfaces behind an ApprovalChannel abstraction
+
+**Date**: 2026-04-11
+**Status**: Accepted
+**Deciders**: alkampfergit
+
+### Context
+
+Lucifer already supports Telegram approvals, but development and operational
+workflows need additional surfaces:
+
+- development mode should be able to bypass human approval cleanly
+- operators may want a browser-based approval surface without removing Telegram
+- the execute flow should not duplicate business logic for each approval path
+
+### Decision
+
+Model human approval behind `ApprovalChannel` and provide concrete
+implementations for Telegram, web admin, auto-approve, and a multi-channel
+wrapper that resolves whichever channel decides first.
+
+### Consequences
+
+- (+) The execute flow depends on one approval contract instead of hard-coding Telegram
+- (+) Web admin approval can be enabled independently with `LUCIFER_ADMIN_SECRET`
+- (+) Development mode stays simple through `--auto-approve`
+- (-) Approval channel lifecycle and cancellation semantics must stay consistent across implementations
+
+### Alternatives Considered
+
+- **Hard-code Telegram everywhere**: Rejected because it couples the command flow to a single transport
+- **Separate execute flows per channel**: Rejected because it duplicates approval orchestration and makes behavior drift likely
+
+---
+
+## ADR-008: Remove the unused bundled React/Vite frontend
+
+**Date**: 2026-04-11
+**Status**: Accepted
+**Deciders**: alkampfergit
+
+### Context
+
+The repository still contained the starter React/Vite application, but the real
+product workflows already lived elsewhere:
+
+- command execution and approvals are backend APIs
+- the operator approval UI is a plain server-served HTML page
+- the React app only rendered starter copy plus a health check
+
+Keeping the frontend added build, dependency, and documentation weight without
+supporting the core product.
+
+### Decision
+
+Remove the bundled React/Vite frontend and keep Lucifer backend-first. Retain
+the `/api/health` endpoint and the server-delivered admin approval UI.
+
+### Consequences
+
+- (+) Smaller dependency surface and faster build/dev workflow
+- (+) Architecture aligns with the actual shipped behavior
+- (+) Less template residue for future work to work around
+- (-) A richer browser UI will need to be reintroduced intentionally if the product later needs one
+
+### Alternatives Considered
+
+- **Keep the frontend as a placeholder**: Rejected because it was already drifting into misleading template code
+- **Rewrite the admin approval UI into React immediately**: Rejected because there is no current product requirement for that extra surface

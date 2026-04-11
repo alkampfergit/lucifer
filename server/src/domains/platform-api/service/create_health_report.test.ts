@@ -7,7 +7,6 @@ describe('createHealthReportService', () => {
     const getHealthReport = createHealthReportService(
       {
         appName: 'lucifer',
-        clientDistPath: '/tmp/client',
         environment: 'test',
         port: 3001,
       },

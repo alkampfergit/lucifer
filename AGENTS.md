@@ -19,7 +19,7 @@
 
 - **Project**: Lucifer Gate
 - **Purpose**: AI agent command firewall with Telegram-based human approval. Gates shell commands through API key auth + configurable command rules + Telegram approval for humans-in-the-loop.
-- **Style**: TypeScript-first, layered domains, Vite frontend, Express backend, SQLite for runtime state, JSON for config
+- **Style**: TypeScript-first, layered domains, Express backend, SQLite for runtime state, JSON for config, server-delivered admin UI
 
 ## Default Rules
 
@@ -55,10 +55,9 @@
 | Review checklist | [docs/workflows/REVIEW-CHECKLIST.md](docs/workflows/REVIEW-CHECKLIST.md) |
 | Terminology | [docs/context/GLOSSARY.md](docs/context/GLOSSARY.md) |
 | Decisions and ADRs | [docs/context/DECISIONS.md](docs/context/DECISIONS.md) |
+| Feature specs | [docs/specs/README.md](docs/specs/README.md) |
 | Repeatable task workflows | [.claude/skills/](.claude/skills/) |
 | Output templates | [templates/](templates/) |
-| Bootstrap prompt | [BOOTSTRAP.md](BOOTSTRAP.md) |
-| Human reference files | [extra/](extra/) |
 
 ## Before You Write Code
 
@@ -114,8 +113,6 @@ Key routing rules:
 - Design system, brand → invoke design-consultation
 - Visual audit, design polish → invoke design-review
 - Architecture review → invoke plan-eng-review
-- Save progress, checkpoint, resume → invoke checkpoint
-- Code quality, health check → invoke health
 
 ---
-*Last verified: 2026-04-06. If this file feels stale, run the `doc-gardening` skill.*
+*Last verified: 2026-04-11. If this file feels stale, run the `doc-gardening` skill.*

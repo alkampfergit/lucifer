@@ -17,6 +17,8 @@ function isLuciferConfig(data: unknown): data is LuciferConfig {
   if (!checkOptionalType(d, 'rateLimitPerMinute', 'number')) return false;
   if (d.onApprovalTimeout !== undefined && d.onApprovalTimeout !== 'deny' && d.onApprovalTimeout !== 'approve-with-warning') return false;
   if (!checkOptionalType(d, 'dataDir', 'string')) return false;
+  if (!checkOptionalType(d, 'telegramChatId', 'string')) return false;
+  if (!checkOptionalType(d, 'logFile', 'string')) return false;
   return true;
 }
 
