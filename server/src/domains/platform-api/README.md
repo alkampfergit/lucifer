@@ -1,3 +1,12 @@
 # platform-api domain
 
-Owns the Express API surface, runtime configuration, and deployment-facing server bootstrap for Lucifer.
+Owns the platform-facing Express surface and bootstrap seams for Lucifer.
+
+- `config/` parses server runtime settings such as port and client dist path.
+- `repository/` provides runtime metadata used by health reporting.
+- `service/` builds the `/api/health` response.
+- `api/` registers the health endpoint.
+
+The top-level server composition happens in `server/src/create_app.ts`, which
+assembles `platform-api` with `command-gateway` without creating direct
+cross-domain imports between their internals.

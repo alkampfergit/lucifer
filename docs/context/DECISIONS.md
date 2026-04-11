@@ -178,3 +178,38 @@ Support both exact and prefix matching. The Telegram approval buttons offer both
 
 - **Exact-match only**: Rejected because AI agents generate many command variants, causing fatal approval fatigue
 - **Glob/regex patterns**: Deferred to future version; adds complexity and config management burden
+
+---
+
+## ADR-007: Unify approval surfaces behind an ApprovalChannel abstraction
+
+**Date**: 2026-04-11
+**Status**: Accepted
+**Deciders**: alkampfergit
+
+### Context
+
+Lucifer already supports Telegram approvals, but development and operational
+workflows need additional surfaces:
+
+- development mode should be able to bypass human approval cleanly
+- operators may want a browser-based approval surface without removing Telegram
+- the execute flow should not duplicate business logic for each approval path
+
+### Decision
+
+Model human approval behind `ApprovalChannel` and provide concrete
+implementations for Telegram, web admin, auto-approve, and a multi-channel
+wrapper that resolves whichever channel decides first.
+
+### Consequences
+
+- (+) The execute flow depends on one approval contract instead of hard-coding Telegram
+- (+) Web admin approval can be enabled independently with `LUCIFER_ADMIN_SECRET`
+- (+) Development mode stays simple through `--auto-approve`
+- (-) Approval channel lifecycle and cancellation semantics must stay consistent across implementations
+
+### Alternatives Considered
+
+- **Hard-code Telegram everywhere**: Rejected because it couples the command flow to a single transport
+- **Separate execute flows per channel**: Rejected because it duplicates approval orchestration and makes behavior drift likely

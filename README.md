@@ -204,18 +204,22 @@ server/src/domains/
     types/               CommandRequest, Approval, types
     config/              Gateway configuration
     repository/          SQLite stores, JSON config readers
-    service/             Auth, rules, risk analysis, execution
-    api/                 Express routes
-  platform-api/          Health check (existing)
+    service/             Auth, rules, risk analysis, execution, approvals
+    api/                 Execute routes + web approval UI routes
+  platform-api/          Health endpoint + server runtime wiring
+
+src/domains/
+  web-shell/             Browser health/status view
 ```
 
-Dependency flow: Types -> Config -> Repository -> Service -> API
+Dependency flow: Types -> Config -> Repository -> Service -> Runtime -> UI/API
 
 ## Stack
 
 - Express 5 + TypeScript
 - SQLite (better-sqlite3) for approvals + audit
 - Telegraf for Telegram bot
+- Optional server-delivered web approval UI with SSE updates
 - Pino for structured logging (pino-pretty for human-readable console output in dev)
 - Vitest for testing
-- React 19 + Vite 8 (admin UI planned for v1.1)
+- React 19 + Vite 8 for the browser shell and health view
