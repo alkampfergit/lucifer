@@ -5,25 +5,22 @@
 
 ## System Overview
 
-Lucifer Gate is a Node/TypeScript application that sits between an external
-caller and the local shell.
+Lucifer Gate is a backend-first Node/TypeScript application that sits between
+an external caller and the local shell.
 
 - The Express server exposes health, execution, status, and optional admin approval endpoints.
 - The `command-gateway` domain owns API key auth, rate limiting, rule matching,
   risk analysis, approval orchestration, command execution, and audit logging.
 - Runtime state lives in SQLite under the configured `dataDir`.
 - Operator-managed configuration lives in JSON files under `config/`.
-- The React frontend currently remains a lightweight browser shell for platform
-  health; the approval UI is a server-delivered HTML page in the backend.
+- The operator-facing approval UI is a server-delivered HTML page in the backend.
 
 ## Domain Map
 
 | Domain | Description | Status | Quality Grade |
 |---|---|---|---|
 | `command-gateway` | Core domain: request auth, policy rules, approval channels, command execution, audit | Active | See QUALITY |
-| `platform-api` | Server bootstrap plus platform-facing HTTP surface such as `/api/health` and static asset hosting | Active | See QUALITY |
-| `web-shell` | Browser-side React app that fetches and renders platform health status | Active | See QUALITY |
-| `shared` | Reserved location for future versioned contracts and stateless shared utilities | Reserved | See QUALITY |
+| `platform-api` | Server bootstrap plus platform-facing HTTP surface such as `/api/health` | Active | See QUALITY |
 
 ## Layer Structure (per domain)
 
@@ -46,14 +43,13 @@ See [DEPENDENCY-RULES.md](DEPENDENCY-RULES.md) for enforcement details.
 ## Cross-Domain Communication
 
 Domains communicate through:
-1. **HTTP contracts** — the `web-shell` reads the `platform-api` `/api/health` contract.
+1. **HTTP contracts** — external callers use the public API endpoints.
 2. **Runtime wiring** — `server/src/create_app.ts` composes `platform-api` and `command-gateway` without either domain importing the other's internals.
-3. **Shared contracts** — future cross-domain DTOs belong in `shared` once a contract is used by more than one domain.
 
 Anti-patterns:
-- ❌ Frontend components importing backend implementation details.
-- ❌ Backend routes reaching into frontend build code.
-- ❌ Cross-domain imports that bypass the `shared` boundary.
+- ❌ Route handlers reaching across domain internals instead of using composed dependencies.
+- ❌ Configuration reads buried inside service logic.
+- ❌ Cross-domain imports that bypass public seams.
 
 ## Infrastructure
 
@@ -74,9 +70,9 @@ Anti-patterns:
 For the full list, see [DECISIONS.md](../context/DECISIONS.md).
 
 Most impactful decisions:
-1. [ADR-001]: Use Vite React frontend with an Express delivery tier.
-2. [ADR-002]: Initialize the repository with the ai-landscape harness-engineering template.
-3. [ADR-003]: Deploy Docker images through Azure Container Apps using GitHub Actions.
-4. [ADR-004]: Use Telegram as the primary approval channel for command gating.
-5. [ADR-005]: Split persistence between JSON config and SQLite runtime state.
-6. [ADR-007]: Model approvals behind a channel abstraction so Telegram, web UI, and auto-approve can share the same flow.
+1. [ADR-002]: Initialize the repository with the ai-landscape harness-engineering template.
+2. [ADR-003]: Deploy Docker images through Azure Container Apps using GitHub Actions.
+3. [ADR-004]: Use Telegram as the primary approval channel for command gating.
+4. [ADR-005]: Split persistence between JSON config and SQLite runtime state.
+5. [ADR-007]: Model approvals behind a channel abstraction so Telegram, web UI, and auto-approve can share the same flow.
+6. [ADR-008]: Remove the unused bundled React/Vite frontend and keep Lucifer backend-first.

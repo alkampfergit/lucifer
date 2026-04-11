@@ -8,7 +8,7 @@
 - **One concept per file**.
 - **Max file length**: 300 lines.
 - **Max function length**: 30 lines.
-- **Naming convention**: Files use `snake_case` by default. React component files may use `PascalCase` (e.g. `App.tsx`). Conventional frontend entrypoint files may use their framework-standard names (e.g. `main.tsx`). Types/classes use `PascalCase`. Functions/variables use `camelCase`.
+- **Naming convention**: Files use `snake_case` by default. Types/classes use `PascalCase`. Functions/variables use `camelCase`.
 
 ## Import Ordering
 
@@ -53,11 +53,10 @@ Types:
 
 ## Language-Specific Rules
 
-### TypeScript + React + Express
+### TypeScript + Express
 
 - Run `npm run lint` before committing.
-- Run `npm run test` for frontend and backend verification.
+- Run `npm run test` for backend verification.
 - Run `npm run build` to verify structural checks plus production output.
-- Browser code lives under `src/`; backend runtime code lives under `server/src/`.
-- UI components must not import repository or config layers directly.
-- Server endpoints must validate response shapes before crossing the HTTP boundary.
+- Backend runtime code lives under `server/src/`.
+- Server endpoints must validate request and response shapes at the HTTP boundary.

@@ -19,7 +19,7 @@ Write an ADR when:
 ## ADR-001: Use Vite React frontend with an Express delivery tier
 
 **Date**: 2026-04-06
-**Status**: Accepted
+**Status**: Superseded by ADR-008
 **Deciders**: alkampfergit
 
 ### Context
@@ -213,3 +213,40 @@ wrapper that resolves whichever channel decides first.
 
 - **Hard-code Telegram everywhere**: Rejected because it couples the command flow to a single transport
 - **Separate execute flows per channel**: Rejected because it duplicates approval orchestration and makes behavior drift likely
+
+---
+
+## ADR-008: Remove the unused bundled React/Vite frontend
+
+**Date**: 2026-04-11
+**Status**: Accepted
+**Deciders**: alkampfergit
+
+### Context
+
+The repository still contained the starter React/Vite application, but the real
+product workflows already lived elsewhere:
+
+- command execution and approvals are backend APIs
+- the operator approval UI is a plain server-served HTML page
+- the React app only rendered starter copy plus a health check
+
+Keeping the frontend added build, dependency, and documentation weight without
+supporting the core product.
+
+### Decision
+
+Remove the bundled React/Vite frontend and keep Lucifer backend-first. Retain
+the `/api/health` endpoint and the server-delivered admin approval UI.
+
+### Consequences
+
+- (+) Smaller dependency surface and faster build/dev workflow
+- (+) Architecture aligns with the actual shipped behavior
+- (+) Less template residue for future work to work around
+- (-) A richer browser UI will need to be reintroduced intentionally if the product later needs one
+
+### Alternatives Considered
+
+- **Keep the frontend as a placeholder**: Rejected because it was already drifting into misleading template code
+- **Rewrite the admin approval UI into React immediately**: Rejected because there is no current product requirement for that extra surface

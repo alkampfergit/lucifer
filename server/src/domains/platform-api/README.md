@@ -2,7 +2,7 @@
 
 Owns the platform-facing Express surface and bootstrap seams for Lucifer.
 
-- `config/` parses server runtime settings such as port and client dist path.
+- `config/` parses server runtime settings such as port and environment.
 - `repository/` provides runtime metadata used by health reporting.
 - `service/` builds the `/api/health` response.
 - `api/` registers the health endpoint.

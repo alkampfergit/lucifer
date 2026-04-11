@@ -4,10 +4,9 @@
 
 | Term | Definition | In-code representation |
 |---|---|---|
-| `web-shell` | The React application rendered in the browser | `src/domains/web-shell/*` |
 | `platform-api` | The Express application that exposes HTTP endpoints and serves the build output | `server/src/domains/platform-api/*` |
 | `command-gateway` | The command firewall domain that owns auth, rules, approvals, execution, and audit logging | `server/src/domains/command-gateway/*` |
-| `health report` | The runtime status document returned by `/api/health` | `HealthReport` / `HealthStatus` |
+| `health report` | The runtime status document returned by `/api/health` | `HealthReport` |
 | `approval channel` | A pluggable way to obtain human or automatic approval for a command request | `ApprovalChannel` |
 | `pending request` | An in-memory command awaiting approval resolution | `PendingRequest` |
 | `command rule` | A prefix-based policy entry that decides whether a command is auto-approved, denied, or escalated for approval | `CommandRule` |

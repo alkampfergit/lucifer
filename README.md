@@ -207,9 +207,6 @@ server/src/domains/
     service/             Auth, rules, risk analysis, execution, approvals
     api/                 Execute routes + web approval UI routes
   platform-api/          Health endpoint + server runtime wiring
-
-src/domains/
-  web-shell/             Browser health/status view
 ```
 
 Dependency flow: Types -> Config -> Repository -> Service -> Runtime -> UI/API
@@ -222,4 +219,3 @@ Dependency flow: Types -> Config -> Repository -> Service -> Runtime -> UI/API
 - Optional server-delivered web approval UI with SSE updates
 - Pino for structured logging (pino-pretty for human-readable console output in dev)
 - Vitest for testing
-- React 19 + Vite 8 for the browser shell and health view

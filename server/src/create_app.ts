@@ -73,9 +73,6 @@ export function createApp(options: CreateAppOptions = {}) {
   const metadataRepository = createRuntimeMetadataRepository()
   const getHealthReport = createHealthReportService(serverConfig, metadataRepository)
   const app = express()
-  const indexPath = path.join(serverConfig.clientDistPath, 'index.html')
-  const hasBuiltClient = fs.existsSync(indexPath)
-  const indexMarkup = hasBuiltClient ? fs.readFileSync(indexPath, 'utf8') : null
 
   app.disable('x-powered-by')
   app.use(express.json())
@@ -134,13 +131,6 @@ export function createApp(options: CreateAppOptions = {}) {
   // TLS warning
   if (process.env.NODE_ENV === 'production') {
     log.warn('Ensure HTTPS is configured for production. API keys are transmitted in headers.')
-  }
-
-  if (hasBuiltClient && indexMarkup !== null) {
-    app.use(express.static(serverConfig.clientDistPath))
-    app.get(/^(?!\/api\/).*/, (_request, response) => {
-      response.type('html').send(indexMarkup)
-    })
   }
 
   async function start() {
