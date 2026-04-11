@@ -101,7 +101,6 @@ function doLogin() {
     if (!r.ok) throw new Error('auth');
     return r.json();
   }).then(() => {
-    sessionStorage.setItem('lucifer_secret', secret);
     showApp();
   }).catch(() => {
     document.getElementById('login-error').style.display = 'block';
@@ -298,13 +297,8 @@ async function decide(requestId, action, matchType, duration) {
   }
 }
 
-// Auto-login if secret is in sessionStorage
+// Initialize
 (function init() {
-  const saved = sessionStorage.getItem('lucifer_secret');
-  if (saved) {
-    secret = saved;
-    showApp();
-  }
   // Enter key on login
   document.getElementById('secret-input').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') doLogin();

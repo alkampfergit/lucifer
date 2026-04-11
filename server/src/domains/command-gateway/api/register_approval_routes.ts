@@ -12,6 +12,31 @@ const log = createChildLogger('admin-routes');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Per-IP request rate limiter (sliding window)
+const RATE_WINDOW_MS = 60_000;
+const RATE_MAX_REQUESTS = 60;
+const requestCounts = new Map<string, { count: number; resetAt: number }>();
+
+function rateLimit(req: Request, res: Response): boolean {
+  const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.socket.remoteAddress ?? 'unknown';
+  const now = Date.now();
+  const entry = requestCounts.get(ip);
+  if (!entry || now > entry.resetAt) {
+    requestCounts.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS });
+    return true;
+  }
+  entry.count++;
+  if (entry.count > RATE_MAX_REQUESTS) {
+    res.status(429).json({
+      code: 'RATE_LIMITED',
+      message: 'Too many requests. Try again later.',
+      retryable: true,
+    } satisfies ErrorResponse);
+    return false;
+  }
+  return true;
+}
+
 // Rate limiter for admin auth failures
 interface AuthRateLimit {
   failures: number;
@@ -113,12 +138,14 @@ export function registerApprovalRoutes(deps: ApprovalRouteDeps): void {
 
   // List pending requests
   router.get('/api/v1/admin/approvals/pending', (req: Request, res: Response) => {
+    if (!rateLimit(req, res)) return;
     if (!checkAdminAuth(adminSecret, req, res)) return;
     res.json({ pending: webChannel.getPendingRequests() });
   });
 
   // Exchange bearer token for one-time SSE ticket
   router.post('/api/v1/admin/approvals/stream-ticket', (req: Request, res: Response) => {
+    if (!rateLimit(req, res)) return;
     if (!checkAdminAuth(adminSecret, req, res)) return;
     const token = randomUUID();
     sseTickets.set(token, { token, createdAt: Date.now() });
@@ -169,6 +196,7 @@ export function registerApprovalRoutes(deps: ApprovalRouteDeps): void {
 
   // Approve or deny a request
   router.post('/api/v1/admin/approvals/:requestId/decide', (req: Request, res: Response) => {
+    if (!rateLimit(req, res)) return;
     if (!checkAdminAuth(adminSecret, req, res)) return;
 
     const requestId = Array.isArray(req.params.requestId) ? req.params.requestId[0] : req.params.requestId;
