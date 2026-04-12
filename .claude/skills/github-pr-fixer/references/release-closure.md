@@ -59,16 +59,33 @@ git merge --ff-only "$HEAD_BRANCH"
 git tag "$CONFIRMED_TAG"
 git push origin master
 git push origin "$CONFIRMED_TAG"
-gh pr close "$PR_NUMBER"
+gh pr close "$PR_NUMBER" --comment "Released as $CONFIRMED_TAG"
 git branch -d "$HEAD_BRANCH"
 git push origin --delete "$HEAD_BRANCH"
 ```
 
-If the user wants the PR closed with a comment, include one:
+## 4a. Post a release summary comment
+
+After closing the PR, post a final summary comment listing all fix rounds that
+were applied during the PR cycle. This gives reviewers a single place to see
+everything the automation did.
 
 ```bash
-gh pr close "$PR_NUMBER" --comment "Released as $CONFIRMED_TAG"
+gh pr comment "$PR_NUMBER" --body "$(cat <<'EOF'
+## Release summary
+
+**Tag:** `$CONFIRMED_TAG`
+**Fix rounds:** $TOTAL_ROUNDS
+
+<list each fix round: round number, what check failed, what was changed, commit SHA>
+
+**Final state:** all checks green
+EOF
+)"
 ```
+
+If no fix rounds were needed, the comment should say "No fix rounds needed —
+all checks passed on first push."
 
 Branch cleanup requirements:
 
