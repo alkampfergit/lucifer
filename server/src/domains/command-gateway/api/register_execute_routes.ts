@@ -150,7 +150,7 @@ export function registerExecuteRoutes(deps: ExecuteRouteDeps): void {
       return;
     }
 
-    // telegram_approve: check existing approval in SQLite
+    // manual_approve: check existing approval in SQLite
     const existingApproval = approvalStore.findApproval(command);
     if (existingApproval) {
       auditLog.append({
@@ -181,9 +181,11 @@ export function registerExecuteRoutes(deps: ExecuteRouteDeps): void {
       return;
     }
 
-    // Need Telegram approval
+    // Need manual approval (Telegram / web admin)
     const riskAnalysis = analyzeCommandRisk(command);
     const abortController = new AbortController();
+
+    log.info({ requestId, command, apiKeyName, ip }, 'Command requires manual approval, forwarding to approval channel');
 
     // Coalesce: check if same command from same key is already pending
     const existingPending = pendingStore.findByCommand(command, apiKeyName);
@@ -379,6 +381,13 @@ async function processApprovalAsync(ctx: ApprovalAsyncContext): Promise<void> {
       });
       return;
     }
+
+    // Bridge the gap between approval resolve (which removes from pendingStore)
+    // and execution completion so status polling never returns 404.
+    completedResults.set(requestId, {
+      result: { requestId, status: 'executing' },
+      completedAt: Date.now(),
+    });
 
     const result = await executeCommand({
       command,

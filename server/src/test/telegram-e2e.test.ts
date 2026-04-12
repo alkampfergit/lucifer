@@ -102,15 +102,15 @@ async function waitForStatus(requestId: string, expectedStatus: string, timeoutM
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 describe('Telegram E2E: approval flow', () => {
-  it('sends approval request to Telegram when command requires telegram_approve', async () => {
+  it('sends approval request to Telegram when command requires manual_approve', async () => {
     const { buttons, lastMsg } = await submitAndGetButtons('git status');
 
     // The message should contain the command
     expect(lastMsg.message.text).toContain('git status');
     expect(lastMsg.message.text).toContain('Command Request');
 
-    // Should have 6 inline keyboard buttons (3 exact + 2 prefix + 1 deny)
-    expect(buttons.length).toBe(6);
+    // Should have 7 inline keyboard buttons (1 once + 3 exact + 2 prefix + 1 deny)
+    expect(buttons.length).toBe(7);
     expect(buttons.some(b => b.text.includes('Exact 2h'))).toBe(true);
     expect(buttons.some(b => b.text.includes('Deny'))).toBe(true);
   }, 15_000);
@@ -305,10 +305,10 @@ describe('Telegram E2E: first onboarding journey', () => {
     config.rateLimitPerMinute = 1000; // relax for testing
     writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
 
-    // Step 3: Add a telegram_approve rule for a command that will succeed
+    // Step 3: Add a manual_approve rule for a command that will succeed
     const rulesPath = join(tmpDir, 'config', 'command-rules.json');
     const rules = JSON.parse(readFileSync(rulesPath, 'utf-8'));
-    rules.rules.unshift({ prefix: 'echo tg-onboard', action: 'telegram_approve' });
+    rules.rules.unshift({ prefix: 'echo tg-onboard', action: 'manual_approve' });
     writeFileSync(rulesPath, JSON.stringify(rules, null, 2) + '\n');
 
     // Step 4: Start Telegram test server
@@ -409,4 +409,131 @@ describe('Telegram E2E: first onboarding journey', () => {
     expect(statusRes.body.exitCode).toBe(0);
     expect(statusRes.body.stdout).toContain('tg-onboard hello');
   }, 25_000);
+});
+
+// ─── Journey: Deny and Approve-Once via Telegram ─────────────────────────
+// Verifies deny rejects the command, and approve-once executes the command
+// without caching the approval. Also validates that the request correctly
+// waits for the Telegram decision (regression test for issue #4).
+
+describe('Telegram E2E: deny and approve-once journey', () => {
+  let journeyCtx: TelegramE2EContext;
+
+  beforeAll(async () => {
+    journeyCtx = createTelegramE2EContext('tgjourney', 19878);
+    await journeyCtx.start();
+  }, 30_000);
+
+  afterAll(async () => {
+    await journeyCtx.stop();
+  }, 15_000);
+
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  it('deny → command is rejected, approve-once → command completes without cached approval', async () => {
+    // ── Part 1: Deny ─────────────────────────────────────────────
+
+    // Submit a command that needs approval
+    const denyExecRes = await request(journeyCtx.app)
+      .post('/api/v1/execute')
+      .set('x-api-key', journeyCtx.testKey)
+      .send({ command: 'git diff --stat' });
+
+    expect(denyExecRes.status).toBe(202);
+    const denyRequestId = denyExecRes.body.requestId;
+
+    // Wait for the Telegram message
+    await waitForBotMessage(journeyCtx);
+    const denyUpdates = await getBotMessages(journeyCtx) as any as BotMessageResult;
+    const denyButtons = extractInlineButtons(denyUpdates);
+
+    // Press the deny button
+    const denyBtn = denyButtons.find(b => b.callback_data.startsWith('deny:'));
+    expect(denyBtn).toBeDefined();
+    await pressInlineButton(journeyCtx, denyBtn!.callback_data, denyBtn!.messageId);
+
+    // Wait for the request to be denied
+    await waitForStatus(denyRequestId, 'denied');
+
+    const denyStatusRes = await request(journeyCtx.app)
+      .get(`/api/v1/status/${denyRequestId}`)
+      .set('x-api-key', journeyCtx.testKey);
+    expect(denyStatusRes.status).toBe(200);
+    expect(denyStatusRes.body.status).toBe('denied');
+
+    // ── Part 2: Approve Once ─────────────────────────────────────
+
+    // Submit a command that needs approval
+    const onceExecRes = await request(journeyCtx.app)
+      .post('/api/v1/execute')
+      .set('x-api-key', journeyCtx.testKey)
+      .send({ command: 'git diff --stat' });
+
+    expect(onceExecRes.status).toBe(202);
+    const onceRequestId = onceExecRes.body.requestId;
+
+    // Wait for the Telegram message
+    await waitForBotMessage(journeyCtx);
+    const onceUpdates = await getBotMessages(journeyCtx) as any as BotMessageResult;
+    const onceButtons = extractInlineButtons(onceUpdates);
+
+    // Press the "Once" button
+    const onceBtn = onceButtons.find(b =>
+      b.callback_data.startsWith('approve:') && b.callback_data.includes(':once:'),
+    );
+    expect(onceBtn).toBeDefined();
+    await pressInlineButton(journeyCtx, onceBtn!.callback_data, onceBtn!.messageId);
+
+    // Wait for the command to complete (validates issue #4 — request waits for approval)
+    await waitForStatus(onceRequestId, 'completed');
+
+    const onceStatusRes = await request(journeyCtx.app)
+      .get(`/api/v1/status/${onceRequestId}`)
+      .set('x-api-key', journeyCtx.testKey);
+    expect(onceStatusRes.status).toBe(200);
+    expect(onceStatusRes.body.status).toBe('completed');
+    expect(onceStatusRes.body.exitCode).toBe(0);
+
+    // ── Part 3: Verify no cached approval ────────────────────────
+
+    // Submit the same command again — it should require approval again
+    // (not auto-approved from cache, since we used "once")
+    const repeatExecRes = await request(journeyCtx.app)
+      .post('/api/v1/execute')
+      .set('x-api-key', journeyCtx.testKey)
+      .send({ command: 'git diff --stat' });
+
+    expect(repeatExecRes.status).toBe(202);
+    expect(repeatExecRes.body.status).toBe('pending_approval');
+
+    // The request should NOT be auto-approved — it should still be pending
+    // Wait a moment and verify it didn't complete on its own
+    await new Promise(r => setTimeout(r, 500));
+    const repeatStatusRes = await request(journeyCtx.app)
+      .get(`/api/v1/status/${repeatExecRes.body.requestId}`)
+      .set('x-api-key', journeyCtx.testKey);
+    // It should be either pending or in the pending store, not completed
+    if (repeatStatusRes.status === 200) {
+      expect(repeatStatusRes.body.status).toBe('pending_approval');
+    }
+
+    // Clean up: deny the last pending request
+    await waitForBotMessage(journeyCtx);
+    const cleanupUpdates = await getBotMessages(journeyCtx) as any as BotMessageResult;
+    const cleanupButtons = extractInlineButtons(cleanupUpdates);
+    const cleanupDeny = cleanupButtons.find(b => b.callback_data.startsWith('deny:'));
+    if (cleanupDeny) {
+      await pressInlineButton(journeyCtx, cleanupDeny.callback_data, cleanupDeny.messageId);
+    }
+  }, 40_000);
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+
+  /** Helper: wait for request to reach terminal status within this describe block. */
+  async function waitForStatus(requestId: string, expectedStatus: string, timeoutMs = 10_000) {
+    await waitForCondition(async () => {
+      const statusRes = await request(journeyCtx.app)
+        .get(`/api/v1/status/${requestId}`)
+        .set('x-api-key', journeyCtx.testKey);
+      return statusRes.status === 200 && statusRes.body.status === expectedStatus;
+    }, timeoutMs);
+  }
 });

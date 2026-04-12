@@ -306,7 +306,7 @@ describe('Config schema contracts', () => {
     writeFileSync(rulesPath, JSON.stringify({
       rules: [
         { prefix: 'echo ', action: 'always_approve' },
-        { prefix: 'git ', action: 'telegram_approve' },
+        { prefix: 'git ', action: 'manual_approve' },
       ],
       defaultAction: 'always_deny',
     }));
@@ -326,17 +326,18 @@ describe('Config schema contracts', () => {
 
 describe('Telegram data contracts', () => {
   it('Telegram callback data format: action:requestId:matchType:duration', () => {
-    // These are the exact formats constructed in request_telegram_approval.ts lines 92-103
+    // These are the exact formats constructed in request_telegram_approval.ts
+    const approveOnce = 'approve:req-123:once:0';
     const approveExact2h = 'approve:req-123:exact:2';
     const approvePrefix8h = 'approve:req-123:prefix:8';
     const approvePermanent = 'approve:req-123:exact:permanent';
     const deny = 'deny:req-123:exact:0';
 
-    for (const data of [approveExact2h, approvePrefix8h, approvePermanent, deny]) {
+    for (const data of [approveOnce, approveExact2h, approvePrefix8h, approvePermanent, deny]) {
       const parts = data.split(':');
       expect(parts.length).toBe(4);
       expect(['approve', 'deny']).toContain(parts[0]);
-      expect(['exact', 'prefix']).toContain(parts[2]);
+      expect(['once', 'exact', 'prefix']).toContain(parts[2]);
     }
 
     // Lock the format with inline snapshot

@@ -61,8 +61,9 @@ export function createTelegramApprovalChannel(
     }
 
     const decision: ApprovalDecision = action === 'approve' ? 'approved' : 'denied';
+    const isOnce = matchType === 'once';
 
-    if (decision === 'approved') {
+    if (decision === 'approved' && !isOnce) {
       const approvalCommand = matchType === 'prefix'
         ? pending.command.split(/\s+/).slice(0, 2).join(' ')
         : pending.command;
@@ -75,8 +76,10 @@ export function createTelegramApprovalChannel(
       );
     }
 
-    // Store decision metadata so the Promise resolve can read the actual values
-    decisionMeta.set(requestId, { matchType: matchType as ApprovalMatchType, duration });
+    // Store decision metadata so the Promise resolve can read the actual values.
+    // For "once" approvals, report as 'exact' since no cached entry is stored.
+    const resolveMatchType = isOnce ? 'exact' : matchType;
+    decisionMeta.set(requestId, { matchType: resolveMatchType as ApprovalMatchType, duration });
 
     auditLog.append({
       ts: new Date().toISOString(),
@@ -90,7 +93,14 @@ export function createTelegramApprovalChannel(
     pendingStore.resolve(requestId, decision);
 
     const emoji = decision === 'approved' ? '\u2705' : '\u274c';
-    const label = decision === 'approved' ? `Approved (${matchType} ${duration}h)` : 'Denied';
+    let label: string;
+    if (decision !== 'approved') {
+      label = 'Denied';
+    } else if (isOnce) {
+      label = 'Approved (once)';
+    } else {
+      label = `Approved (${matchType} ${duration}h)`;
+    }
     try {
       await ctx.answerCbQuery(label);
       await ctx.editMessageText(
@@ -144,6 +154,9 @@ export function createTelegramApprovalChannel(
 
       const prefix = command.split(/\s+/).slice(0, 2).join(' ');
       const keyboard = Markup.inlineKeyboard([
+        [
+          Markup.button.callback('\u2714 Once', `approve:${requestId}:once:0`),
+        ],
         [
           Markup.button.callback('Exact 2h', `approve:${requestId}:exact:2`),
           Markup.button.callback('Exact 8h', `approve:${requestId}:exact:8`),

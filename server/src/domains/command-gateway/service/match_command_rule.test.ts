@@ -16,7 +16,7 @@ describe('CommandRulesStore.matchRule', () => {
   it('matches exact prefix', () => {
     const path = createTestRulesFile({
       rules: [
-        { prefix: 'git pull', action: 'telegram_approve' },
+        { prefix: 'git pull', action: 'manual_approve' },
         { prefix: 'echo ', action: 'always_approve' },
       ],
       defaultAction: 'always_deny',
@@ -54,15 +54,15 @@ describe('CommandRulesStore.matchRule', () => {
     expect(result.rule).toBeNull();
   });
 
-  it('handles telegram_approve action', () => {
+  it('handles manual_approve action', () => {
     const path = createTestRulesFile({
-      rules: [{ prefix: 'npm run', action: 'telegram_approve' }],
+      rules: [{ prefix: 'npm run', action: 'manual_approve' }],
       defaultAction: 'always_deny',
     });
     const store = createCommandRulesStore(path);
 
     const result = store.matchRule('npm run build');
-    expect(result.action).toBe('telegram_approve');
+    expect(result.action).toBe('manual_approve');
   });
 
   it('trims command whitespace', () => {

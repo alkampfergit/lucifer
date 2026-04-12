@@ -88,7 +88,7 @@ describe('POST /api/v1/execute integration', () => {
     expect(res.body.code).toBe('COMMAND_DENIED');
   });
 
-  it('returns pending_approval for telegram_approve command (async default)', async () => {
+  it('returns pending_approval for manual_approve command (async default)', async () => {
     const res = await request(ctx.app)
       .post('/api/v1/execute')
       .set('x-api-key', ctx.testKey)
@@ -147,7 +147,7 @@ describe('GET /api/v1/status/:requestId', () => {
     expect(res.body.code).toBe('NOT_FOUND');
   });
 
-  it('returns status for a pending telegram_approve request', async () => {
+  it('returns status for a pending manual_approve request', async () => {
     // First create a pending request
     const execRes = await request(ctx.app)
       .post('/api/v1/execute')
@@ -164,7 +164,7 @@ describe('GET /api/v1/status/:requestId', () => {
 
     expect([200, 404]).toContain(statusRes.status);
     if (statusRes.status === 200) {
-      expect(['pending_approval', 'completed', 'failed'].includes(statusRes.body.status)).toBe(true);
+      expect(['pending_approval', 'executing', 'completed', 'failed'].includes(statusRes.body.status)).toBe(true);
     }
   });
 });
@@ -316,7 +316,7 @@ describe('MockApprovalChannel integration', () => {
       rules: [
         { prefix: 'echo ', action: 'always_approve' },
         { prefix: 'rm ', action: 'always_deny' },
-        { prefix: 'git ', action: 'telegram_approve' },
+        { prefix: 'git ', action: 'manual_approve' },
       ],
       defaultAction: 'always_deny',
     }));

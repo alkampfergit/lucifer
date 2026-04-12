@@ -7,7 +7,7 @@ export interface CommandRequest {
   createdAt: string;
 }
 
-export type RuleAction = 'always_approve' | 'telegram_approve' | 'always_deny';
+export type RuleAction = 'always_approve' | 'manual_approve' | 'always_deny';
 
 export interface CommandRule {
   prefix: string;

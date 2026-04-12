@@ -193,6 +193,21 @@ describe('createTelegramApprovalChannel', () => {
       );
     });
 
+    it('approves once without storing in approval cache', async () => {
+      addPendingRequest(pendingStore, 'req-once', 'git stash');
+      const ctx = createCtx('approve:req-once:once:0');
+      await callbackHandler(ctx);
+
+      // Should NOT store an approval
+      expect(approvalStore.addApproval).not.toHaveBeenCalled();
+      // But should resolve the pending request
+      expect(pendingStore.get('req-once')).toBeUndefined();
+      expect(ctx.answerCbQuery).toHaveBeenCalledWith(expect.stringContaining('Approved (once)'));
+      expect(ctx.editMessageText).toHaveBeenCalledWith(
+        expect.stringContaining('\u2705'),
+      );
+    });
+
     it('handles expired or unknown request gracefully', async () => {
       // No pending request added for req-unknown
       const ctx = createCtx('approve:req-unknown:exact:8');
@@ -303,7 +318,7 @@ describe('createTelegramApprovalChannel', () => {
       expect(sentText).toContain('Targets system directory');
     });
 
-    it('creates 6 inline keyboard buttons: 3 exact, 2 prefix, 1 deny', async () => {
+    it('creates 7 inline keyboard buttons: 1 once, 3 exact, 2 prefix, 1 deny', async () => {
       const channel = createTelegramApprovalChannel(
         TOKEN, CHAT_ID, pendingStore, approvalStore, auditLog,
       );
@@ -318,27 +333,31 @@ describe('createTelegramApprovalChannel', () => {
       pendingStore.resolve('req-kb', 'approved');
       await promise;
 
-      // Markup.inlineKeyboard should have been called with 3 rows
+      // Markup.inlineKeyboard should have been called with 4 rows
       expect(Markup.inlineKeyboard).toHaveBeenCalledWith([
-        // Row 1: 3 exact buttons
+        // Row 1: 1 once button
+        expect.arrayContaining([
+          expect.objectContaining({ callback_data: 'approve:req-kb:once:0' }),
+        ]),
+        // Row 2: 3 exact buttons
         expect.arrayContaining([
           expect.objectContaining({ callback_data: 'approve:req-kb:exact:2' }),
           expect.objectContaining({ callback_data: 'approve:req-kb:exact:8' }),
           expect.objectContaining({ callback_data: 'approve:req-kb:exact:permanent' }),
         ]),
-        // Row 2: 2 prefix buttons
+        // Row 3: 2 prefix buttons
         expect.arrayContaining([
           expect.objectContaining({ callback_data: 'approve:req-kb:prefix:2' }),
           expect.objectContaining({ callback_data: 'approve:req-kb:prefix:8' }),
         ]),
-        // Row 3: 1 deny button
+        // Row 4: 1 deny button
         expect.arrayContaining([
           expect.objectContaining({ callback_data: 'deny:req-kb:exact:0' }),
         ]),
       ]);
 
-      // Also verify Markup.button.callback was called 6 times
-      expect(Markup.button.callback).toHaveBeenCalledTimes(6);
+      // Also verify Markup.button.callback was called 7 times
+      expect(Markup.button.callback).toHaveBeenCalledTimes(7);
     });
   });
 

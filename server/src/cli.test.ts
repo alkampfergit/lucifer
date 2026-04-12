@@ -281,11 +281,11 @@ describe('First configuration journey', () => {
     const apiKey = /(luc_[a-f0-9]{48})/.exec(stdout)![1];
     const adminSecret = /(luc_admin_[a-f0-9]{48})/.exec(stdout)![1];
 
-    // Step 2: Patch command-rules.json to add a telegram_approve rule for a
+    // Step 2: Patch command-rules.json to add a manual_approve rule for a
     // command that will succeed when actually executed in the test environment
     const rulesPath = join(tmpDir, 'config', 'command-rules.json');
     const rules = JSON.parse(readFileSync(rulesPath, 'utf-8'));
-    rules.rules.unshift({ prefix: 'echo approve-me', action: 'telegram_approve' });
+    rules.rules.unshift({ prefix: 'echo approve-me', action: 'manual_approve' });
     writeFileSync(rulesPath, JSON.stringify(rules, null, 2) + '\n');
 
     // Step 3: Start the server WITHOUT --auto-approve (web UI is the approval channel)
