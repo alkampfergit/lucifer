@@ -11,6 +11,19 @@ export interface TelegramChannelOptions {
   apiRoot?: string;
 }
 
+/** Notify the user that a request has expired; errors are swallowed. */
+async function dismissExpiredRequest(
+  ctx: { answerCbQuery: (t: string) => Promise<unknown>; editMessageReplyMarkup: (m: undefined) => Promise<unknown> },
+  requestId: string,
+): Promise<void> {
+  try {
+    await ctx.answerCbQuery('Request expired or already decided');
+    await ctx.editMessageReplyMarkup(undefined);
+  } catch (err) {
+    log.warn({ requestId, err }, 'Failed to update Telegram message for expired request');
+  }
+}
+
 export function createTelegramApprovalChannel(
   token: string,
   chatId: string,
@@ -23,16 +36,6 @@ export function createTelegramApprovalChannel(
     ? { telegram: { apiRoot: options.apiRoot } }
     : {};
   const bot = new Telegraf(token, telegrafOptions);
-
-  /** Notify the user that a request has expired; errors are swallowed. */
-  async function dismissExpiredRequest(ctx: { answerCbQuery: (t: string) => Promise<unknown>; editMessageReplyMarkup: (m: undefined) => Promise<unknown> }, requestId: string): Promise<void> {
-    try {
-      await ctx.answerCbQuery('Request expired or already decided');
-      await ctx.editMessageReplyMarkup(undefined);
-    } catch (err) {
-      log.warn({ requestId, err }, 'Failed to update Telegram message for expired request');
-    }
-  }
 
   bot.on('callback_query', async (ctx) => {
     const data = 'data' in ctx.callbackQuery ? ctx.callbackQuery.data : undefined;
