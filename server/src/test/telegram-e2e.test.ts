@@ -72,7 +72,7 @@ async function submitAndGetButtons(command: string) {
   await waitForBotMessage(ctx);
   const updates = await getBotMessages(ctx) as any as BotMessageResult;
   const buttons = extractInlineButtons(updates);
-  const lastMsg = updates.result[updates.result.length - 1];
+  const lastMsg = updates.result.at(-1);
 
   return { requestId, buttons, lastMsg, updates };
 }

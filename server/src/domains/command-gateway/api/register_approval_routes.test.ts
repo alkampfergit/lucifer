@@ -62,9 +62,37 @@ function submitPendingRequest(
   command = 'git push origin main',
 ): void {
   // Do NOT await — requestApproval blocks until resolved
-  void webChannel.requestApproval(command, 'test-key', '127.0.0.1', requestId, {
+  webChannel.requestApproval(command, 'test-key', '127.0.0.1', requestId, {
     level: 'warning',
     warnings: ['test risk'],
+  }).catch(() => { /* intentionally fire-and-forget */ });
+}
+
+/** Helper: open a raw HTTP GET and collect the SSE response. */
+function openSSEStream(url: string): Promise<{ statusCode: number; headers: http.IncomingHttpHeaders; body: string }> {
+  return new Promise((resolve, reject) => {
+    http.get(url, (res) => {
+      // For non-200 (JSON error responses), just collect the body normally
+      if (res.statusCode !== 200) {
+        let body = '';
+        res.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+        res.on('end', () => resolve({ statusCode: res.statusCode!, headers: res.headers, body }));
+        return;
+      }
+
+      // For SSE streams, collect until we see the init event, then abort
+      let body = '';
+      const timeout = setTimeout(() => { res.destroy(); }, 3000);
+      res.on('data', (chunk: Buffer) => {
+        body += chunk.toString();
+        if (body.includes('event: init')) {
+          clearTimeout(timeout);
+          res.destroy();
+        }
+      });
+      res.on('close', () => { clearTimeout(timeout); resolve({ statusCode: res.statusCode!, headers: res.headers, body }); });
+      res.on('error', () => { clearTimeout(timeout); resolve({ statusCode: res.statusCode!, headers: res.headers, body }); });
+    }).on('error', reject);
   });
 }
 
@@ -219,34 +247,6 @@ describe('register_approval_routes', () => {
   // 6-7. SSE stream
   // ------------------------------------------------------------------
   describe('GET /api/v1/admin/approvals/stream', () => {
-    /** Helper: open a raw HTTP GET and collect the SSE response. */
-    function openSSEStream(url: string): Promise<{ statusCode: number; headers: http.IncomingHttpHeaders; body: string }> {
-      return new Promise((resolve, reject) => {
-        http.get(url, (res) => {
-          // For non-200 (JSON error responses), just collect the body normally
-          if (res.statusCode !== 200) {
-            let body = '';
-            res.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-            res.on('end', () => resolve({ statusCode: res.statusCode!, headers: res.headers, body }));
-            return;
-          }
-
-          // For SSE streams, collect until we see the init event, then abort
-          let body = '';
-          const timeout = setTimeout(() => { res.destroy(); }, 3000);
-          res.on('data', (chunk: Buffer) => {
-            body += chunk.toString();
-            if (body.includes('event: init')) {
-              clearTimeout(timeout);
-              res.destroy();
-            }
-          });
-          res.on('close', () => { clearTimeout(timeout); resolve({ statusCode: res.statusCode!, headers: res.headers, body }); });
-          res.on('error', () => { clearTimeout(timeout); resolve({ statusCode: res.statusCode!, headers: res.headers, body }); });
-        }).on('error', reject);
-      });
-    }
-
     it('returns 200 SSE stream with init event when using valid ticket', async () => {
       // First obtain a ticket
       const ticketRes = await request(app)

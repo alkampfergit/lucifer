@@ -70,7 +70,7 @@ describe('createWebApprovalChannel', () => {
     channel.requestApproval('ls', 'key1', '127.0.0.1', 'req-sse', defaultRisk);
 
     expect(mockRes.write).toHaveBeenCalledOnce();
-    const payload = (mockRes.write as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    const payload = vi.mocked(mockRes.write).mock.calls[0][0] as string;
     expect(payload).toContain('event: new_request');
     expect(payload).toContain('req-sse');
 

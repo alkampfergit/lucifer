@@ -127,11 +127,11 @@ describe('CLI smoke tests', () => {
       const { stdout } = await runCli('--init', tmpDir);
 
       // API key: luc_ + 48 hex chars
-      const keyMatch = stdout.match(/(luc_[a-f0-9]{48})/);
+      const keyMatch = /(luc_[a-f0-9]{48})/.exec(stdout);
       expect(keyMatch).not.toBeNull();
 
       // Admin secret: luc_admin_ + 48 hex chars
-      const adminMatch = stdout.match(/(luc_admin_[a-f0-9]{48})/);
+      const adminMatch = /(luc_admin_[a-f0-9]{48})/.exec(stdout);
       expect(adminMatch).not.toBeNull();
 
       // They must be different credentials
@@ -189,7 +189,7 @@ describe('First configuration journey', () => {
   it('init → start server → execute command with generated key', async () => {
     // Step 1: Run --init and capture the generated API key
     const { stdout } = await runCli('--init', tmpDir);
-    const keyMatch = stdout.match(/(luc_[a-f0-9]{48})/);
+    const keyMatch = /(luc_[a-f0-9]{48})/.exec(stdout);
     expect(keyMatch).not.toBeNull();
     const apiKey = keyMatch![1];
 
@@ -222,7 +222,7 @@ describe('First configuration journey', () => {
 
   it('init → generated key is rejected for denied commands', async () => {
     const { stdout } = await runCli('--init', tmpDir);
-    const apiKey = stdout.match(/(luc_[a-f0-9]{48})/)![1];
+    const apiKey = /(luc_[a-f0-9]{48})/.exec(stdout)![1];
 
     const configPath = join(tmpDir, 'config', 'lucifer.json');
     const result = createApp({ configPath, autoApprove: true });
@@ -290,7 +290,7 @@ describe('Log and stats journey', () => {
 
     // Init config and capture key
     const { stdout } = await runCli('--init', tmpDir);
-    apiKey = stdout.match(/(luc_[a-f0-9]{48})/)![1];
+    apiKey = /(luc_[a-f0-9]{48})/.exec(stdout)![1];
 
     // Execute some commands to populate the audit log
     const configPath = join(tmpDir, 'config', 'lucifer.json');
