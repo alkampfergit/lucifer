@@ -274,6 +274,98 @@ describe('First configuration journey', () => {
 
     expect(() => createApp({ configPath: join(configDir, 'lucifer.json') })).toThrow();
   });
+
+  it('init → start server with web UI → approve command via admin secret', async () => {
+    // Step 1: Run --init and capture BOTH the API key and admin secret
+    const { stdout } = await runCli('--init', tmpDir);
+    const apiKey = /(luc_[a-f0-9]{48})/.exec(stdout)![1];
+    const adminSecret = /(luc_admin_[a-f0-9]{48})/.exec(stdout)![1];
+
+    // Step 2: Patch command-rules.json to add a telegram_approve rule for a
+    // command that will succeed when actually executed in the test environment
+    const rulesPath = join(tmpDir, 'config', 'command-rules.json');
+    const rules = JSON.parse(readFileSync(rulesPath, 'utf-8'));
+    rules.rules.unshift({ prefix: 'echo approve-me', action: 'telegram_approve' });
+    writeFileSync(rulesPath, JSON.stringify(rules, null, 2) + '\n');
+
+    // Step 3: Start the server WITHOUT --auto-approve (web UI is the approval channel)
+    const configPath = join(tmpDir, 'config', 'lucifer.json');
+    const result = createApp({ configPath });
+
+    try {
+      await result.start();
+
+      // Step 4: Verify the admin UI page is served
+      const pageRes = await request(result.app).get('/admin/approvals');
+      expect(pageRes.status).toBe(200);
+      expect(pageRes.headers['content-type']).toContain('text/html');
+
+      // Step 5: always_approve commands still work without approval
+      const approvedRes = await request(result.app)
+        .post('/api/v1/execute')
+        .set('x-api-key', apiKey)
+        .send({ command: 'echo auto-approved' });
+      expect(approvedRes.status).toBe(200);
+      expect(approvedRes.body.status).toBe('completed');
+
+      // Step 6: Submit a command that goes to the web approval channel
+      const pendingRes = await request(result.app)
+        .post('/api/v1/execute')
+        .set('x-api-key', apiKey)
+        .send({ command: 'echo approve-me via web' });
+      expect(pendingRes.status).toBe(202);
+      const { requestId } = pendingRes.body;
+
+      // Step 7: Admin lists pending approvals using the generated admin secret
+      const pendingList = await request(result.app)
+        .get('/api/v1/admin/approvals/pending')
+        .set('Authorization', `Bearer ${adminSecret}`);
+      expect(pendingList.status).toBe(200);
+      expect(pendingList.body.pending.length).toBeGreaterThanOrEqual(1);
+      expect(pendingList.body.pending.some((p: { requestId: string }) => p.requestId === requestId)).toBe(true);
+
+      // Step 8: Admin approves the command via the web decide endpoint
+      const decideRes = await request(result.app)
+        .post(`/api/v1/admin/approvals/${requestId}/decide`)
+        .set('Authorization', `Bearer ${adminSecret}`)
+        .send({ action: 'approve', matchType: 'exact', duration: '2' });
+      expect(decideRes.status).toBe(200);
+      expect(decideRes.body.ok).toBe(true);
+      expect(decideRes.body.decision).toBe('approved');
+
+      // Step 9: Poll status — command should now be completed
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      const statusRes = await request(result.app)
+        .get(`/api/v1/status/${requestId}`)
+        .set('x-api-key', apiKey);
+      expect(statusRes.status).toBe(200);
+      expect(statusRes.body.status).toBe('completed');
+      expect(statusRes.body.exitCode).toBe(0);
+      expect(statusRes.body.stdout).toContain('approve-me via web');
+    } finally {
+      await result.stop();
+    }
+  }, 30_000);
+
+  it('init → admin secret rejected when wrong secret used', async () => {
+    const { stdout } = await runCli('--init', tmpDir);
+    expect(stdout).toContain('luc_admin_');
+
+    const configPath = join(tmpDir, 'config', 'lucifer.json');
+    const result = createApp({ configPath });
+
+    try {
+      await result.start();
+
+      const res = await request(result.app)
+        .get('/api/v1/admin/approvals/pending')
+        .set('Authorization', 'Bearer luc_admin_wrong_secret');
+      expect(res.status).toBe(401);
+      expect(res.body.code).toBe('UNAUTHORIZED');
+    } finally {
+      await result.stop();
+    }
+  }, 20_000);
 });
 
 // ─── Journey: Checking Logs & Stats ─────────────────────────────────────────
