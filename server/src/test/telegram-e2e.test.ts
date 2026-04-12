@@ -359,8 +359,7 @@ describe('Telegram E2E: first onboarding journey', () => {
     const onboardCtx = { telegramServer, telegramClient, testKey: apiKey, app: appResult.app, start: appResult.start, stop: appResult.stop, testDir: tmpDir };
     await waitForBotMessage(onboardCtx);
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const updates = await telegramClient.getUpdates() as any;
+    const updates = await telegramClient.getUpdates();
     const buttons: Array<{ text: string; callback_data: string; messageId: number }> = [];
     for (const msg of updates.result) {
       const markup = msg.message?.reply_markup;
