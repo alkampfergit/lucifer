@@ -293,6 +293,132 @@ describe('register_approval_routes', () => {
   });
 
   // ------------------------------------------------------------------
+  // SSE real-time push: new_request and request_decided events
+  // ------------------------------------------------------------------
+  describe('SSE real-time events', () => {
+    /** Open an SSE stream and collect events until `stopAfter` events or timeout. */
+    function collectSSEEvents(
+      url: string,
+      stopAfter: number,
+      timeoutMs = 5000,
+    ): Promise<Array<{ event: string; data: string }>> {
+      return new Promise((resolve, reject) => {
+        const events: Array<{ event: string; data: string }> = [];
+        let currentEvent = '';
+        let currentData = '';
+
+        const timer = setTimeout(() => { resolve(events); }, timeoutMs);
+
+        http.get(url, (res) => {
+          if (res.statusCode !== 200) {
+            clearTimeout(timer);
+            reject(new Error(`SSE stream returned ${res.statusCode}`));
+            return;
+          }
+
+          res.on('data', (chunk: Buffer) => {
+            const lines = chunk.toString().split('\n');
+            for (const line of lines) {
+              if (line.startsWith('event: ')) {
+                currentEvent = line.slice(7).trim();
+              } else if (line.startsWith('data: ')) {
+                currentData = line.slice(6).trim();
+              } else if (line === '' && currentEvent) {
+                events.push({ event: currentEvent, data: currentData });
+                currentEvent = '';
+                currentData = '';
+                if (events.length >= stopAfter) {
+                  clearTimeout(timer);
+                  res.destroy();
+                }
+              }
+            }
+          });
+
+          res.on('close', () => { clearTimeout(timer); resolve(events); });
+          res.on('error', () => { clearTimeout(timer); resolve(events); });
+        }).on('error', (err) => { clearTimeout(timer); reject(err); });
+      });
+    }
+
+    it('pushes new_request event when a pending request is submitted', async () => {
+      // Get a ticket
+      const ticketRes = await request(app)
+        .post('/api/v1/admin/approvals/stream-ticket')
+        .set('Authorization', `Bearer ${ADMIN_SECRET}`);
+      const { ticket } = ticketRes.body;
+
+      // Open SSE stream and collect up to 2 events (init + new_request)
+      const eventsPromise = collectSSEEvents(
+        `${baseUrl}/api/v1/admin/approvals/stream?ticket=${ticket}`,
+        2,
+        5000,
+      );
+
+      // Give SSE a moment to connect
+      await new Promise(r => setTimeout(r, 200));
+
+      // Submit a pending request — this broadcasts new_request via SSE
+      const requestId = 'test-sse-push-001';
+      submitPendingRequest(webChannel, requestId, 'echo sse-test');
+
+      const events = await eventsPromise;
+
+      // Should have at least init + new_request
+      expect(events.length).toBeGreaterThanOrEqual(2);
+      expect(events[0].event).toBe('init');
+      expect(events[1].event).toBe('new_request');
+
+      const newReqData = JSON.parse(events[1].data);
+      expect(newReqData.requestId).toBe(requestId);
+      expect(newReqData.command).toBe('echo sse-test');
+
+      // Clean up
+      webChannel.resolveRequest(requestId, 'denied', 'exact', '0');
+    });
+
+    it('pushes request_decided event when a pending request is resolved', async () => {
+      // Submit a pending request first
+      const requestId = 'test-sse-decided-001';
+      submitPendingRequest(webChannel, requestId, 'echo decided-test');
+      await new Promise(r => setTimeout(r, 50));
+
+      // Get a ticket and open SSE stream, collect up to 2 events (init + request_decided)
+      const ticketRes = await request(app)
+        .post('/api/v1/admin/approvals/stream-ticket')
+        .set('Authorization', `Bearer ${ADMIN_SECRET}`);
+      const { ticket } = ticketRes.body;
+
+      const eventsPromise = collectSSEEvents(
+        `${baseUrl}/api/v1/admin/approvals/stream?ticket=${ticket}`,
+        2,
+        5000,
+      );
+
+      // Give SSE a moment to connect
+      await new Promise(r => setTimeout(r, 200));
+
+      // Resolve the request via the decide endpoint
+      const decideRes = await request(app)
+        .post(`/api/v1/admin/approvals/${requestId}/decide`)
+        .set('Authorization', `Bearer ${ADMIN_SECRET}`)
+        .send({ action: 'approve', matchType: 'exact', duration: '2' });
+      expect(decideRes.status).toBe(200);
+
+      const events = await eventsPromise;
+
+      // Should have at least init + request_decided
+      expect(events.length).toBeGreaterThanOrEqual(2);
+      expect(events[0].event).toBe('init');
+      expect(events[1].event).toBe('request_decided');
+
+      const decidedData = JSON.parse(events[1].data);
+      expect(decidedData.requestId).toBe(requestId);
+      expect(decidedData.decision).toBe('approved');
+    });
+  });
+
+  // ------------------------------------------------------------------
   // 8-13. Decide endpoint
   // ------------------------------------------------------------------
   describe('POST /api/v1/admin/approvals/:requestId/decide', () => {

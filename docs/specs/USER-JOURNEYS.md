@@ -92,7 +92,7 @@ The stories define what "done" means. Tests prove it.
 
 | ID | Story | Acceptance Criteria | Coverage |
 |---|---|---|---|
-| J4-S1 | As an Approver, I open `/admin/approvals` and see pending requests streamed via SSE | Page loads, authenticates via admin secret, and displays pending command requests in real time | `partial` — `register_approval_routes.test.ts` (route-level, no browser/SSE test) |
+| J4-S1 | As an Approver, I open `/admin/approvals` and see pending requests streamed via SSE | Page loads, authenticates via admin secret, and displays pending command requests in real time | `covered` — `register_approval_routes.test.ts` (SSE real-time events: new_request + request_decided) |
 | J4-S2 | As an Approver, I approve a command via the web admin so that it executes | Admin POST to approve endpoint transitions the request to executing → completed | `covered` — `web_approval_channel.test.ts` |
 | J4-S3 | As an Approver, I deny a command via the web admin so that it is rejected | Admin POST to deny endpoint transitions the request to denied | `covered` — `web_approval_channel.test.ts` |
 
@@ -189,16 +189,14 @@ The stories define what "done" means. Tests prove it.
 
 | Status | Count | Percentage |
 |---|---|---|
-| `covered` | 30 | 97% |
-| `partial` | 1 | 3% |
+| `covered` | 31 | 100% |
+| `partial` | 0 | 0% |
 | `uncovered` | 0 | 0% |
 | **Total** | **31** | |
 
 ### Debt Items
 
-| Story | Gap | Priority |
-|---|---|---|
-| J4-S1 | Web admin SSE streaming has no browser-level or integration test | Medium |
+No outstanding debt items.
 
 ---
 
