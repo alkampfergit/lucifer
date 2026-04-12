@@ -25,7 +25,7 @@ needed, execute the command, and return or expose the result.
 - Matches the command against the first prefix rule in `command-rules.json`.
 - `always_deny` returns `403`.
 - `always_approve` executes immediately.
-- `telegram_approve` checks cached approvals first, then requests approval.
+- `manual_approve` checks cached approvals first, then requests approval.
 
 ## Result States
 

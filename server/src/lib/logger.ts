@@ -18,7 +18,7 @@ if (!isProduction) {
 }
 
 const streams = pino.multistream([
-  { level: 'trace' as const, stream: consoleStream },
+  { level: 'info' as const, stream: consoleStream },
 ]);
 
 export const logger = pino({

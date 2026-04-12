@@ -55,7 +55,7 @@ export function createTestAppContext(
 
   const rules = [
     { prefix: 'echo ', action: 'always_approve' },
-    { prefix: 'git ', action: 'telegram_approve' },
+    { prefix: 'git ', action: 'manual_approve' },
     ...(options?.extraRules ?? []),
   ];
 

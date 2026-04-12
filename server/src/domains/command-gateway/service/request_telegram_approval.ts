@@ -24,6 +24,36 @@ async function dismissExpiredRequest(
   }
 }
 
+/** Cache a persistent approval entry when the decision warrants it. */
+function storeApprovalIfNeeded(
+  decision: ApprovalDecision,
+  matchType: string,
+  command: string,
+  duration: string,
+  approvedBy: string,
+  approvalStore: ApprovalStore,
+): void {
+  if (decision !== 'approved' || matchType === 'once') return;
+
+  const approvalCommand = matchType === 'prefix'
+    ? command.split(/\s+/).slice(0, 2).join(' ')
+    : command;
+
+  approvalStore.addApproval(
+    approvalCommand,
+    matchType as ApprovalMatchType,
+    duration,
+    approvedBy,
+  );
+}
+
+/** Build a human-readable label for the decision. */
+function buildDecisionLabel(decision: ApprovalDecision, matchType: string, duration: string): string {
+  if (decision !== 'approved') return 'Denied';
+  if (matchType === 'once') return 'Approved (once)';
+  return `Approved (${matchType} ${duration}h)`;
+}
+
 export function createTelegramApprovalChannel(
   token: string,
   chatId: string,
@@ -61,22 +91,14 @@ export function createTelegramApprovalChannel(
     }
 
     const decision: ApprovalDecision = action === 'approve' ? 'approved' : 'denied';
+    const approvedBy = `telegram:${ctx.callbackQuery.from.id}`;
 
-    if (decision === 'approved') {
-      const approvalCommand = matchType === 'prefix'
-        ? pending.command.split(/\s+/).slice(0, 2).join(' ')
-        : pending.command;
+    storeApprovalIfNeeded(decision, matchType, pending.command, duration, approvedBy, approvalStore);
 
-      approvalStore.addApproval(
-        approvalCommand,
-        matchType as ApprovalMatchType,
-        duration,
-        `telegram:${ctx.callbackQuery.from.id}`,
-      );
-    }
-
-    // Store decision metadata so the Promise resolve can read the actual values
-    decisionMeta.set(requestId, { matchType: matchType as ApprovalMatchType, duration });
+    // Store decision metadata so the Promise resolve can read the actual values.
+    // For "once" approvals, report as 'exact' since no cached entry is stored.
+    const resolveMatchType = matchType === 'once' ? 'exact' : matchType;
+    decisionMeta.set(requestId, { matchType: resolveMatchType as ApprovalMatchType, duration });
 
     auditLog.append({
       ts: new Date().toISOString(),
@@ -84,13 +106,13 @@ export function createTelegramApprovalChannel(
       requestId,
       command: pending.command,
       duration: decision === 'approved' ? duration : undefined,
-      approvedBy: `telegram:${ctx.callbackQuery.from.id}`,
+      approvedBy,
     });
 
     pendingStore.resolve(requestId, decision);
 
     const emoji = decision === 'approved' ? '\u2705' : '\u274c';
-    const label = decision === 'approved' ? `Approved (${matchType} ${duration}h)` : 'Denied';
+    const label = buildDecisionLabel(decision, matchType, duration);
     try {
       await ctx.answerCbQuery(label);
       await ctx.editMessageText(
@@ -144,6 +166,9 @@ export function createTelegramApprovalChannel(
 
       const prefix = command.split(/\s+/).slice(0, 2).join(' ');
       const keyboard = Markup.inlineKeyboard([
+        [
+          Markup.button.callback('\u2714 Once', `approve:${requestId}:once:0`),
+        ],
         [
           Markup.button.callback('Exact 2h', `approve:${requestId}:exact:2`),
           Markup.button.callback('Exact 8h', `approve:${requestId}:exact:8`),

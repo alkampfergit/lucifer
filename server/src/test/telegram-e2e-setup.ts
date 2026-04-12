@@ -144,8 +144,8 @@ export function createTelegramE2EContext(
   const rules = [
     { prefix: 'echo ', action: 'always_approve' },
     { prefix: 'rm ', action: 'always_deny' },
-    { prefix: 'git ', action: 'telegram_approve' },
-    { prefix: 'ls ', action: 'telegram_approve' },
+    { prefix: 'git ', action: 'manual_approve' },
+    { prefix: 'ls ', action: 'manual_approve' },
     ...(options?.extraRules ?? []),
   ];
 

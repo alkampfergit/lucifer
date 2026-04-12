@@ -91,10 +91,10 @@ function initConfig(targetDir: string) {
     rules: [
       { prefix: 'echo ', action: 'always_approve' },
       { prefix: 'git status', action: 'always_approve' },
-      { prefix: 'git pull', action: 'telegram_approve' },
-      { prefix: 'git push', action: 'telegram_approve' },
+      { prefix: 'git pull', action: 'manual_approve' },
+      { prefix: 'git push', action: 'manual_approve' },
       { prefix: 'npm test', action: 'always_approve' },
-      { prefix: 'npm run', action: 'telegram_approve' },
+      { prefix: 'npm run', action: 'manual_approve' },
       { prefix: 'rm ', action: 'always_deny' },
     ],
     defaultAction: 'always_deny',
@@ -296,7 +296,7 @@ async function main() {
   }
 
   // Server mode
-  const configPath = getArgValue('--config');
+  const configPath = getArgValue('--config') ?? './config/lucifer.json';
   const port = getArgValue('--port');
   const autoApprove = args.includes('--auto-approve');
 

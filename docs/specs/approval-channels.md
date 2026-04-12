@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Resolve `telegram_approve` command requests through a common approval contract.
+Resolve `manual_approve` command requests through a common approval contract.
 
 ## Available Channels
 
@@ -33,11 +33,12 @@ Resolve `telegram_approve` command requests through a common approval contract.
 
 ## Approval Shapes
 
-- Match types: `exact`, `prefix`
-- Durations: `2`, `8`, `permanent`
+- Match types: `once`, `exact`, `prefix`
+- Durations: `0` (once), `2`, `8`, `permanent`
 
 ## Stored Approval Behavior
 
-- Exact approvals match the full command string.
-- Prefix approvals match the derived first two tokens of the command.
+- **Once** approvals execute the command but do not store anything — the next identical command will require approval again.
+- **Exact** approvals match the full command string.
+- **Prefix** approvals match the derived first two tokens of the command.
 - Cached approvals are checked before prompting a human.
