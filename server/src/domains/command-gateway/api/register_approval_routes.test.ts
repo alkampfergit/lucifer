@@ -96,6 +96,51 @@ function openSSEStream(url: string): Promise<{ statusCode: number; headers: http
   });
 }
 
+/** Open an SSE stream and collect events until `stopAfter` events or timeout. */
+function collectSSEEvents(
+  url: string,
+  stopAfter: number,
+  timeoutMs = 5000,
+): Promise<Array<{ event: string; data: string }>> {
+  return new Promise((resolve, reject) => {
+    const events: Array<{ event: string; data: string }> = [];
+    let currentEvent = '';
+    let currentData = '';
+
+    const timer = setTimeout(() => { resolve(events); }, timeoutMs);
+
+    http.get(url, (res) => {
+      if (res.statusCode !== 200) {
+        clearTimeout(timer);
+        reject(new Error(`SSE stream returned ${res.statusCode}`));
+        return;
+      }
+
+      res.on('data', (chunk: Buffer) => {
+        const lines = chunk.toString().split('\n');
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            currentEvent = line.slice(7).trim();
+          } else if (line.startsWith('data: ')) {
+            currentData = line.slice(6).trim();
+          } else if (line === '' && currentEvent) {
+            events.push({ event: currentEvent, data: currentData });
+            currentEvent = '';
+            currentData = '';
+            if (events.length >= stopAfter) {
+              clearTimeout(timer);
+              res.destroy();
+            }
+          }
+        }
+      });
+
+      res.on('close', () => { clearTimeout(timer); resolve(events); });
+      res.on('error', () => { clearTimeout(timer); resolve(events); });
+    }).on('error', (err) => { clearTimeout(timer); reject(err); });
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Test suite
 // ---------------------------------------------------------------------------
@@ -296,51 +341,6 @@ describe('register_approval_routes', () => {
   // SSE real-time push: new_request and request_decided events
   // ------------------------------------------------------------------
   describe('SSE real-time events', () => {
-    /** Open an SSE stream and collect events until `stopAfter` events or timeout. */
-    function collectSSEEvents(
-      url: string,
-      stopAfter: number,
-      timeoutMs = 5000,
-    ): Promise<Array<{ event: string; data: string }>> {
-      return new Promise((resolve, reject) => {
-        const events: Array<{ event: string; data: string }> = [];
-        let currentEvent = '';
-        let currentData = '';
-
-        const timer = setTimeout(() => { resolve(events); }, timeoutMs);
-
-        http.get(url, (res) => {
-          if (res.statusCode !== 200) {
-            clearTimeout(timer);
-            reject(new Error(`SSE stream returned ${res.statusCode}`));
-            return;
-          }
-
-          res.on('data', (chunk: Buffer) => {
-            const lines = chunk.toString().split('\n');
-            for (const line of lines) {
-              if (line.startsWith('event: ')) {
-                currentEvent = line.slice(7).trim();
-              } else if (line.startsWith('data: ')) {
-                currentData = line.slice(6).trim();
-              } else if (line === '' && currentEvent) {
-                events.push({ event: currentEvent, data: currentData });
-                currentEvent = '';
-                currentData = '';
-                if (events.length >= stopAfter) {
-                  clearTimeout(timer);
-                  res.destroy();
-                }
-              }
-            }
-          });
-
-          res.on('close', () => { clearTimeout(timer); resolve(events); });
-          res.on('error', () => { clearTimeout(timer); resolve(events); });
-        }).on('error', (err) => { clearTimeout(timer); reject(err); });
-      });
-    }
-
     it('pushes new_request event when a pending request is submitted', async () => {
       // Get a ticket
       const ticketRes = await request(app)
