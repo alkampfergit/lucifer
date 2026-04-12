@@ -15,7 +15,7 @@ const mockBot = {
   }),
   launch: vi.fn().mockResolvedValue(undefined),
   stop: vi.fn(),
-  telegram: { sendMessage: mockSendMessage },
+  telegram: { sendMessage: mockSendMessage, getMe: vi.fn().mockResolvedValue({ id: 1, is_bot: true, first_name: 'Test', username: 'testbot' }) },
 };
 
 // Must use a real function (not arrow) so it can be called with `new`

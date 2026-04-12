@@ -7,14 +7,22 @@ import { createChildLogger } from '../../../lib/logger.js';
 
 const log = createChildLogger('telegram');
 
+export interface TelegramChannelOptions {
+  apiRoot?: string;
+}
+
 export function createTelegramApprovalChannel(
   token: string,
   chatId: string,
   pendingStore: PendingRequestStore,
   approvalStore: ApprovalStore,
   auditLog: AuditLog,
+  options?: TelegramChannelOptions,
 ): ApprovalChannel {
-  const bot = new Telegraf(token);
+  const telegrafOptions = options?.apiRoot
+    ? { telegram: { apiRoot: options.apiRoot } }
+    : {};
+  const bot = new Telegraf(token, telegrafOptions);
 
   bot.on('callback_query', async (ctx) => {
     const data = 'data' in ctx.callbackQuery ? ctx.callbackQuery.data : undefined;
@@ -35,8 +43,12 @@ export function createTelegramApprovalChannel(
 
     const pending = pendingStore.get(requestId);
     if (!pending) {
-      await ctx.answerCbQuery('Request expired or already decided');
-      await ctx.editMessageReplyMarkup(undefined);
+      try {
+        await ctx.answerCbQuery('Request expired or already decided');
+        await ctx.editMessageReplyMarkup(undefined);
+      } catch (err) {
+        log.warn({ requestId, err }, 'Failed to update Telegram message for expired request');
+      }
       return;
     }
 
@@ -71,10 +83,14 @@ export function createTelegramApprovalChannel(
 
     const emoji = decision === 'approved' ? '\u2705' : '\u274c';
     const label = decision === 'approved' ? `Approved (${matchType} ${duration}h)` : 'Denied';
-    await ctx.answerCbQuery(label);
-    await ctx.editMessageText(
-      `${emoji} ${label}\n\n${pending.command}`,
-    );
+    try {
+      await ctx.answerCbQuery(label);
+      await ctx.editMessageText(
+        `${emoji} ${label}\n\n${pending.command}`,
+      );
+    } catch (err) {
+      log.warn({ requestId, err }, 'Failed to update Telegram message after decision');
+    }
   });
 
   // Track per-request decision metadata from callbacks
@@ -154,7 +170,14 @@ export function createTelegramApprovalChannel(
     },
 
     async start() {
-      await bot.launch();
+      // bot.launch() resolves only when polling stops (i.e. on shutdown).
+      // Start it as a background task so start() can return promptly.
+      bot.launch().catch(err => {
+        log.debug({ err }, 'Bot launch promise settled');
+      });
+
+      // Verify the bot token is valid and we can reach the API
+      await bot.telegram.getMe();
       log.info('Telegram bot started');
 
       // Startup health check

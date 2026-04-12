@@ -18,6 +18,8 @@ function isLuciferConfig(data: unknown): data is LuciferConfig {
   if (d.onApprovalTimeout !== undefined && d.onApprovalTimeout !== 'deny' && d.onApprovalTimeout !== 'approve-with-warning') return false;
   if (!checkOptionalType(d, 'dataDir', 'string')) return false;
   if (!checkOptionalType(d, 'telegramChatId', 'string')) return false;
+  if (!checkOptionalType(d, 'adminSecretHash', 'string')) return false;
+  if (!checkOptionalType(d, 'adminSecretSalt', 'string')) return false;
   if (!checkOptionalType(d, 'logFile', 'string')) return false;
   return true;
 }
@@ -61,6 +63,7 @@ export function getTelegramToken(): string {
   return token;
 }
 
+/** @deprecated Admin secret is now stored as a hash in lucifer.json. Use config.adminSecretHash instead. */
 export function getAdminSecret(): string | undefined {
   return process.env.LUCIFER_ADMIN_SECRET;
 }

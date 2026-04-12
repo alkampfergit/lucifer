@@ -5,7 +5,7 @@ import { getServerConfig } from './domains/platform-api/config/server_config.js'
 import { registerHealthRoutes } from './domains/platform-api/api/register_health_routes.js'
 import { createRuntimeMetadataRepository } from './domains/platform-api/repository/runtime_metadata_repository.js'
 import { createHealthReportService } from './domains/platform-api/service/create_health_report.js'
-import { loadGatewayConfig, getAdminSecret } from './domains/command-gateway/config/gateway_config.js'
+import { loadGatewayConfig } from './domains/command-gateway/config/gateway_config.js'
 import { getDatabase, closeDatabase } from './domains/command-gateway/repository/database.js'
 import { createApprovalStore } from './domains/command-gateway/repository/approval_store.js'
 import { createAuditLog } from './domains/command-gateway/repository/audit_log.js'
@@ -26,6 +26,7 @@ const log = createChildLogger('app')
 export interface CreateAppOptions {
   configPath?: string
   autoApprove?: boolean
+  telegramApiRoot?: string
 }
 
 interface GatewayDeps {
@@ -36,7 +37,7 @@ interface GatewayDeps {
   gatewayConfig: ReturnType<typeof loadGatewayConfig>
 }
 
-function initApprovalChannel(deps: GatewayDeps, autoApprove: boolean): ApprovalChannel {
+function initApprovalChannel(deps: GatewayDeps, autoApprove: boolean, telegramApiRoot?: string): ApprovalChannel {
   if (autoApprove) {
     return createAutoApproveChannel()
   }
@@ -47,21 +48,23 @@ function initApprovalChannel(deps: GatewayDeps, autoApprove: boolean): ApprovalC
   const telegramToken = process.env.LUCIFER_TELEGRAM_TOKEN
   const chatId = gatewayConfig.telegramChatId ?? process.env.LUCIFER_TELEGRAM_CHAT_ID
   if (telegramToken && chatId) {
-    channels.push(createTelegramApprovalChannel(telegramToken, chatId, pendingStore, approvalStore, auditLog))
+    const telegramOptions = telegramApiRoot ? { apiRoot: telegramApiRoot } : undefined
+    channels.push(createTelegramApprovalChannel(telegramToken, chatId, pendingStore, approvalStore, auditLog, telegramOptions))
   }
 
-  const adminSecret = getAdminSecret()
-  if (adminSecret) {
+  const adminSecretHash = gatewayConfig.adminSecretHash
+  const adminSecretSalt = gatewayConfig.adminSecretSalt
+  if (adminSecretHash && adminSecretSalt) {
     const webChannel = createWebApprovalChannel()
     channels.push(webChannel)
-    registerApprovalRoutes({ router: app, adminSecret, webChannel, approvalStore, auditLog })
+    registerApprovalRoutes({ router: app, adminSecretHash, adminSecretSalt, webChannel, approvalStore, auditLog })
     log.info('Web approval UI enabled at /admin/approvals')
   }
 
   if (channels.length === 0) {
     throw new Error(
       'No approval channels configured. Set LUCIFER_TELEGRAM_TOKEN + LUCIFER_TELEGRAM_CHAT_ID for Telegram, ' +
-      'or LUCIFER_ADMIN_SECRET for web UI, or use --auto-approve for development.',
+      'or run --init to generate admin secret for web UI, or use --auto-approve for development.',
     )
   }
 
@@ -110,6 +113,7 @@ export function createApp(options: CreateAppOptions = {}) {
     approvalChannel = initApprovalChannel(
       { app, pendingStore, approvalStore, auditLog, gatewayConfig },
       options.autoApprove ?? false,
+      options.telegramApiRoot,
     )
 
     registerExecuteRoutes({

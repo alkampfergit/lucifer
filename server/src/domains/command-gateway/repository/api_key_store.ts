@@ -35,6 +35,13 @@ export function generateApiKey(): { key: string; salt: string; keyHash: string }
   return { key, salt, keyHash };
 }
 
+export function generateAdminSecret(): { secret: string; salt: string; secretHash: string } {
+  const secret = 'luc_admin_' + randomBytes(24).toString('hex');
+  const salt = randomBytes(16).toString('hex');
+  const secretHash = hashApiKey(secret, salt);
+  return { secret, salt, secretHash };
+}
+
 export interface ApiKeyStore {
   findByKey(rawKey: string): ApiKeyConfig | undefined;
   reload(): void;

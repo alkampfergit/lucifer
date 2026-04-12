@@ -4,7 +4,7 @@ import { writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { createApp } from './create_app.js';
-import { generateApiKey } from './domains/command-gateway/repository/api_key_store.js';
+import { generateApiKey, generateAdminSecret } from './domains/command-gateway/repository/api_key_store.js';
 import { getDatabase } from './domains/command-gateway/repository/database.js';
 import { createAuditLog } from './domains/command-gateway/repository/audit_log.js';
 import { createApprovalStore } from './domains/command-gateway/repository/approval_store.js';
@@ -37,7 +37,6 @@ Server options:
 Environment variables:
   LUCIFER_TELEGRAM_TOKEN   Telegram bot token (required for production)
   LUCIFER_TELEGRAM_CHAT_ID Telegram chat ID for approvals (or use 'pair' command)
-  LUCIFER_ADMIN_SECRET     Admin API bearer token (optional)
   PORT                     Server port (default: 3001)
   LOG_LEVEL                Log level: debug, info, warn, error (default: debug / info in production)
 `);
@@ -60,9 +59,12 @@ function initConfig(targetDir: string) {
   }
 
   const { key, salt, keyHash } = generateApiKey();
+  const { secret: adminSecret, salt: adminSalt, secretHash: adminHash } = generateAdminSecret();
 
   writeFileSync(luciferJsonPath, JSON.stringify({
     port: 3001,
+    adminSecretHash: adminHash,
+    adminSecretSalt: adminSalt,
     approvalTimeoutSeconds: 300,
     executionTimeoutSeconds: 120,
     maxConcurrentExecutions: 5,
@@ -105,6 +107,9 @@ function initConfig(targetDir: string) {
   console.log('');
   console.log('Your API key (save this, it cannot be recovered):');
   console.log(`  ${key}`);
+  console.log('');
+  console.log('Your admin secret for the web approval UI (save this, it cannot be recovered):');
+  console.log(`  ${adminSecret}`);
   console.log('');
   console.log('Quick start:');
   console.log('  # Dev mode (no Telegram needed):');

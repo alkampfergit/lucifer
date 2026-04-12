@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual, scryptSync } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import type { Router, Request, Response } from 'express';
 import rateLimit from 'express-rate-limit';
@@ -42,7 +42,13 @@ setInterval(() => {
   }
 }, 5_000);
 
-function checkAdminAuth(adminSecret: string, req: Request, res: Response): boolean {
+function verifyAdminSecret(rawSecret: string, hash: string, salt: string): boolean {
+  const computed = scryptSync(rawSecret, salt, 64).toString('hex');
+  if (computed.length !== hash.length) return false;
+  return timingSafeEqual(Buffer.from(computed), Buffer.from(hash));
+}
+
+function checkAdminAuth(adminSecretHash: string, adminSecretSalt: string, req: Request, res: Response): boolean {
   const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.socket.remoteAddress ?? 'unknown';
 
   // Check lockout
@@ -61,7 +67,7 @@ function checkAdminAuth(adminSecret: string, req: Request, res: Response): boole
   const authHeader = req.headers.authorization;
   const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : undefined;
 
-  if (!token || token !== adminSecret) {
+  if (!token || !verifyAdminSecret(token, adminSecretHash, adminSecretSalt)) {
     // Track failure
     const current = authRateLimits.get(ip) ?? { failures: 0, lockedUntil: 0 };
     current.failures++;
@@ -128,14 +134,15 @@ function isValidationError(result: ValidatedDecision | ErrorResponse): result is
 
 export interface ApprovalRouteDeps {
   router: Router;
-  adminSecret: string;
+  adminSecretHash: string;
+  adminSecretSalt: string;
   webChannel: WebApprovalChannelHandle;
   approvalStore: ApprovalStore;
   auditLog: AuditLog;
 }
 
 export function registerApprovalRoutes(deps: ApprovalRouteDeps): void {
-  const { router, adminSecret, webChannel, approvalStore, auditLog } = deps;
+  const { router, adminSecretHash, adminSecretSalt, webChannel, approvalStore, auditLog } = deps;
 
   // Rate limiter middleware for admin API routes
   const adminRateLimiter = rateLimit({
@@ -164,13 +171,13 @@ export function registerApprovalRoutes(deps: ApprovalRouteDeps): void {
 
   // List pending requests
   router.get('/api/v1/admin/approvals/pending', adminRateLimiter, (req: Request, res: Response) => {
-    if (!checkAdminAuth(adminSecret, req, res)) return;
+    if (!checkAdminAuth(adminSecretHash, adminSecretSalt, req, res)) return;
     res.json({ pending: webChannel.getPendingRequests() });
   });
 
   // Exchange bearer token for one-time SSE ticket
   router.post('/api/v1/admin/approvals/stream-ticket', adminRateLimiter, (req: Request, res: Response) => {
-    if (!checkAdminAuth(adminSecret, req, res)) return;
+    if (!checkAdminAuth(adminSecretHash, adminSecretSalt, req, res)) return;
     const token = randomUUID();
     sseTickets.set(token, { token, createdAt: Date.now() });
     res.json({ ticket: token, ttlSeconds: TICKET_TTL_MS / 1000 });
@@ -220,7 +227,7 @@ export function registerApprovalRoutes(deps: ApprovalRouteDeps): void {
 
   // Approve or deny a request
   router.post('/api/v1/admin/approvals/:requestId/decide', adminRateLimiter, (req: Request, res: Response) => {
-    if (!checkAdminAuth(adminSecret, req, res)) return;
+    if (!checkAdminAuth(adminSecretHash, adminSecretSalt, req, res)) return;
 
     const requestId = Array.isArray(req.params.requestId) ? req.params.requestId[0] : req.params.requestId;
     const validated = validateDecideInput(req.body as DecideInput);

@@ -88,6 +88,8 @@ export interface ApiKeysConfig {
 export interface LuciferConfig {
   port: number;
   telegramChatId?: string;
+  adminSecretHash?: string;
+  adminSecretSalt?: string;
   approvalTimeoutSeconds: number;
   executionTimeoutSeconds: number;
   maxConcurrentExecutions: number;
