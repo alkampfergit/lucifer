@@ -56,3 +56,37 @@ sudo apt-get install -y gnome-keyring libsecret-tools xvfb xdotool python3-dbus 
 # Initialise the GNOME Keyring default collection so credential-store
 # integration tests can run without a real desktop session.
 bash /workspaces/automata-cli/scripts/setup-keyring.sh || true
+
+# ── tokensave: semantic code intelligence for Claude Code ──────────────
+# Downloads the latest prebuilt binary, configures the Claude Code MCP
+# integration (server, hooks, permissions, prompt rules), and indexes
+# the repository so the knowledge graph is ready on first session.
+echo "Installing tokensave..."
+TOKENSAVE_TAG=$(curl -sI https://github.com/aovestdipaperino/tokensave/releases/latest | grep -i '^location:' | sed 's|.*/tag/||;s/\r//')
+TOKENSAVE_VERSION="${TOKENSAVE_TAG#v}"
+ARCH=$(uname -m)
+if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+    TOKENSAVE_ARCH="aarch64-linux"
+else
+    TOKENSAVE_ARCH="x86_64-linux"
+fi
+TOKENSAVE_URL="https://github.com/aovestdipaperino/tokensave/releases/download/${TOKENSAVE_TAG}/tokensave-${TOKENSAVE_TAG}-${TOKENSAVE_ARCH}.tar.gz"
+echo "  Downloading tokensave ${TOKENSAVE_VERSION} (${TOKENSAVE_ARCH})..."
+curl -sL "$TOKENSAVE_URL" -o /tmp/tokensave.tar.gz
+tar xzf /tmp/tokensave.tar.gz -C /tmp
+sudo mv /tmp/tokensave /usr/local/bin/tokensave
+rm -f /tmp/tokensave.tar.gz
+echo "  tokensave $(tokensave --version) installed."
+
+# Configure Claude Code integration (MCP server, hooks, permissions, prompt rules)
+echo "  Configuring tokensave for Claude Code..."
+tokensave install --agent claude || true
+
+# Enable global save statistics
+tokensave enable-upload-counter || true
+
+# Index the repository
+echo "  Indexing repository..."
+tokensave sync || true
+
+echo "  tokensave setup complete."
