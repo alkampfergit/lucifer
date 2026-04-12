@@ -185,7 +185,7 @@ export function registerExecuteRoutes(deps: ExecuteRouteDeps): void {
     const riskAnalysis = analyzeCommandRisk(command);
     const abortController = new AbortController();
 
-    log.info({ requestId, command, apiKeyName, ip }, 'Command requires manual approval, forwarding to approval channel');
+    log.info({ requestId, command, ip }, 'Command requires manual approval, forwarding to approval channel');
 
     // Coalesce: check if same command from same key is already pending
     const existingPending = pendingStore.findByCommand(command, apiKeyName);
