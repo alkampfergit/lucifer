@@ -1,13 +1,24 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
+import { spawn } from 'node:child_process';
+import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { createApp } from '../create_app.js';
 import {
   createTelegramE2EContext,
   waitForBotMessage,
   getBotMessages,
   pressInlineButton,
   waitForCondition,
+  TEST_BOT_TOKEN,
+  TEST_CHAT_ID,
   type TelegramE2EContext,
 } from './telegram-e2e-setup.js';
+
+// telegram-test-api is CJS with `exports.default = TelegramServer`
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const TelegramServerModule = require('telegram-test-api');
+const TelegramServer = TelegramServerModule.default ?? TelegramServerModule;
 
 let ctx: TelegramE2EContext;
 
@@ -221,5 +232,181 @@ describe('Telegram E2E: approval flow', () => {
     expect(syncRes.status).toBe(200);
     expect(syncRes.body.status).toBe('completed');
     expect(syncRes.body.exitCode).toBe(0);
+  }, 25_000);
+});
+
+// ─── Journey: First Onboarding with Telegram ──────────────────────────────
+// Operator runs --init, gets API key + admin secret, patches config with
+// Telegram chat ID, starts server with Telegram approval, submits a command
+// that needs approval, approves it via Telegram inline button, verifies it
+// completes. This is the full production onboarding path.
+
+const CLI_PATH = resolve(__dirname, '../cli.ts');
+const TSX = join(process.cwd(), 'node_modules', '.bin', 'tsx');
+
+function runCli(...args: string[]): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(TSX, [CLI_PATH, ...args], {
+      env: { ...process.env, LUCIFER_TELEGRAM_TOKEN: 'skip' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    let gotOutput = false;
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
+
+    function finish() {
+      if (settled) return;
+      settled = true;
+      clearTimeout(idleTimer);
+      child.kill('SIGTERM');
+      resolve({ stdout, stderr });
+    }
+
+    function resetIdle() {
+      if (!gotOutput) return;
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(finish, 1500);
+    }
+
+    child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); gotOutput = true; resetIdle(); });
+    child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); gotOutput = true; resetIdle(); });
+    child.on('close', () => { if (!settled) { settled = true; clearTimeout(idleTimer); resolve({ stdout, stderr }); } });
+    child.on('error', (err) => { if (!settled) { settled = true; clearTimeout(idleTimer); reject(err); } });
+    setTimeout(() => { if (!settled) { settled = true; clearTimeout(idleTimer); child.kill('SIGKILL'); reject(new Error('CLI timeout')); } }, 12_000);
+  });
+}
+
+describe('Telegram E2E: first onboarding journey', () => {
+  const ONBOARD_PORT = 19877;
+  let tmpDir: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let telegramServer: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let telegramClient: any;
+  let appResult: ReturnType<typeof createApp>;
+  let apiKey: string;
+  let originalToken: string | undefined;
+
+  beforeAll(async () => {
+    // Step 1: Run --init to generate config and keys
+    tmpDir = join(process.cwd(), `.test-e2e-onboard-${Date.now()}`);
+    mkdirSync(tmpDir, { recursive: true });
+
+    const { stdout } = await runCli('--init', tmpDir);
+    apiKey = /(luc_[a-f0-9]{48})/.exec(stdout)![1];
+
+    // Step 2: Patch lucifer.json with Telegram chat ID (simulates pairing)
+    const configPath = join(tmpDir, 'config', 'lucifer.json');
+    const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+    config.telegramChatId = TEST_CHAT_ID;
+    config.rateLimitPerMinute = 1000; // relax for testing
+    writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
+
+    // Step 3: Add a telegram_approve rule for a command that will succeed
+    const rulesPath = join(tmpDir, 'config', 'command-rules.json');
+    const rules = JSON.parse(readFileSync(rulesPath, 'utf-8'));
+    rules.rules.unshift({ prefix: 'echo tg-onboard', action: 'telegram_approve' });
+    writeFileSync(rulesPath, JSON.stringify(rules, null, 2) + '\n');
+
+    // Step 4: Start Telegram test server
+    telegramServer = new TelegramServer({ port: ONBOARD_PORT, host: '127.0.0.1' });
+    telegramClient = telegramServer.getClient(TEST_BOT_TOKEN, {
+      chatId: Number(TEST_CHAT_ID),
+      userId: 999,
+      firstName: 'OnboardUser',
+      userName: 'onboard_tester',
+    });
+
+    // Step 5: Start the server with Telegram pointing at test server
+    originalToken = process.env.LUCIFER_TELEGRAM_TOKEN;
+    process.env.LUCIFER_TELEGRAM_TOKEN = TEST_BOT_TOKEN;
+
+    appResult = createApp({
+      configPath,
+      telegramApiRoot: `http://127.0.0.1:${ONBOARD_PORT}`,
+    });
+
+    await telegramServer.start();
+    await appResult.start();
+
+    // Drain the startup health-check message
+    const onboardCtx = { telegramServer, telegramClient, testKey: apiKey, app: appResult.app, start: appResult.start, stop: appResult.stop, testDir: tmpDir };
+    await waitForBotMessage(onboardCtx);
+    await telegramClient.getUpdates();
+  }, 30_000);
+
+  afterAll(async () => {
+    await appResult.stop();
+    await telegramServer.stop();
+    process.env.LUCIFER_TELEGRAM_TOKEN = originalToken;
+    rmSync(tmpDir, { recursive: true, force: true });
+  }, 15_000);
+
+  it('init → start with Telegram → submit command → approve via button → command completes', async () => {
+    // Submit a command that needs Telegram approval, using the --init generated key
+    const execRes = await request(appResult.app)
+      .post('/api/v1/execute')
+      .set('x-api-key', apiKey)
+      .send({ command: 'echo tg-onboard hello' });
+
+    expect(execRes.status).toBe(202);
+    const { requestId } = execRes.body;
+
+    // Wait for bot to send the approval request to Telegram
+    const onboardCtx = { telegramServer, telegramClient, testKey: apiKey, app: appResult.app, start: appResult.start, stop: appResult.stop, testDir: tmpDir };
+    await waitForBotMessage(onboardCtx);
+
+    const updates = await telegramClient.getUpdates();
+    const buttons: Array<{ text: string; callback_data: string; messageId: number }> = [];
+    for (const msg of updates.result) {
+      const markup = msg.message?.reply_markup;
+      if (markup && 'inline_keyboard' in markup) {
+        for (const row of markup.inline_keyboard) {
+          for (const btn of row) {
+            buttons.push({ ...btn, messageId: msg.messageId });
+          }
+        }
+      }
+    }
+
+    // The message should mention the command
+    const lastMsg = updates.result.at(-1);
+    expect(lastMsg.message.text).toContain('echo tg-onboard hello');
+    expect(lastMsg.message.text).toContain('Command Request');
+
+    // Press the "Exact 2h" approval button
+    const exact2h = buttons.find((b: { callback_data: string }) =>
+      b.callback_data.startsWith('approve:') && b.callback_data.endsWith(':exact:2'),
+    );
+    expect(exact2h).toBeDefined();
+
+    const cbQuery = telegramClient.makeCallbackQuery(exact2h!.callback_data, {
+      message: {
+        message_id: exact2h!.messageId,
+        chat: { id: Number(TEST_CHAT_ID) },
+      },
+    });
+    await telegramClient.sendCallback(cbQuery);
+
+    // Wait for the command to complete
+    await waitForCondition(async () => {
+      const statusRes = await request(appResult.app)
+        .get(`/api/v1/status/${requestId}`)
+        .set('x-api-key', apiKey);
+      return statusRes.status === 200 && statusRes.body.status === 'completed';
+    }, 10_000);
+
+    // Verify final status
+    const statusRes = await request(appResult.app)
+      .get(`/api/v1/status/${requestId}`)
+      .set('x-api-key', apiKey);
+
+    expect(statusRes.status).toBe(200);
+    expect(statusRes.body.status).toBe('completed');
+    expect(statusRes.body.exitCode).toBe(0);
+    expect(statusRes.body.stdout).toContain('tg-onboard hello');
   }, 25_000);
 });
