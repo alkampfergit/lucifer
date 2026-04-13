@@ -30,7 +30,7 @@
 5. Enforce important rules mechanically with CI, linting, structural tests, or scripts.
 6. When behavior, process, or architecture changes, update the repository documentation in the same change.
 7. Tool-specific files must not redefine repository policy. They are adapters, not alternate sources of truth.
-8. Never commit on master without a semver tag to handle versioning. SEMVER tag are with x.y.z format, no v prefix.
+8. Never commit on master without a semver tag to handle versioning. Semver tags must use the `x.y.z` format with no `v` prefix.
 
 ## Shared Engineering Invariants
 

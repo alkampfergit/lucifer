@@ -27,7 +27,12 @@ export interface PendingRequestStore {
   add(request: import('./command_types.js').PendingRequest): void;
   resolve(requestId: string, decision: import('./command_types.js').ApprovalDecision): boolean;
   get(requestId: string): import('./command_types.js').PendingRequest | undefined;
+  /** Remove the entry AND abort its abortController (used for cancels/cleanup). */
   remove(requestId: string): void;
+  /** Remove the entry without touching its abortController. Use this when the
+   *  waiter has successfully handed off to execution — we want to free the
+   *  DUPLICATE_IN_FLIGHT slot but NOT abort the live command. */
+  release(requestId: string): void;
   findByCommand(command: string, apiKeyName: string): import('./command_types.js').PendingRequest | undefined;
   cleanup(maxAgeMs: number): number;
   size(): number;

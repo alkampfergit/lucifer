@@ -169,9 +169,12 @@ export function registerExecuteRoutes(deps: ExecuteRouteDeps): void {
 
     log.info({ requestId, command, ip }, 'Command requires manual approval, forwarding to approval channel');
 
-    // Reject an identical in-flight command from the same API key. Two parallel
-    // approval prompts for the same command would confuse the human approver;
-    // the second caller should retry after the first one settles.
+    // Reject an identical command from the same API key that is still
+    // awaiting an approval decision — two parallel prompts for the same
+    // command would confuse the human approver. The pendingStore entry is
+    // cleared as soon as a decision is reached (below), so this gate does
+    // NOT apply while an approved command is executing; a concurrent caller
+    // will fall through to the normal `findApproval` cached-approval path.
     if (pendingStore.findByCommand(command, apiKeyName)) {
       res.status(409).json({
         code: 'DUPLICATE_IN_FLIGHT',
@@ -208,7 +211,28 @@ export function registerExecuteRoutes(deps: ExecuteRouteDeps): void {
         new Promise<never>((_, reject) => {
           setTimeout(() => reject(new Error('Approval timed out')), config.approvalTimeoutSeconds * 1000);
         }),
+        // Bail out of the approval wait if the client disconnected. Otherwise
+        // the handler would continue awaiting the channel until either the
+        // approver acts or the approval timeout fires — orphaning work that
+        // nobody is listening for.
+        new Promise<never>((_, reject) => {
+          if (abortController.signal.aborted) {
+            reject(new Error('Request aborted'));
+            return;
+          }
+          abortController.signal.addEventListener(
+            'abort',
+            () => reject(new Error('Request aborted')),
+            { once: true },
+          );
+        }),
       ]);
+
+      // Approval decision obtained — release the pending-store slot now so
+      // DUPLICATE_IN_FLIGHT only gates *awaiting-approval* duplicates and
+      // not in-flight execution. `release` (unlike `remove`) does not abort
+      // the live AbortController, which still guards the upcoming execution.
+      pendingStore.release(requestId);
 
       if (approvalResult.decision === 'denied') {
         res.status(403).json({
@@ -242,7 +266,12 @@ export function registerExecuteRoutes(deps: ExecuteRouteDeps): void {
       res.json(result);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
-      if (message.includes('timed out')) {
+      if (message.includes('aborted')) {
+        // Client disconnected before a decision landed. Ask the channel to
+        // clean up any bot message / admin queue entry. No response to send.
+        try { approvalChannel.cancel?.(requestId); } catch { /* best-effort */ }
+        log.info({ requestId }, 'Approval wait aborted by client disconnect');
+      } else if (message.includes('timed out')) {
         res.status(408).json({
           requestId,
           status: 'timed_out' as RequestStatus,

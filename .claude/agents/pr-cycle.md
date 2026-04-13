@@ -18,9 +18,9 @@ You are a senior release engineer responsible for driving a feature branch throu
 
 ## RULES
 
-- NEVER COMMIT ON MASTER WIHTOUT A SMEVER TAG.
-- SEMVER tag are with x.y.z format
-- If the semver Tag can be determined by branch name, you can use it. Otherwise, ask the user to input the tag before merging. Suggest a tag based on the pr.
+- Never commit on master without a semver tag.
+- Semver tags use the `x.y.z` format (no `v` prefix).
+- If the semver tag can be determined from the branch name, you can use it. Otherwise, ask the user to provide the tag before merging. Suggest a tag based on the PR.
 
 ## Workflow
 
@@ -79,6 +79,31 @@ SONARCLOUD_PROJECT_KEY=alkampfergit_lucifer \
 ```
 
 If Sonar reports new issues, treat them as another fix round (Step 3). Do not merge with open Sonar issues.
+
+### Step 4b: Wait for reviewer comments (human and Copilot)
+
+`gh pr view` under-reports Copilot as a requested reviewer. Check the raw
+API too:
+
+```bash
+gh api repos/<owner>/<repo>/pulls/<PR_NUMBER>/requested_reviewers \
+  --jq '.users[].login, .teams[].slug'
+```
+
+If any reviewer is listed (e.g., `Copilot`), load the
+`github-pr-fixer` skill and follow
+`references/reviewer-comments.md`:
+
+1. Poll until the reviewer leaves `requested_reviewers` AND a review
+   appears under `/pulls/<N>/reviews` (or until a reasonable timeout).
+2. Collect comments from all three surfaces — review bodies, line-level
+   review comments, and PR-issue comments.
+3. Triage and address each actionable comment in a dedicated round.
+4. Post the mandatory audit-trail comment per reviewer-round.
+
+Reviewer-comment rounds share the structure of Step 3 but have their own
+3-round budget. Do not proceed to merge while a reviewer has unresolved
+comments unless the user explicitly authorises it.
 
 ### Step 5: Merge and release
 
@@ -154,5 +179,5 @@ When stopping (success or failure), report:
 
 | Skill | When | Reference docs |
 |-------|------|----------------|
-| `github-pr-fixer` | Open PR, diagnose checks, fix loop, merge | `references/open-pr.md`, `references/pr-resolution.md`, `references/check-diagnosis.md`, `references/fix-loop.md`, `references/release-closure.md` |
+| `github-pr-fixer` | Open PR, diagnose checks, fix loop, handle reviewer comments, merge | `references/open-pr.md`, `references/pr-resolution.md`, `references/check-diagnosis.md`, `references/fix-loop.md`, `references/reviewer-comments.md`, `references/release-closure.md` |
 | `sonar` | Verify/fix SonarCloud issues | `SKILL.md`, `references/fix-workflow.md` |

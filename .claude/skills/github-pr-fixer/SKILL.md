@@ -5,11 +5,12 @@ description: >
   exhausted. Use when an open PR has failing or pending checks and you need to
   inspect GitHub checks with gh, remediate SonarCloud issues with the sonar
   skill, inspect failed workflow jobs or code scanning alerts, push fixes, and
-  repeat, or when the user wants to open a PR from the current branch or close
-  a ready release PR.
+  repeat. Also covers: opening a PR from the current branch, waiting for a
+  reviewer (human or Copilot) and addressing their line-level comments, and
+  closing a ready release PR.
 metadata:
   author: codex
-  version: 1.2.0
+  version: 1.3.0
   category: workflow
 ---
 
@@ -33,14 +34,17 @@ release flow, or to open a PR from the current branch.
 |------------|------|
 | Open a PR from the current branch | `references/open-pr.md` |
 | Fix failing or pending checks | `references/pr-resolution.md`, then `references/check-diagnosis.md`, then `references/fix-loop.md` |
+| Wait for a reviewer (human or Copilot) and address their comments | `references/reviewer-comments.md` |
 | Close a ready PR and cut a release tag | `references/pr-resolution.md`, then `references/release-closure.md` |
 | Investigate a known standalone CodeQL-style failure pattern | `references/standalone-security-checks.md` |
 
 ## Round limit
 
-- Maximum `3` fix rounds.
+- Maximum `3` check-fix rounds.
 - A round means: inspect failures, make fixes, validate locally, commit, push,
   and wait for checks again.
+- Reviewer-comment rounds have a separate `3`-round budget; see
+  `references/reviewer-comments.md`.
 
 ## Core workflow
 

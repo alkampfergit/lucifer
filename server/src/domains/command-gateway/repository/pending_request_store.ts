@@ -7,7 +7,11 @@ export interface PendingRequestStore {
   add(request: PendingRequest): void;
   resolve(requestId: string, decision: ApprovalDecision): boolean;
   get(requestId: string): PendingRequest | undefined;
+  /** Remove the entry AND abort its abortController (cancel/cleanup). */
   remove(requestId: string): void;
+  /** Remove the entry WITHOUT aborting the abortController. Use when
+   *  handing off from approval-wait to execution. */
+  release(requestId: string): void;
   findByCommand(command: string, apiKeyName: string): PendingRequest | undefined;
   cleanup(maxAgeMs: number): number;
   size(): number;
@@ -44,6 +48,10 @@ export function createPendingRequestStore(): PendingRequestStore {
         pending.abortController.abort();
         store.delete(requestId);
       }
+    },
+
+    release(requestId: string): void {
+      store.delete(requestId);
     },
 
     findByCommand(command: string, apiKeyName: string): PendingRequest | undefined {

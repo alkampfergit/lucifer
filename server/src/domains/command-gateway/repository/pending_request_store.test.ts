@@ -77,6 +77,23 @@ describe('PendingRequestStore', () => {
     });
   });
 
+  describe('release', () => {
+    it('deletes request WITHOUT aborting the abortController', () => {
+      const request = createTestRequest();
+      const abortSpy = vi.spyOn(request.abortController, 'abort');
+      store.add(request);
+
+      store.release('req-1');
+
+      expect(store.get('req-1')).toBeUndefined();
+      expect(abortSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not throw when releasing a non-existent request', () => {
+      expect(() => store.release('nonexistent')).not.toThrow();
+    });
+  });
+
   describe('findByCommand', () => {
     it('returns matching request with same command and apiKeyName', () => {
       const request = createTestRequest();
