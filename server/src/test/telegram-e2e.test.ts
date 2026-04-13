@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
+import type { Response } from 'supertest';
 import { spawn } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -9,7 +10,6 @@ import {
   waitForBotMessage,
   getBotMessages,
   pressInlineButton,
-  waitForCondition,
   TEST_BOT_TOKEN,
   TEST_CHAT_ID,
   type TelegramE2EContext,
@@ -69,41 +69,44 @@ function extractInlineButtons(botMessages: BotMessageResult): ButtonInfo[] {
 }
 
 /**
- * Helper: submit command, wait for bot message, extract buttons.
+ * Fire POST /api/v1/execute immediately and return a real Promise for the
+ * response. The sync-only handler only responds once Telegram decides, so
+ * tests need to inspect the bot buffer and press a button before the
+ * promise resolves. We explicitly call `.end(cb)` so the request is sent
+ * right away rather than waiting for the caller to `.then()` the supertest
+ * Test object (which would deadlock the bot-message wait below).
  */
-async function submitAndGetButtons(command: string) {
-  const execRes = await request(ctx.app)
-    .post('/api/v1/execute')
-    .set('x-api-key', ctx.testKey)
-    .send({ command });
+function fireExecute(context: TelegramE2EContext, command: string): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    request(context.app)
+      .post('/api/v1/execute')
+      .set('x-api-key', context.testKey)
+      .send({ command })
+      .end((err, res) => {
+        if (err) reject(err);
+        else resolve(res);
+      });
+  });
+}
 
-  expect(execRes.status).toBe(202);
-  const { requestId } = execRes.body;
-
+/**
+ * Helper: fire the request, wait for the bot message, extract buttons.
+ * Returns the unawaited POST promise so the caller can press a button and
+ * then await the final response.
+ */
+async function fireAndGetButtons(command: string) {
+  const execPromise = fireExecute(ctx, command);
   await waitForBotMessage(ctx);
   const updates = await getBotMessages(ctx) as any as BotMessageResult;
   const buttons = extractInlineButtons(updates);
   const lastMsg = updates.result.at(-1);
-
-  return { requestId, buttons, lastMsg, updates };
-}
-
-/**
- * Helper: wait for a request to reach a terminal status.
- */
-async function waitForStatus(requestId: string, expectedStatus: string, timeoutMs = 10_000) {
-  await waitForCondition(async () => {
-    const statusRes = await request(ctx.app)
-      .get(`/api/v1/status/${requestId}`)
-      .set('x-api-key', ctx.testKey);
-    return statusRes.status === 200 && statusRes.body.status === expectedStatus;
-  }, timeoutMs);
+  return { execPromise, buttons, lastMsg, updates };
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 describe('Telegram E2E: approval flow', () => {
   it('sends approval request to Telegram when command requires manual_approve', async () => {
-    const { buttons, lastMsg } = await submitAndGetButtons('git status');
+    const { execPromise, buttons, lastMsg } = await fireAndGetButtons('git status');
 
     // The message should contain the command
     expect(lastMsg.message.text).toContain('git status');
@@ -113,10 +116,15 @@ describe('Telegram E2E: approval flow', () => {
     expect(buttons.length).toBe(7);
     expect(buttons.some(b => b.text.includes('Exact 2h'))).toBe(true);
     expect(buttons.some(b => b.text.includes('Deny'))).toBe(true);
+
+    // Clean up: deny so the POST resolves
+    const denyBtn = buttons.find(b => b.callback_data.startsWith('deny:'))!;
+    await pressInlineButton(ctx, denyBtn.callback_data, denyBtn.messageId);
+    await execPromise;
   }, 15_000);
 
   it('approves command via exact-2h button and executes it', async () => {
-    const { requestId, buttons } = await submitAndGetButtons('git --version');
+    const { execPromise, buttons } = await fireAndGetButtons('git --version');
 
     const exact2h = buttons.find(b =>
       b.callback_data.startsWith('approve:') && b.callback_data.endsWith(':exact:2'),
@@ -125,38 +133,29 @@ describe('Telegram E2E: approval flow', () => {
 
     await pressInlineButton(ctx, exact2h!.callback_data, exact2h!.messageId);
 
-    await waitForStatus(requestId, 'completed');
-
-    const statusRes = await request(ctx.app)
-      .get(`/api/v1/status/${requestId}`)
-      .set('x-api-key', ctx.testKey);
-
-    expect(statusRes.status).toBe(200);
-    expect(statusRes.body.status).toBe('completed');
-    expect(statusRes.body.exitCode).toBe(0);
-    expect(statusRes.body.stdout).toContain('git version');
+    const res = await execPromise;
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('completed');
+    expect(res.body.exitCode).toBe(0);
+    expect(res.body.stdout).toContain('git version');
   }, 20_000);
 
   it('denies command via deny button', async () => {
-    const { requestId, buttons } = await submitAndGetButtons('git log --oneline -5');
+    const { execPromise, buttons } = await fireAndGetButtons('git log --oneline -5');
 
     const denyBtn = buttons.find(b => b.callback_data.startsWith('deny:'));
     expect(denyBtn).toBeDefined();
 
     await pressInlineButton(ctx, denyBtn!.callback_data, denyBtn!.messageId);
 
-    await waitForStatus(requestId, 'denied');
-
-    const statusRes = await request(ctx.app)
-      .get(`/api/v1/status/${requestId}`)
-      .set('x-api-key', ctx.testKey);
-
-    expect(statusRes.status).toBe(200);
-    expect(statusRes.body.status).toBe('denied');
+    const res = await execPromise;
+    expect(res.status).toBe(403);
+    expect(res.body.status).toBe('denied');
+    expect(res.body.code).toBe('DENIED');
   }, 20_000);
 
   it('approves via prefix button and reuses approval for similar command', async () => {
-    const { requestId: requestId1, buttons } = await submitAndGetButtons('ls -la /tmp');
+    const { execPromise, buttons } = await fireAndGetButtons('ls -la /tmp');
 
     const prefix8h = buttons.find(b =>
       b.callback_data.startsWith('approve:') && b.callback_data.endsWith(':prefix:8'),
@@ -165,21 +164,20 @@ describe('Telegram E2E: approval flow', () => {
 
     await pressInlineButton(ctx, prefix8h!.callback_data, prefix8h!.messageId);
 
-    await waitForStatus(requestId1, 'completed');
+    const first = await execPromise;
+    expect(first.status).toBe(200);
+    expect(first.body.status).toBe('completed');
 
     // Second command with same prefix "ls -la" should be auto-approved (cached)
-    const execRes2 = await request(ctx.app)
-      .post('/api/v1/execute?sync=true')
-      .set('x-api-key', ctx.testKey)
-      .send({ command: 'ls -la /var' });
+    const res2 = await fireExecute(ctx, 'ls -la /var');
 
-    expect(execRes2.status).toBe(200);
-    expect(execRes2.body.status).toBe('completed');
-    expect(execRes2.body.exitCode).toBe(0);
+    expect(res2.status).toBe(200);
+    expect(res2.body.status).toBe('completed');
+    expect(res2.body.exitCode).toBe(0);
   }, 25_000);
 
   it('approves via exact-permanent button', async () => {
-    const { requestId, buttons } = await submitAndGetButtons('git branch');
+    const { execPromise, buttons } = await fireAndGetButtons('git branch');
 
     const exactPerm = buttons.find(b =>
       b.callback_data.startsWith('approve:') && b.callback_data.endsWith(':exact:permanent'),
@@ -188,50 +186,47 @@ describe('Telegram E2E: approval flow', () => {
 
     await pressInlineButton(ctx, exactPerm!.callback_data, exactPerm!.messageId);
 
-    await waitForStatus(requestId, 'completed');
+    const first = await execPromise;
+    expect(first.status).toBe(200);
+    expect(first.body.status).toBe('completed');
 
     // Same command should now be auto-approved (permanent exact cache)
-    const execRes2 = await request(ctx.app)
-      .post('/api/v1/execute?sync=true')
-      .set('x-api-key', ctx.testKey)
-      .send({ command: 'git branch' });
+    const res2 = await fireExecute(ctx, 'git branch');
 
-    expect(execRes2.status).toBe(200);
-    expect(execRes2.body.status).toBe('completed');
+    expect(res2.status).toBe(200);
+    expect(res2.body.status).toBe('completed');
   }, 25_000);
 
   it('shows risk warnings in the Telegram message for dangerous commands', async () => {
-    const { buttons, lastMsg } = await submitAndGetButtons('git push --force origin main');
+    const { execPromise, buttons, lastMsg } = await fireAndGetButtons('git push --force origin main');
 
     // The message should contain the command text
     expect(lastMsg.message.text).toContain('git push --force origin main');
 
-    // Clean up: deny it so it doesn't linger
-    const denyBtn = buttons.find(b => b.callback_data.startsWith('deny:'));
-    if (denyBtn) {
-      await pressInlineButton(ctx, denyBtn.callback_data, denyBtn.messageId);
-    }
+    // Clean up: deny it so the POST resolves
+    const denyBtn = buttons.find(b => b.callback_data.startsWith('deny:'))!;
+    await pressInlineButton(ctx, denyBtn.callback_data, denyBtn.messageId);
+    const res = await execPromise;
+    expect(res.status).toBe(403);
   }, 15_000);
 
-  it('sync mode returns result when pre-existing approval covers the command', async () => {
-    // First, approve "git tag" via the async flow (which works reliably)
-    const { requestId, buttons } = await submitAndGetButtons('git tag');
+  it('returns result without hitting Telegram when a pre-existing approval covers the command', async () => {
+    // First, approve "git tag" via a live Telegram exchange so the approval is cached.
+    const { execPromise, buttons } = await fireAndGetButtons('git tag');
     const exact8h = buttons.find(b =>
       b.callback_data.startsWith('approve:') && b.callback_data.endsWith(':exact:8'),
     );
     expect(exact8h).toBeDefined();
     await pressInlineButton(ctx, exact8h!.callback_data, exact8h!.messageId);
-    await waitForStatus(requestId, 'completed');
+    const first = await execPromise;
+    expect(first.status).toBe(200);
 
-    // Now use sync mode — the cached approval should make it return immediately
-    const syncRes = await request(ctx.app)
-      .post('/api/v1/execute?sync=true')
-      .set('x-api-key', ctx.testKey)
-      .send({ command: 'git tag' });
+    // Subsequent call reuses the cached approval — no Telegram prompt required.
+    const res = await fireExecute(ctx, 'git tag');
 
-    expect(syncRes.status).toBe(200);
-    expect(syncRes.body.status).toBe('completed');
-    expect(syncRes.body.exitCode).toBe(0);
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('completed');
+    expect(res.body.exitCode).toBe(0);
   }, 25_000);
 });
 
@@ -346,14 +341,16 @@ describe('Telegram E2E: first onboarding journey', () => {
   }, 15_000);
 
   it('init → start with Telegram → submit command → approve via button → command completes', async () => {
-    // Submit a command that needs Telegram approval, using the --init generated key
-    const execRes = await request(appResult.app)
-      .post('/api/v1/execute')
-      .set('x-api-key', apiKey)
-      .send({ command: 'echo tg-onboard hello' });
-
-    expect(execRes.status).toBe(202);
-    const { requestId } = execRes.body;
+    // Fire the POST immediately (via `.end(cb)`) so it dispatches before we
+    // start waiting for the bot message. The sync handler blocks until
+    // Telegram decides.
+    const execPromise = new Promise<Response>((resolveE, rejectE) => {
+      request(appResult.app)
+        .post('/api/v1/execute')
+        .set('x-api-key', apiKey)
+        .send({ command: 'echo tg-onboard hello' })
+        .end((err, res) => err ? rejectE(err) : resolveE(res));
+    });
 
     // Wait for bot to send the approval request to Telegram
     const onboardCtx = { telegramServer, telegramClient, testKey: apiKey, app: appResult.app, start: appResult.start, stop: appResult.stop, testDir: tmpDir };
@@ -391,30 +388,19 @@ describe('Telegram E2E: first onboarding journey', () => {
     });
     await telegramClient.sendCallback(cbQuery);
 
-    // Wait for the command to complete
-    await waitForCondition(async () => {
-      const statusRes = await request(appResult.app)
-        .get(`/api/v1/status/${requestId}`)
-        .set('x-api-key', apiKey);
-      return statusRes.status === 200 && statusRes.body.status === 'completed';
-    }, 10_000);
+    // The POST should now resolve with the execution result.
+    const res = await execPromise;
 
-    // Verify final status
-    const statusRes = await request(appResult.app)
-      .get(`/api/v1/status/${requestId}`)
-      .set('x-api-key', apiKey);
-
-    expect(statusRes.status).toBe(200);
-    expect(statusRes.body.status).toBe('completed');
-    expect(statusRes.body.exitCode).toBe(0);
-    expect(statusRes.body.stdout).toContain('tg-onboard hello');
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('completed');
+    expect(res.body.exitCode).toBe(0);
+    expect(res.body.stdout).toContain('tg-onboard hello');
   }, 25_000);
 });
 
 // ─── Journey: Deny and Approve-Once via Telegram ─────────────────────────
 // Verifies deny rejects the command, and approve-once executes the command
-// without caching the approval. Also validates that the request correctly
-// waits for the Telegram decision (regression test for issue #4).
+// without caching the approval.
 
 describe('Telegram E2E: deny and approve-once journey', () => {
   let journeyCtx: TelegramE2EContext;
@@ -432,108 +418,56 @@ describe('Telegram E2E: deny and approve-once journey', () => {
   it('deny → command is rejected, approve-once → command completes without cached approval', async () => {
     // ── Part 1: Deny ─────────────────────────────────────────────
 
-    // Submit a command that needs approval
-    const denyExecRes = await request(journeyCtx.app)
-      .post('/api/v1/execute')
-      .set('x-api-key', journeyCtx.testKey)
-      .send({ command: 'git diff --stat' });
+    const denyPromise = fireExecute(journeyCtx, 'git diff --stat');
 
-    expect(denyExecRes.status).toBe(202);
-    const denyRequestId = denyExecRes.body.requestId;
-
-    // Wait for the Telegram message
     await waitForBotMessage(journeyCtx);
     const denyUpdates = await getBotMessages(journeyCtx) as any as BotMessageResult;
     const denyButtons = extractInlineButtons(denyUpdates);
 
-    // Press the deny button
     const denyBtn = denyButtons.find(b => b.callback_data.startsWith('deny:'));
     expect(denyBtn).toBeDefined();
     await pressInlineButton(journeyCtx, denyBtn!.callback_data, denyBtn!.messageId);
 
-    // Wait for the request to be denied
-    await waitForStatus(denyRequestId, 'denied');
-
-    const denyStatusRes = await request(journeyCtx.app)
-      .get(`/api/v1/status/${denyRequestId}`)
-      .set('x-api-key', journeyCtx.testKey);
-    expect(denyStatusRes.status).toBe(200);
-    expect(denyStatusRes.body.status).toBe('denied');
+    const denyRes = await denyPromise;
+    expect(denyRes.status).toBe(403);
+    expect(denyRes.body.status).toBe('denied');
 
     // ── Part 2: Approve Once ─────────────────────────────────────
 
-    // Submit a command that needs approval
-    const onceExecRes = await request(journeyCtx.app)
-      .post('/api/v1/execute')
-      .set('x-api-key', journeyCtx.testKey)
-      .send({ command: 'git diff --stat' });
+    const oncePromise = fireExecute(journeyCtx, 'git diff --stat');
 
-    expect(onceExecRes.status).toBe(202);
-    const onceRequestId = onceExecRes.body.requestId;
-
-    // Wait for the Telegram message
     await waitForBotMessage(journeyCtx);
     const onceUpdates = await getBotMessages(journeyCtx) as any as BotMessageResult;
     const onceButtons = extractInlineButtons(onceUpdates);
 
-    // Press the "Once" button
     const onceBtn = onceButtons.find(b =>
       b.callback_data.startsWith('approve:') && b.callback_data.includes(':once:'),
     );
     expect(onceBtn).toBeDefined();
     await pressInlineButton(journeyCtx, onceBtn!.callback_data, onceBtn!.messageId);
 
-    // Wait for the command to complete (validates issue #4 — request waits for approval)
-    await waitForStatus(onceRequestId, 'completed');
-
-    const onceStatusRes = await request(journeyCtx.app)
-      .get(`/api/v1/status/${onceRequestId}`)
-      .set('x-api-key', journeyCtx.testKey);
-    expect(onceStatusRes.status).toBe(200);
-    expect(onceStatusRes.body.status).toBe('completed');
-    expect(onceStatusRes.body.exitCode).toBe(0);
+    const onceRes = await oncePromise;
+    expect(onceRes.status).toBe(200);
+    expect(onceRes.body.status).toBe('completed');
+    expect(onceRes.body.exitCode).toBe(0);
 
     // ── Part 3: Verify no cached approval ────────────────────────
+    // The same command should still require approval — once-approve doesn't
+    // persist to the approval cache. Fire the POST and watch a new prompt
+    // arrive; then clean up by denying so the promise settles.
+    const repeatPromise = fireExecute(journeyCtx, 'git diff --stat');
 
-    // Submit the same command again — it should require approval again
-    // (not auto-approved from cache, since we used "once")
-    const repeatExecRes = await request(journeyCtx.app)
-      .post('/api/v1/execute')
-      .set('x-api-key', journeyCtx.testKey)
-      .send({ command: 'git diff --stat' });
-
-    expect(repeatExecRes.status).toBe(202);
-    expect(repeatExecRes.body.status).toBe('pending_approval');
-
-    // The request should NOT be auto-approved — it should still be pending
-    // Wait a moment and verify it didn't complete on its own
-    await new Promise(r => setTimeout(r, 500));
-    const repeatStatusRes = await request(journeyCtx.app)
-      .get(`/api/v1/status/${repeatExecRes.body.requestId}`)
-      .set('x-api-key', journeyCtx.testKey);
-    // It should be either pending or in the pending store, not completed
-    if (repeatStatusRes.status === 200) {
-      expect(repeatStatusRes.body.status).toBe('pending_approval');
-    }
-
-    // Clean up: deny the last pending request
     await waitForBotMessage(journeyCtx);
     const cleanupUpdates = await getBotMessages(journeyCtx) as any as BotMessageResult;
     const cleanupButtons = extractInlineButtons(cleanupUpdates);
     const cleanupDeny = cleanupButtons.find(b => b.callback_data.startsWith('deny:'));
-    if (cleanupDeny) {
-      await pressInlineButton(journeyCtx, cleanupDeny.callback_data, cleanupDeny.messageId);
-    }
+    expect(cleanupDeny).toBeDefined();
+    await pressInlineButton(journeyCtx, cleanupDeny!.callback_data, cleanupDeny!.messageId);
+
+    const repeatRes = await repeatPromise;
+    expect(repeatRes.status).toBe(403);
+    expect(repeatRes.body.status).toBe('denied');
   }, 40_000);
   /* eslint-enable @typescript-eslint/no-explicit-any */
-
-  /** Helper: wait for request to reach terminal status within this describe block. */
-  async function waitForStatus(requestId: string, expectedStatus: string, timeoutMs = 10_000) {
-    await waitForCondition(async () => {
-      const statusRes = await request(journeyCtx.app)
-        .get(`/api/v1/status/${requestId}`)
-        .set('x-api-key', journeyCtx.testKey);
-      return statusRes.status === 200 && statusRes.body.status === expectedStatus;
-    }, timeoutMs);
-  }
 });
+

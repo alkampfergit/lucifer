@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Router, Request, Response } from 'express';
 import type {
-  ApprovalChannel, ExecutionResult, RequestStatus, ErrorResponse, LuciferConfig,
+  ApprovalChannel, RequestStatus, ErrorResponse, LuciferConfig,
 } from '../types/command_types.js';
 import type { ApiKeyStore, CommandRulesStore, ApprovalStore, PendingRequestStore, AuditLog } from '../types/store_interfaces.js';
 import { authenticateRequest, createRateLimiter } from '../service/authenticate_request.js';
@@ -10,23 +10,6 @@ import { executeCommand } from '../service/execute_command.js';
 import { createChildLogger } from '../../../lib/logger.js';
 
 const log = createChildLogger('routes');
-
-interface CompletedResult {
-  result: ExecutionResult;
-  completedAt: number;
-}
-
-const completedResults = new Map<string, CompletedResult>();
-
-// Clean up completed results older than 10 minutes
-setInterval(() => {
-  const cutoff = Date.now() - 10 * 60_000;
-  for (const [id, entry] of completedResults.entries()) {
-    if (entry.completedAt < cutoff) {
-      completedResults.delete(id);
-    }
-  }
-}, 60_000);
 
 interface ValidationError {
   statusCode: number;
@@ -96,7 +79,6 @@ export function registerExecuteRoutes(deps: ExecuteRouteDeps): void {
 
     const requestId = randomUUID();
     const apiKeyName = authResult.keyConfig.name;
-    const isSync = req.query.sync === 'true';
 
     auditLog.append({
       ts: new Date().toISOString(),
@@ -187,46 +169,15 @@ export function registerExecuteRoutes(deps: ExecuteRouteDeps): void {
 
     log.info({ requestId, command, ip }, 'Command requires manual approval, forwarding to approval channel');
 
-    // Coalesce: check if same command from same key is already pending
-    const existingPending = pendingStore.findByCommand(command, apiKeyName);
-
-    if (!isSync) {
-      // Async mode (default): return requestId, process in background
-      if (!existingPending) {
-        pendingStore.add({
-          requestId,
-          command,
-          apiKeyName,
-          ip,
-          createdAt: new Date().toISOString(),
-          resolve: () => {},
-          reject: () => {},
-          abortController,
-        });
-
-        // Fire and forget the approval request + execution
-        processApprovalAsync({
-          requestId, command, apiKeyName, ip, cwd, riskAnalysis,
-          config, approvalChannel, pendingStore, auditLog, abortController,
-        });
-      }
-
-      res.status(202).json({
-        requestId: existingPending?.requestId ?? requestId,
-        status: 'pending_approval' as RequestStatus,
-      });
-      return;
-    }
-
-    // Sync mode: block until decision
-    if (existingPending) {
-      // Wait for the existing pending request to resolve
-      // For simplicity in sync mode, just wait for a bit then poll
-      res.status(202).json({
-        requestId: existingPending.requestId,
-        status: 'pending_approval' as RequestStatus,
-        message: 'Another request for the same command is pending. Poll for status.',
-      });
+    // Reject an identical in-flight command from the same API key. Two parallel
+    // approval prompts for the same command would confuse the human approver;
+    // the second caller should retry after the first one settles.
+    if (pendingStore.findByCommand(command, apiKeyName)) {
+      res.status(409).json({
+        code: 'DUPLICATE_IN_FLIGHT',
+        message: 'An identical command from this API key is already awaiting approval. Retry after it settles.',
+        retryable: true,
+      } satisfies ErrorResponse);
       return;
     }
 
@@ -242,7 +193,12 @@ export function registerExecuteRoutes(deps: ExecuteRouteDeps): void {
         abortController,
       });
 
-      req.on('close', () => {
+      // Abort execution if the client disconnects before we finish writing
+      // the response. `res.on('close')` fires for both premature disconnects
+      // and normal completion, so we gate on `res.writableEnded` to ignore
+      // the normal-completion case.
+      res.on('close', () => {
+        if (res.writableEnded) return;
         abortController.abort();
         pendingStore.remove(requestId);
       });
@@ -259,7 +215,7 @@ export function registerExecuteRoutes(deps: ExecuteRouteDeps): void {
           requestId,
           status: 'denied' as RequestStatus,
           code: 'DENIED',
-          message: 'Command was denied via Telegram',
+          message: 'Command was denied',
           retryable: false,
         });
         return;
@@ -291,7 +247,7 @@ export function registerExecuteRoutes(deps: ExecuteRouteDeps): void {
           requestId,
           status: 'timed_out' as RequestStatus,
           code: 'APPROVAL_TIMEOUT',
-          message: 'Approval timed out. No response from Telegram.',
+          message: 'Approval timed out. No response from approver.',
           retryable: true,
         });
       } else {
@@ -306,123 +262,4 @@ export function registerExecuteRoutes(deps: ExecuteRouteDeps): void {
       pendingStore.remove(requestId);
     }
   });
-
-  router.get('/api/v1/status/:requestId', (req: Request, res: Response) => {
-    const requestId = Array.isArray(req.params.requestId) ? req.params.requestId[0] : req.params.requestId;
-
-    // Auth check: require valid API key for status queries
-    const rawKey = req.headers['x-api-key'] as string | undefined;
-    const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.socket.remoteAddress ?? 'unknown';
-    const authResult = authenticateRequest(apiKeyStore, rateLimiter, rawKey, ip);
-    if (!authResult.ok) {
-      res.status(authResult.statusCode).json(authResult.error);
-      return;
-    }
-
-    // Check completed results cache
-    const completed = completedResults.get(requestId);
-    if (completed) {
-      res.json(completed.result);
-      return;
-    }
-
-    // Check pending store
-    const pending = pendingStore.get(requestId);
-    if (pending) {
-      // Scope check: only the same API key can query status
-      if (pending.apiKeyName !== authResult.keyConfig.name) {
-        res.status(404).json({
-          code: 'NOT_FOUND',
-          message: 'Request not found',
-          retryable: false,
-        } satisfies ErrorResponse);
-        return;
-      }
-      res.json({ requestId, status: 'pending_approval' as RequestStatus });
-      return;
-    }
-
-    res.status(404).json({
-      code: 'NOT_FOUND',
-      message: 'Request not found or expired',
-      retryable: false,
-    } satisfies ErrorResponse);
-  });
-}
-
-interface ApprovalAsyncContext {
-  requestId: string;
-  command: string;
-  apiKeyName: string;
-  ip: string;
-  cwd: string | undefined;
-  riskAnalysis: ReturnType<typeof analyzeCommandRisk>;
-  config: LuciferConfig;
-  approvalChannel: ApprovalChannel;
-  pendingStore: PendingRequestStore;
-  auditLog: AuditLog;
-  abortController: AbortController;
-}
-
-async function processApprovalAsync(ctx: ApprovalAsyncContext): Promise<void> {
-  const { requestId, command, apiKeyName, ip, cwd, riskAnalysis, config, approvalChannel, pendingStore, auditLog, abortController } = ctx;
-  try {
-    const approvalResult = await Promise.race([
-      approvalChannel.requestApproval(command, apiKeyName, ip, requestId, riskAnalysis),
-      new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('Approval timed out')), config.approvalTimeoutSeconds * 1000);
-      }),
-    ]);
-
-    if (approvalResult.decision === 'denied') {
-      completedResults.set(requestId, {
-        result: { requestId, status: 'denied' },
-        completedAt: Date.now(),
-      });
-      return;
-    }
-
-    // Bridge the gap between approval resolve (which removes from pendingStore)
-    // and execution completion so status polling never returns 404.
-    completedResults.set(requestId, {
-      result: { requestId, status: 'executing' },
-      completedAt: Date.now(),
-    });
-
-    const result = await executeCommand({
-      command,
-      requestId,
-      cwd,
-      timeoutMs: config.executionTimeoutSeconds * 1000,
-      maxOutputBytes: config.maxOutputBytes,
-      maxConcurrent: config.maxConcurrentExecutions,
-      abortSignal: abortController.signal,
-    });
-
-    auditLog.append({
-      ts: new Date().toISOString(),
-      type: 'executed',
-      requestId,
-      command,
-      exitCode: result.exitCode,
-      durationMs: result.durationMs,
-      error: result.error,
-    });
-
-    completedResults.set(requestId, { result, completedAt: Date.now() });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    log.error({ requestId, err: message }, 'Async approval/execution failed');
-
-    completedResults.set(requestId, {
-      result: {
-        requestId,
-        status: message.includes('timed out') ? 'timed_out' : 'failed',
-        error: message,
-      },
-      completedAt: Date.now(),
-    });
-  } finally {
-    pendingStore.remove(requestId);
-  }
 }

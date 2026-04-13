@@ -324,21 +324,34 @@ describe('First configuration journey', () => {
       expect(approvedRes.status).toBe(200);
       expect(approvedRes.body.status).toBe('completed');
 
-      // Step 6: Submit a command that goes to the web approval channel
-      const pendingRes = await request(result.app)
-        .post('/api/v1/execute')
-        .set('x-api-key', apiKey)
-        .send({ command: 'echo approve-me via web' });
-      expect(pendingRes.status).toBe(202);
-      const { requestId } = pendingRes.body;
+      // Step 6: Fire a manual-approve command without awaiting — the sync
+      // handler blocks until the admin UI decides. Call `.end(cb)` so the
+      // request is dispatched immediately instead of lazily on `.then()`.
+      const pendingPromise = new Promise<{ status: number; body: { status: string; exitCode: number; stdout: string } }>((resolveP, rejectP) => {
+        request(result.app)
+          .post('/api/v1/execute')
+          .set('x-api-key', apiKey)
+          .send({ command: 'echo approve-me via web' })
+          .end((err, res) => {
+            if (err) rejectP(err);
+            else resolveP(res);
+          });
+      });
 
-      // Step 7: Admin lists pending approvals using the generated admin secret
-      const pendingList = await request(result.app)
-        .get('/api/v1/admin/approvals/pending')
-        .set('Authorization', `Bearer ${adminSecret}`);
-      expect(pendingList.status).toBe(200);
-      expect(pendingList.body.pending.length).toBeGreaterThanOrEqual(1);
-      expect(pendingList.body.pending.some((p: { requestId: string }) => p.requestId === requestId)).toBe(true);
+      // Step 7: Wait until the admin UI sees the pending request
+      let requestId: string | undefined;
+      for (let i = 0; i < 40 && !requestId; i++) {
+        const pendingList = await request(result.app)
+          .get('/api/v1/admin/approvals/pending')
+          .set('Authorization', `Bearer ${adminSecret}`);
+        expect(pendingList.status).toBe(200);
+        const match = pendingList.body.pending.find(
+          (p: { command: string; requestId: string }) => p.command === 'echo approve-me via web',
+        );
+        if (match) requestId = match.requestId;
+        else await new Promise(r => setTimeout(r, 100));
+      }
+      expect(requestId).toBeDefined();
 
       // Step 8: Admin approves the command via the web decide endpoint
       const decideRes = await request(result.app)
@@ -349,15 +362,12 @@ describe('First configuration journey', () => {
       expect(decideRes.body.ok).toBe(true);
       expect(decideRes.body.decision).toBe('approved');
 
-      // Step 9: Poll status — command should now be completed
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      const statusRes = await request(result.app)
-        .get(`/api/v1/status/${requestId}`)
-        .set('x-api-key', apiKey);
-      expect(statusRes.status).toBe(200);
-      expect(statusRes.body.status).toBe('completed');
-      expect(statusRes.body.exitCode).toBe(0);
-      expect(statusRes.body.stdout).toContain('approve-me via web');
+      // Step 9: The original POST should resolve with the execution result
+      const pendingRes = await pendingPromise;
+      expect(pendingRes.status).toBe(200);
+      expect(pendingRes.body.status).toBe('completed');
+      expect(pendingRes.body.exitCode).toBe(0);
+      expect(pendingRes.body.stdout).toContain('approve-me via web');
     } finally {
       await result.stop();
     }

@@ -94,7 +94,9 @@ git push origin main
 
 ### POST /api/v1/execute
 
-Execute a command. Async by default (returns requestId).
+Execute a command. The endpoint is synchronous: it blocks until the command
+reaches a terminal state (approved + executed, denied, or approval timed out)
+and returns the full result in a single response.
 
 ```bash
 curl -X POST http://localhost:3001/api/v1/execute \
@@ -103,25 +105,13 @@ curl -X POST http://localhost:3001/api/v1/execute \
   -d '{"command":"git status"}'
 ```
 
-Response (async, default):
-```json
-{ "requestId": "uuid", "status": "pending_approval" }
-```
-
-Response (sync, `?sync=true`):
+Success response:
 ```json
 { "requestId": "uuid", "status": "completed", "exitCode": 0, "stdout": "...", "stderr": "", "durationMs": 42 }
 ```
 
-### GET /api/v1/status/:requestId
-
-Poll for result (requires same API key).
-
-```json
-{ "requestId": "uuid", "status": "completed", "exitCode": 0, "stdout": "...", "durationMs": 42 }
-```
-
-Status values: `pending_approval`, `approved`, `denied`, `executing`, `completed`, `failed`, `timed_out`, `expired`
+Status values observable on success/failure paths: `completed`, `failed`,
+`denied`, `timed_out`.
 
 ### Error responses
 
@@ -130,7 +120,11 @@ All errors return:
 { "code": "ERROR_CODE", "message": "Human readable", "retryable": true }
 ```
 
-Codes: `MISSING_API_KEY`, `INVALID_API_KEY`, `IP_NOT_ALLOWED`, `RATE_LIMITED`, `COMMAND_DENIED`, `COMMAND_TOO_LONG`, `APPROVAL_TIMEOUT`, `APPROVAL_ERROR`
+Codes: `MISSING_API_KEY`, `INVALID_API_KEY`, `IP_NOT_ALLOWED`, `RATE_LIMITED`,
+`COMMAND_DENIED`, `COMMAND_TOO_LONG`, `INVALID_CWD`, `DENIED`,
+`DUPLICATE_IN_FLIGHT` (an identical command from this API key is already
+awaiting approval — retry after it settles), `APPROVAL_TIMEOUT`,
+`APPROVAL_ERROR`.
 
 ## CLI
 

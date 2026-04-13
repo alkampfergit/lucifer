@@ -58,10 +58,10 @@ The stories define what "done" means. Tests prove it.
 
 | ID | Story | Acceptance Criteria | Coverage |
 |---|---|---|---|
-| J2-S1 | As an AI Agent, I submit a command with a valid API key so that it enters the execution pipeline | `POST /api/v1/execute` with valid `x-api-key` returns `202` with a `requestId` | `covered` — `register_execute_routes.test.ts` |
+| J2-S1 | As an AI Agent, I submit a command with a valid API key so that it enters the execution pipeline | `POST /api/v1/execute` with valid `x-api-key` is accepted and its terminal result is returned in the same response | `covered` — `register_execute_routes.test.ts` |
 | J2-S2 | As an AI Agent, I submit an `always_approve` command so that it executes immediately without human approval | Command matching an `always_approve` rule executes and returns the result without prompting any approval channel | `covered` — `match_command_rule.test.ts`, `register_execute_routes.test.ts` |
-| J2-S3 | As an AI Agent, I poll for status so that I can retrieve async results | `GET /api/v1/status/:requestId` returns the current state (`pending_approval`, `executing`, `completed`, `failed`) | `covered` — `register_execute_routes.test.ts` |
-| J2-S4 | As an AI Agent, I use sync mode so that I get the result in a single request/response | `POST /api/v1/execute?sync=true` blocks until the command completes or is denied, then returns the full result | `covered` — `telegram-e2e.test.ts` |
+| J2-S3 | As an AI Agent, I get the full execution result in a single request/response | `POST /api/v1/execute` blocks until the command completes, is denied, or approval times out, then returns the full result | `covered` — `telegram-e2e.test.ts`, `register_execute_routes.test.ts` |
+| J2-S4 | As an AI Agent, I retry politely when a duplicate command is already awaiting approval | A duplicate in-flight command from the same API key is rejected with `409 DUPLICATE_IN_FLIGHT` and marked retryable | `covered` — `register_execute_routes.test.ts` |
 | J2-S5 | As an AI Agent, I submit a command with an optional `cwd` so that execution happens in a specific directory | Absolute `cwd` is validated and passed to the child process | `covered` — `execute_command.test.ts` |
 
 ---
@@ -78,7 +78,7 @@ The stories define what "done" means. Tests prove it.
 | J3-S1 | As an Approver, I receive a Telegram message with the command details and inline approval buttons | Bot sends a message containing the command text, risk info, and 7 buttons (1 once + 3 exact + 2 prefix + 1 deny) | `covered` — `telegram-e2e.test.ts`, `request_telegram_approval.test.ts` |
 | J3-S2 | As an Approver, I press an exact-approval button so that only this specific command is approved | Exact approval stores the full command string; the command executes and completes | `covered` — `telegram-e2e.test.ts` |
 | J3-S3 | As an Approver, I press a prefix-approval button so that similar commands are also approved | Prefix approval stores the first two tokens; subsequent commands with the same prefix auto-approve from cache | `covered` — `telegram-e2e.test.ts` |
-| J3-S4 | As an Approver, I press the deny button so that the command is rejected | The request transitions to `denied`; the AI Agent sees status `denied` | `covered` — `telegram-e2e.test.ts` |
+| J3-S4 | As an Approver, I press the deny button so that the command is rejected | The AI Agent's blocked POST resolves with `403` / `status: denied` | `covered` — `telegram-e2e.test.ts` |
 | J3-S5 | As an Approver, I press a permanent-approval button so that this command never asks again | Permanent exact approval is stored; same command auto-approves indefinitely | `covered` — `telegram-e2e.test.ts` |
 
 | J3-S6 | As an Approver, I press the "Approve Once" button so that this specific request executes but no cached approval is stored | The command executes successfully; repeating the same command requires a new approval | `covered` — `telegram-e2e.test.ts` ("deny and approve-once journey") |

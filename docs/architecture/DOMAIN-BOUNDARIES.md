@@ -36,7 +36,7 @@
 - **Bounded context**: API key validation, command-rules matching, risk analysis, SQLite approval/audit storage, Telegram bot integration, optional admin approval UI, child process execution.
 - **Published events**: None (approval decisions stored in SQLite, audit log appended).
 - **Consumed events**: Telegram callback queries and admin UI approval decisions.
-- **Public API surface**: `POST /api/v1/execute`, `GET /api/v1/status/:requestId`, and when enabled `GET /admin/approvals`, `GET /api/v1/admin/approvals/pending`, `POST /api/v1/admin/approvals/stream-ticket`, `GET /api/v1/admin/approvals/stream`, `POST /api/v1/admin/approvals/:requestId/decide`.
+- **Public API surface**: `POST /api/v1/execute`, and when enabled `GET /admin/approvals`, `GET /api/v1/admin/approvals/pending`, `POST /api/v1/admin/approvals/stream-ticket`, `GET /api/v1/admin/approvals/stream`, `POST /api/v1/admin/approvals/:requestId/decide`.
 - **Data ownership**: SQLite database in the configured `dataDir` for approvals and audit log; in-memory pending request store; operator-owned JSON config files (`lucifer.json`, `api-keys.json`, `command-rules.json`).
 - **Key interfaces**: `ApprovalChannel` abstracts Telegram, web admin, multi-channel fan-out, and auto-approve development mode.
 
@@ -44,8 +44,7 @@
 
 | Source Domain | Target Domain | Mechanism | Contract Location |
 |---|---|---|---|
-| External caller | `command-gateway` | HTTP POST `/api/v1/execute` | Request: `{ command, cwd? }` + `x-api-key` header; Response: `ExecutionResult` |
-| External caller | `command-gateway` | HTTP GET `/api/v1/status/:requestId` | Response: `{ requestId, status, stdout?, stderr?, exitCode? }` |
+| External caller | `command-gateway` | HTTP POST `/api/v1/execute` | Request: `{ command, cwd? }` + `x-api-key` header; Response: `ExecutionResult` (synchronous — blocks until terminal state). Duplicate in-flight commands return `409 DUPLICATE_IN_FLIGHT`. |
 | Admin operator | `command-gateway` | Bearer-authenticated HTTP + SSE | Admin approval routes in `server/src/domains/command-gateway/api/register_approval_routes.ts` |
 | `command-gateway` | Telegram Bot API | HTTPS (telegraf) | Inline keyboard messages + callback queries |
 | `command-gateway` | SQLite | `better-sqlite3` | `<dataDir>/lucifer.db` (approvals + audit log tables) |

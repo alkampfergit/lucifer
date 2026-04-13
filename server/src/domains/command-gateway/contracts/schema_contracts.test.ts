@@ -104,33 +104,6 @@ describe('API response contracts', () => {
     `);
   });
 
-  it('PendingApproval shape on 202', async () => {
-    const res = await request(ctx.app)
-      .post('/api/v1/execute')
-      .set('x-api-key', ctx.testKey)
-      .send({ command: 'git status' });
-    expect(res.status).toBe(202);
-    expect(shapeOf(res.body)).toMatchInlineSnapshot(`
-      {
-        "requestId": "string",
-        "status": "string",
-      }
-    `);
-  });
-
-  it('StatusNotFound shape on 404', async () => {
-    const res = await request(ctx.app)
-      .get('/api/v1/status/nonexistent')
-      .set('x-api-key', ctx.testKey);
-    expect(res.status).toBe(404);
-    expect(shapeOf(res.body)).toMatchInlineSnapshot(`
-      {
-        "code": "string",
-        "message": "string",
-        "retryable": "boolean",
-      }
-    `);
-  });
 });
 
 // --- Group 2: SQLite roundtrip contracts ---

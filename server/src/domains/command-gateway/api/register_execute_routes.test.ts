@@ -88,15 +88,17 @@ describe('POST /api/v1/execute integration', () => {
     expect(res.body.code).toBe('COMMAND_DENIED');
   });
 
-  it('returns pending_approval for manual_approve command (async default)', async () => {
+  it('runs manual_approve command through the approval channel and returns its result', async () => {
+    // The integration test app uses the auto-approve channel, so a manual
+    // approve rule still resolves synchronously within the request.
     const res = await request(ctx.app)
       .post('/api/v1/execute')
       .set('x-api-key', ctx.testKey)
       .send({ command: 'git status' });
 
-    expect(res.status).toBe(202);
-    expect(res.body.status).toBe('pending_approval');
-    expect(res.body.requestId).toBeDefined();
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('completed');
+    expect(res.body.exitCode).toBe(0);
   });
 
   it('returns 400 for command exceeding max length', async () => {
@@ -129,43 +131,6 @@ describe('POST /api/v1/execute integration', () => {
     expect(res.status).toBe(200);
     expect(res.body.exitCode).toBe(1);
     expect(res.body.status).toBe('failed');
-  });
-});
-
-describe('GET /api/v1/status/:requestId', () => {
-  it('returns 401 for missing API key', async () => {
-    const res = await request(ctx.app).get('/api/v1/status/some-id');
-    expect(res.status).toBe(401);
-  });
-
-  it('returns 404 for unknown requestId', async () => {
-    const res = await request(ctx.app)
-      .get('/api/v1/status/nonexistent-id')
-      .set('x-api-key', ctx.testKey);
-
-    expect(res.status).toBe(404);
-    expect(res.body.code).toBe('NOT_FOUND');
-  });
-
-  it('returns status for a pending manual_approve request', async () => {
-    // First create a pending request
-    const execRes = await request(ctx.app)
-      .post('/api/v1/execute')
-      .set('x-api-key', ctx.testKey)
-      .send({ command: 'git log --oneline' });
-
-    expect(execRes.status).toBe(202);
-    const { requestId } = execRes.body;
-
-    // Poll for status (auto-approve runs async, might be completed or pending)
-    const statusRes = await request(ctx.app)
-      .get(`/api/v1/status/${requestId}`)
-      .set('x-api-key', ctx.testKey);
-
-    expect([200, 404]).toContain(statusRes.status);
-    if (statusRes.status === 200) {
-      expect(['pending_approval', 'executing', 'completed', 'failed'].includes(statusRes.body.status)).toBe(true);
-    }
   });
 });
 
@@ -285,18 +250,6 @@ describe('MockApprovalChannel integration', () => {
   let mockChannel: MockChannel;
   let db: Database.Database;
 
-  async function approveAndWaitForCompletion(requestId: string): Promise<void> {
-    await waitForCondition(() => mockChannel.pendingApprovals.size >= 1, 5000);
-    const [pendingId] = mockChannel.pendingApprovals.keys();
-    mockChannel.approveNext(pendingId);
-    await waitForCondition(async () => {
-      const statusRes = await request(mockApp)
-        .get(`/api/v1/status/${requestId}`)
-        .set('x-api-key', MOCK_KEY);
-      return statusRes.status === 200 && statusRes.body.status === 'completed';
-    }, 5000);
-  }
-
   beforeAll(() => {
     mkdirSync(MOCK_CONFIG_DIR, { recursive: true });
 
@@ -384,34 +337,33 @@ describe('MockApprovalChannel integration', () => {
     rmSync(MOCK_TEST_DIR, { recursive: true, force: true });
   });
 
-  it('async approve — approved command executes and result is retrievable', async () => {
-    // Submit command in async mode
-    const execRes = await request(mockApp)
-      .post('/api/v1/execute')
-      .set('x-api-key', MOCK_KEY)
-      .send({ command: 'git --version' });
+  it('approve — blocks until approved, then returns full execution result', async () => {
+    mockChannel.pendingApprovals.clear();
 
-    expect(execRes.status).toBe(202);
-    expect(execRes.body.status).toBe('pending_approval');
-    const { requestId } = execRes.body;
-
-    await approveAndWaitForCompletion(requestId);
-
-    // Verify final result
-    const statusRes = await request(mockApp)
-      .get(`/api/v1/status/${requestId}`)
-      .set('x-api-key', MOCK_KEY);
-
-    expect(statusRes.status).toBe(200);
-    expect(statusRes.body.status).toBe('completed');
-    expect(statusRes.body.exitCode).toBe(0);
-    expect(statusRes.body.stdout).toContain('git version');
-  }, 15_000);
-
-  it('sync deny — blocks until denied, then returns 403', async () => {
     const [res] = await Promise.all([
       request(mockApp)
-        .post('/api/v1/execute?sync=true')
+        .post('/api/v1/execute')
+        .set('x-api-key', MOCK_KEY)
+        .send({ command: 'git --version' }),
+      (async () => {
+        await waitForCondition(() => mockChannel.pendingApprovals.size >= 1, 5000);
+        const [pendingId] = mockChannel.pendingApprovals.keys();
+        mockChannel.approveNext(pendingId);
+      })(),
+    ]);
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('completed');
+    expect(res.body.exitCode).toBe(0);
+    expect(res.body.stdout).toContain('git version');
+  }, 15_000);
+
+  it('deny — blocks until denied, then returns 403', async () => {
+    mockChannel.pendingApprovals.clear();
+
+    const [res] = await Promise.all([
+      request(mockApp)
+        .post('/api/v1/execute')
         .set('x-api-key', MOCK_KEY)
         .send({ command: 'git log --oneline' }),
       (async () => {
@@ -426,40 +378,54 @@ describe('MockApprovalChannel integration', () => {
     expect(res.body.status).toBe('denied');
   }, 15_000);
 
-  it('sync timeout — returns 408 when approval times out', async () => {
+  it('timeout — returns 408 when approval times out', async () => {
     // Uses timeoutApp which has a 1-second approval timeout
     const res = await request(timeoutApp)
-      .post('/api/v1/execute?sync=true')
+      .post('/api/v1/execute')
       .set('x-api-key', MOCK_KEY)
       .send({ command: 'git diff' });
 
-    // The approval timeout is 1 second, so this should return 408
     expect(res.status).toBe(408);
     expect(res.body.code).toBe('APPROVAL_TIMEOUT');
     expect(res.body.retryable).toBe(true);
   }, 10_000);
 
-  it('async mode — returns 202 with pending status, then resolves after approval', async () => {
-    const execRes = await request(mockApp)
+  it('duplicate in-flight command returns 409 without raising a second approval prompt', async () => {
+    mockChannel.pendingApprovals.clear();
+
+    // Use `.end(cb)` so the first request is dispatched immediately rather
+    // than lazily when awaited; otherwise the duplicate check below never
+    // sees a pending entry.
+    const firstRequest = new Promise<{ status: number; body: { status: string } }>((resolveR, rejectR) => {
+      request(mockApp)
+        .post('/api/v1/execute')
+        .set('x-api-key', MOCK_KEY)
+        .send({ command: 'git remote -v' })
+        .end((err, res) => err ? rejectR(err) : resolveR(res));
+    });
+
+    // Wait until the first request is parked at the approval channel so the
+    // second call observes the duplicate in the pending store.
+    await waitForCondition(() => mockChannel.pendingApprovals.size >= 1, 5000);
+
+    const dupRes = await request(mockApp)
       .post('/api/v1/execute')
       .set('x-api-key', MOCK_KEY)
-      .send({ command: 'git branch' });
+      .send({ command: 'git remote -v' });
 
-    expect(execRes.status).toBe(202);
-    expect(execRes.body.status).toBe('pending_approval');
-    expect(execRes.body.requestId).toBeDefined();
+    expect(dupRes.status).toBe(409);
+    expect(dupRes.body.code).toBe('DUPLICATE_IN_FLIGHT');
+    expect(dupRes.body.retryable).toBe(true);
 
-    const { requestId } = execRes.body;
+    // Still exactly one pending approval — the dup never reached the channel.
+    expect(mockChannel.pendingApprovals.size).toBe(1);
 
-    await approveAndWaitForCompletion(requestId);
-
-    // Final status check
-    const statusRes = await request(mockApp)
-      .get(`/api/v1/status/${requestId}`)
-      .set('x-api-key', MOCK_KEY);
-
-    expect(statusRes.status).toBe(200);
-    expect(statusRes.body.status).toBe('completed');
+    // Let the first request finish cleanly.
+    const [pendingId] = mockChannel.pendingApprovals.keys();
+    mockChannel.approveNext(pendingId);
+    const firstRes = await firstRequest;
+    expect(firstRes.status).toBe(200);
+    expect(firstRes.body.status).toBe('completed');
   }, 15_000);
 
   it('existing approval skips the approval channel', async () => {
@@ -471,7 +437,7 @@ describe('MockApprovalChannel integration', () => {
     mockChannel.pendingApprovals.clear();
 
     const res = await request(mockApp)
-      .post('/api/v1/execute?sync=true')
+      .post('/api/v1/execute')
       .set('x-api-key', MOCK_KEY)
       .send({ command: 'git version' });
 
