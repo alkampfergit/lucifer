@@ -30,6 +30,7 @@
 5. Enforce important rules mechanically with CI, linting, structural tests, or scripts.
 6. When behavior, process, or architecture changes, update the repository documentation in the same change.
 7. Tool-specific files must not redefine repository policy. They are adapters, not alternate sources of truth.
+8. Never commit on master without a semver tag to handle versioning. SEMVER tag are with x.y.z format, no v prefix.
 
 ## Shared Engineering Invariants
 
@@ -82,6 +83,7 @@ They live in `.claude/skills/` as the single source of truth.
 | Skill | Purpose | Location |
 |---|---|---|
 | `new-feature` | End-to-end workflow for adding a feature | [.claude/skills/new-feature/SKILL.md](.claude/skills/new-feature/SKILL.md) |
+| `small-change` | End-to-end workflow for a scoped non-bug change, preserving all harness invariants | [.claude/skills/small-change/SKILL.md](.claude/skills/small-change/SKILL.md) |
 | `bug-fix` | Structured workflow for reproducing and fixing bugs | [.claude/skills/bug-fix/SKILL.md](.claude/skills/bug-fix/SKILL.md) |
 | `refactor` | Safe refactoring with preservation guarantees | [.claude/skills/refactor/SKILL.md](.claude/skills/refactor/SKILL.md) |
 | `add-domain` | Bootstrap a new domain scaffold | [.claude/skills/add-domain/SKILL.md](.claude/skills/add-domain/SKILL.md) |

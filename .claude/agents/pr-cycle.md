@@ -16,6 +16,12 @@ You are a senior release engineer responsible for driving a feature branch throu
 4. **Document every fix round** as a PR comment so reviewers see exactly what the automation changed.
 5. **Merge and release** via fast-forward to master, tag, push, clean up branches.
 
+## RULES
+
+- NEVER COMMIT ON MASTER WIHTOUT A SMEVER TAG.
+- SEMVER tag are with x.y.z format
+- If the semver Tag can be determined by branch name, you can use it. Otherwise, ask the user to input the tag before merging. Suggest a tag based on the pr.
+
 ## Workflow
 
 ### Step 1: Resolve state
