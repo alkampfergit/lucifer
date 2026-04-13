@@ -21,6 +21,18 @@ export interface PairingResult {
   chatTitle: string;
 }
 
+export interface PairingOptions {
+  /**
+   * When `true`, if no chats have messaged the bot yet, the flow prints a
+   * helpful message and polls Telegram until at least one chat is found
+   * (instead of throwing). The user can CTRL+C to cancel.
+   * Defaults to `false` for backwards compatibility.
+   */
+  waitForChats?: boolean;
+  /** Polling interval in milliseconds when waiting for chats. Defaults to 3000. */
+  pollIntervalMs?: number;
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────
 
 function wrapError(context: string, err: unknown): Error {
@@ -153,6 +165,7 @@ async function verifyCode(
 export async function runTelegramPairing(
   token: string,
   io: PairingIO,
+  options: PairingOptions = {},
 ): Promise<PairingResult> {
   const telegram = new Telegram(token);
 
@@ -161,22 +174,37 @@ export async function runTelegramPairing(
 
   // 2. Fetch recent updates and extract unique chats
   io.print('Fetching recent chats...');
-  const updates = await fetchUpdates(telegram);
-  const chats = deduplicateChats(updates);
+  let chats = deduplicateChats(await fetchUpdates(telegram));
 
   if (chats.length === 0) {
-    throw new Error(
-      `No chats found. Please send a message to @${botInfo.username} on Telegram first, then re-run this command.`,
+    if (!options.waitForChats) {
+      throw new Error(
+        `No chats found. Please send a message to @${botInfo.username} on Telegram first, then re-run this command.`,
+      );
+    }
+
+    const pollMs = options.pollIntervalMs ?? 3000;
+    io.print(
+      `\nNo chats have messaged @${botInfo.username} yet.\n` +
+      `Open Telegram, send any message to the bot, and pairing will continue.\n` +
+      `(Polling every ${Math.round(pollMs / 1000)}s — press CTRL+C to cancel.)`,
     );
+
+    while (chats.length === 0) {
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+      chats = deduplicateChats(await fetchUpdates(telegram));
+    }
+
+    io.print(`Found ${chats.length} chat${chats.length === 1 ? '' : 's'}.`);
   }
 
   // 3. Let the user pick a chat
-  const options = chats.map((c) => {
+  const chatOptions = chats.map((c) => {
     const date = new Date(c.lastMessageDate * 1000).toLocaleString();
     return `${c.title} (${c.type}, ID: ${c.chatId}) — last message: ${date}`;
   });
 
-  const index = await io.choose('Select a chat for approvals:', options);
+  const index = await io.choose('Select a chat for approvals:', chatOptions);
   const chosen = chats[index];
 
   io.print(`\nSelected: ${chosen.title} (${chosen.chatId})`);

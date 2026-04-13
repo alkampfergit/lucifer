@@ -88,6 +88,20 @@ describe('CLI smoke tests', () => {
     expect(stdout).toContain('Usage:');
     expect(stdout).toContain('--init');
     expect(stdout).toContain('--config');
+    expect(stdout).toContain('start');
+  }, 15_000);
+
+  it('--help exits on its own without requiring a kill signal', async () => {
+    const { code } = await runCli('--help');
+    // The runCli helper only kills when idle >1.5s after output; if we got a
+    // real exit code, the process exited cleanly on its own.
+    expect(code).toBe(0);
+  }, 15_000);
+
+  it('rejects unknown subcommands with a non-zero exit code', async () => {
+    const { stderr, code } = await runCli('bogus-command');
+    expect(stderr).toContain('Unknown command');
+    expect(code).toBe(1);
   }, 15_000);
 
   describe('--init', () => {
@@ -102,10 +116,12 @@ describe('CLI smoke tests', () => {
       rmSync(tmpDir, { recursive: true, force: true });
     });
 
-    it('creates all three config files in target directory', async () => {
-      const { stdout } = await runCli('--init', tmpDir);
+    it('creates all three config files in target directory and exits cleanly', async () => {
+      const { stdout, code } = await runCli('--init', tmpDir);
 
       expect(stdout).toContain('Config files generated');
+      // --init is a one-shot command: it must exit on its own, not require CTRL+C.
+      expect(code).toBe(0);
 
       const configDir = join(tmpDir, 'config');
       expect(existsSync(join(configDir, 'lucifer.json'))).toBe(true);

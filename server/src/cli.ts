@@ -21,7 +21,8 @@ function printHelp() {
 lucifer-gate - AI Agent Command Firewall
 
 Usage:
-  lucifer-gate [options]              Start the server
+  lucifer-gate start [options]        Start the server (explicit form)
+  lucifer-gate [options]              Start the server (implicit, same as 'start')
   lucifer-gate --init [dir]           Generate starter config files
   lucifer-gate pair [--config <path>] Pair a Telegram chat for approvals
   lucifer-gate log [--limit N]        Query audit log
@@ -251,11 +252,11 @@ async function runPair() {
 
   const io = createReadlinePairingIO();
   try {
-    const result = await runTelegramPairing(token, io);
+    const result = await runTelegramPairing(token, io, { waitForChats: true });
     updateJsonConfig(configPath, { telegramChatId: result.chatId });
     console.log(`\nChat ID ${result.chatId} saved to ${configPath}`);
     console.log('You can now start Lucifer without LUCIFER_TELEGRAM_CHAT_ID:');
-    console.log(`\n  LUCIFER_TELEGRAM_TOKEN=your_token lucifer-gate --config ${configPath}`);
+    console.log(`\n  LUCIFER_TELEGRAM_TOKEN=your_token lucifer-gate start --config ${configPath}`);
   } finally {
     io.close();
   }
@@ -270,32 +271,41 @@ function getArgValue(flag: string): string | undefined {
 async function main() {
   if (args.includes('--help') || args.includes('-h')) {
     printHelp();
-    return;
+    process.exit(0);
   }
 
   if (args[0] === '--init' || args[0] === 'init') {
     const dir = args[1] ?? '.';
     initConfig(dir);
-    return;
+    process.exit(0);
   }
 
   if (args[0] === 'pair') {
     await runPair();
-    return;
+    process.exit(0);
   }
 
   if (args[0] === 'log') {
     const limitStr = getArgValue('--limit');
     await runLog(limitStr ? parseInt(limitStr, 10) : 50);
-    return;
+    process.exit(0);
   }
 
   if (args[0] === 'stats') {
     await runStats();
-    return;
+    process.exit(0);
   }
 
-  // Server mode
+  // Server mode — either `start` (explicit) or no subcommand (implicit).
+  // Any stray unrecognised positional is treated as an error to avoid
+  // silently starting the server when the user meant a subcommand.
+  const first = args[0];
+  if (first && first !== 'start' && !first.startsWith('-')) {
+    console.error(`Unknown command: ${first}`);
+    console.error(`Run 'lucifer-gate --help' for usage.`);
+    process.exit(1);
+  }
+
   const configPath = getArgValue('--config') ?? './config/lucifer.json';
   const port = getArgValue('--port');
   const autoApprove = args.includes('--auto-approve');

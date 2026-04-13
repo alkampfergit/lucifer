@@ -113,12 +113,31 @@ describe('runTelegramPairing', () => {
     expect(options[0]).toContain('Alice');
   });
 
-  it('throws when no chats are found', async () => {
+  it('throws when no chats are found and waitForChats is not set', async () => {
     mockGetUpdates.mockResolvedValue([]);
     const io = createFakeIO();
 
     await expect(runTelegramPairing('token', io))
       .rejects.toThrow(/No chats found/);
+  });
+
+  it('waits for chats when waitForChats is true and succeeds once a chat appears', async () => {
+    // First fetch returns nothing, second fetch returns a chat. Pairing should
+    // print guidance, poll, and continue without throwing.
+    mockGetUpdates
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([makeUpdate(444, 'private', 9000, 'Carol')]);
+
+    const io = createFakeIO();
+    const result = await runTelegramPairing('token', io, {
+      waitForChats: true,
+      pollIntervalMs: 5, // keep the test fast
+    });
+
+    expect(result.chatId).toBe('444');
+    expect(result.chatTitle).toBe('Carol');
+    expect(io.print).toHaveBeenCalledWith(expect.stringContaining('No chats have messaged'));
   });
 
   it('exits cleanly when user declines confirmation', async () => {
