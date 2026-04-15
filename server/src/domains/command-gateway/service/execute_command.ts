@@ -44,8 +44,8 @@ export async function executeCommand(options: ExecuteOptions): Promise<Execution
       // commands. Access is gated by API-key auth and configurable command
       // rules (allow/deny lists). The spawn call below is by design.
       const child = resolved
-        ? spawn(resolved.spawnCommand, resolved.spawnArgs, { cwd: resolved.cwd, detached: true }) // codeql[js/command-line-injection] codeql[js/path-injection]
-        : spawn(command, { shell: true, cwd: cwd ?? process.cwd(), detached: true }); // codeql[js/command-line-injection] codeql[js/path-injection]
+        ? spawn(resolved.spawnCommand, resolved.spawnArgs, { cwd: resolved.cwd, detached: true })
+        : spawn(command, { shell: true, cwd: cwd ?? process.cwd(), detached: true }); // NOSONAR -- intentional: this gateway executes user-supplied commands gated by API-key auth and command rules
 
       let stdout = '';
       let stderr = '';
