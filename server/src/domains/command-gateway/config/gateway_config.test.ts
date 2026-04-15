@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -7,7 +8,7 @@ import { loadGatewayConfig, getTelegramToken, getAdminSecret } from './gateway_c
 const tempDirs: string[] = [];
 
 function createTempDir(): string {
-  const dir = join(tmpdir(), `lucifer-gw-config-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const dir = join(tmpdir(), `lucifer-gw-config-test-${Date.now()}-${randomUUID()}`);
   mkdirSync(dir, { recursive: true });
   tempDirs.push(dir);
   return dir;
@@ -80,15 +81,16 @@ describe('loadGatewayConfig', () => {
 
   it('loads a valid aliases map with bash and elf entries', () => {
     const dir = createTempDir();
+    const buildPath = join(tmpdir(), 'scripts', 'build.sh');
     const filePath = writeConfig(dir, {
       aliases: {
-        build: { path: '/tmp/scripts/build.sh', type: 'bash' },
+        build: { path: buildPath, type: 'bash' },
         hello: { path: '/opt/bin/hello', type: 'elf' },
       },
     });
     const config = loadGatewayConfig(filePath);
     expect(config.aliases).toEqual({
-      build: { path: '/tmp/scripts/build.sh', type: 'bash' },
+      build: { path: buildPath, type: 'bash' },
       hello: { path: '/opt/bin/hello', type: 'elf' },
     });
   });
@@ -96,7 +98,7 @@ describe('loadGatewayConfig', () => {
   it('rejects aliases with an unknown type', () => {
     const dir = createTempDir();
     const filePath = writeConfig(dir, {
-      aliases: { bad: { path: '/tmp/x.sh', type: 'python' } },
+      aliases: { bad: { path: join(tmpdir(), 'x.sh'), type: 'python' } },
     });
     expect(() => loadGatewayConfig(filePath)).toThrow('failed validation');
   });

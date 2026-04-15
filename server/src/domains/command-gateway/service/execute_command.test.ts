@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import { writeFileSync, mkdirSync, chmodSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -83,20 +84,21 @@ describe('executeCommand', () => {
   }, 10000);
 
   it('respects cwd option', async () => {
+    const sysTmp = tmpdir();
     const result = await executeCommand({
       command: 'pwd',
       requestId: 'test-7',
-      cwd: '/tmp',
+      cwd: sysTmp,
       timeoutMs: 5000,
       maxOutputBytes: 1024,
       maxConcurrent: 5,
     });
     expect(result.status).toBe('completed');
-    expect(result.stdout?.trim()).toBe('/tmp');
+    expect(result.stdout?.trim()).toBe(sysTmp);
   });
 
   it('runs a bash alias from the script directory, ignoring caller cwd', async () => {
-    const dir = join(tmpdir(), `lucifer-alias-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const dir = join(tmpdir(), `lucifer-alias-test-${Date.now()}-${randomUUID()}`);
     mkdirSync(dir, { recursive: true });
     const scriptPath = join(dir, 'mybuild.sh');
     // The script prints its working directory so the test can assert the
@@ -108,7 +110,7 @@ describe('executeCommand', () => {
       const result = await executeCommand({
         command: 'mybuild',
         requestId: 'alias-bash',
-        cwd: '/tmp', // should be ignored when alias matches
+        cwd: tmpdir(), // should be ignored when alias matches
         timeoutMs: 5000,
         maxOutputBytes: 1024,
         maxConcurrent: 5,
@@ -131,7 +133,7 @@ describe('executeCommand', () => {
       maxOutputBytes: 1024,
       maxConcurrent: 5,
       aliases: {
-        other: { path: '/tmp/does-not-exist.sh', type: 'bash' },
+        other: { path: join(tmpdir(), 'does-not-exist.sh'), type: 'bash' },
       },
     });
     expect(result.status).toBe('completed');
@@ -139,7 +141,7 @@ describe('executeCommand', () => {
   });
 
   it('fails cleanly when an elf alias points to a missing file', async () => {
-    const missingPath = join(tmpdir(), `lucifer-missing-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const missingPath = join(tmpdir(), `lucifer-missing-${Date.now()}-${randomUUID()}`);
     const result = await executeCommand({
       command: 'ghost',
       requestId: 'alias-elf-missing',
@@ -160,7 +162,7 @@ describe('executeCommand', () => {
     // bash itself runs; the missing script produces a non-zero exit code and
     // stderr. This exercises the bash-launcher branch's error surface rather
     // than the spawn-level 'error' event.
-    const missingPath = join(tmpdir(), `lucifer-missing-${Date.now()}-${Math.random().toString(36).slice(2)}.sh`);
+    const missingPath = join(tmpdir(), `lucifer-missing-${Date.now()}-${randomUUID()}.sh`);
     const result = await executeCommand({
       command: 'ghost',
       requestId: 'alias-bash-missing',

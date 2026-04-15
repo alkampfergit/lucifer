@@ -40,9 +40,12 @@ export async function executeCommand(options: ExecuteOptions): Promise<Execution
 
   try {
     return await new Promise<ExecutionResult>((resolve) => {
+      // This is a command gateway that intentionally executes user-supplied
+      // commands. Access is gated by API-key auth and configurable command
+      // rules (allow/deny lists). The spawn call below is by design.
       const child = resolved
-        ? spawn(resolved.spawnCommand, resolved.spawnArgs, { cwd: resolved.cwd, detached: true })
-        : spawn(command, { shell: true, cwd: cwd ?? process.cwd(), detached: true });
+        ? spawn(resolved.spawnCommand, resolved.spawnArgs, { cwd: resolved.cwd, detached: true }) // codeql[js/command-line-injection] codeql[js/path-injection]
+        : spawn(command, { shell: true, cwd: cwd ?? process.cwd(), detached: true }); // codeql[js/command-line-injection] codeql[js/path-injection]
 
       let stdout = '';
       let stderr = '';

@@ -1,7 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { dirname, resolve as resolvePath } from 'node:path';
+import { dirname, join, resolve as resolvePath } from 'node:path';
+import { tmpdir } from 'node:os';
 import type { AliasesConfig } from '../types/command_types.js';
 import { findAliasArgsBypass, resolveAlias } from './resolve_alias.js';
+
+/** Base directory for fixture paths so tests avoid hard-coded /tmp literals. */
+const fixtureDir = join(tmpdir(), 'scripts');
+const fixtureBuildSh = join(fixtureDir, 'build.sh');
 
 describe('resolveAlias', () => {
   it('returns null when aliases is undefined', () => {
@@ -10,24 +15,24 @@ describe('resolveAlias', () => {
 
   it('returns null when no alias matches the command', () => {
     const aliases: AliasesConfig = {
-      build: { path: '/tmp/scripts/build.sh', type: 'bash' },
+      build: { path: fixtureBuildSh, type: 'bash' },
     };
     expect(resolveAlias('deploy', aliases)).toBeNull();
   });
 
   it('resolves a bash alias to bash + script path with parent dir as cwd', () => {
     const aliases: AliasesConfig = {
-      build: { path: '/tmp/scripts/build.sh', type: 'bash' },
+      build: { path: fixtureBuildSh, type: 'bash' },
     };
     const resolved = resolveAlias('build', aliases);
     expect(resolved).not.toBeNull();
-    expect(resolved?.path).toBe('/tmp/scripts/build.sh');
+    expect(resolved?.path).toBe(fixtureBuildSh);
     expect(resolved?.type).toBe('bash');
     expect(resolved?.spawnCommand).toBe('bash');
     // `--` ends bash option parsing so a path-looking-like-a-flag can never
     // be misinterpreted as an option.
-    expect(resolved?.spawnArgs).toEqual(['--', '/tmp/scripts/build.sh']);
-    expect(resolved?.cwd).toBe('/tmp/scripts');
+    expect(resolved?.spawnArgs).toEqual(['--', fixtureBuildSh]);
+    expect(resolved?.cwd).toBe(fixtureDir);
   });
 
   it('resolves an elf alias to a direct exec with parent dir as cwd', () => {
@@ -57,14 +62,14 @@ describe('resolveAlias', () => {
   it('does not match when the command has extra tokens', () => {
     // Exact-string match; "build --verbose" is not the alias "build".
     const aliases: AliasesConfig = {
-      build: { path: '/tmp/scripts/build.sh', type: 'bash' },
+      build: { path: fixtureBuildSh, type: 'bash' },
     };
     expect(resolveAlias('build --verbose', aliases)).toBeNull();
   });
 
   it('tolerates leading/trailing whitespace on the command', () => {
     const aliases: AliasesConfig = {
-      build: { path: '/tmp/scripts/build.sh', type: 'bash' },
+      build: { path: fixtureBuildSh, type: 'bash' },
     };
     expect(resolveAlias('  build  ', aliases)).not.toBeNull();
   });
@@ -73,7 +78,7 @@ describe('resolveAlias', () => {
     // Without an own-property guard `aliases['constructor']` would return
     // Object's constructor and crash the alias spawn.
     const aliases: AliasesConfig = {
-      build: { path: '/tmp/scripts/build.sh', type: 'bash' },
+      build: { path: fixtureBuildSh, type: 'bash' },
     };
     expect(resolveAlias('constructor', aliases)).toBeNull();
     expect(resolveAlias('toString', aliases)).toBeNull();
