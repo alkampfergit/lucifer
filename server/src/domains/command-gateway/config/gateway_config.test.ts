@@ -77,6 +77,37 @@ describe('loadGatewayConfig', () => {
     const config = loadGatewayConfig(filePath);
     expect(config.port).toBe(3001);
   });
+
+  it('loads a valid aliases map with bash and elf entries', () => {
+    const dir = createTempDir();
+    const filePath = writeConfig(dir, {
+      aliases: {
+        build: { path: '/tmp/scripts/build.sh', type: 'bash' },
+        hello: { path: '/opt/bin/hello', type: 'elf' },
+      },
+    });
+    const config = loadGatewayConfig(filePath);
+    expect(config.aliases).toEqual({
+      build: { path: '/tmp/scripts/build.sh', type: 'bash' },
+      hello: { path: '/opt/bin/hello', type: 'elf' },
+    });
+  });
+
+  it('rejects aliases with an unknown type', () => {
+    const dir = createTempDir();
+    const filePath = writeConfig(dir, {
+      aliases: { bad: { path: '/tmp/x.sh', type: 'python' } },
+    });
+    expect(() => loadGatewayConfig(filePath)).toThrow('failed validation');
+  });
+
+  it('rejects aliases with a missing or empty path', () => {
+    const dir = createTempDir();
+    const filePath = writeConfig(dir, {
+      aliases: { bad: { path: '', type: 'bash' } },
+    });
+    expect(() => loadGatewayConfig(filePath)).toThrow('failed validation');
+  });
 });
 
 describe('getTelegramToken', () => {

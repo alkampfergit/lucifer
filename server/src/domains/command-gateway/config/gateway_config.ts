@@ -6,6 +6,17 @@ function checkOptionalType(d: Record<string, unknown>, key: string, expectedType
   return d[key] === undefined || typeof d[key] === expectedType;
 }
 
+function isAliasesConfig(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  for (const entry of Object.values(value as Record<string, unknown>)) {
+    if (typeof entry !== 'object' || entry === null) return false;
+    const e = entry as Record<string, unknown>;
+    if (typeof e.path !== 'string' || e.path.length === 0) return false;
+    if (e.type !== 'bash' && e.type !== 'elf') return false;
+  }
+  return true;
+}
+
 function isLuciferConfig(data: unknown): data is LuciferConfig {
   if (typeof data !== 'object' || data === null) return false;
   const d = data as Record<string, unknown>;
@@ -21,6 +32,7 @@ function isLuciferConfig(data: unknown): data is LuciferConfig {
   if (!checkOptionalType(d, 'adminSecretHash', 'string')) return false;
   if (!checkOptionalType(d, 'adminSecretSalt', 'string')) return false;
   if (!checkOptionalType(d, 'logFile', 'string')) return false;
+  if (d.aliases !== undefined && !isAliasesConfig(d.aliases)) return false;
   return true;
 }
 

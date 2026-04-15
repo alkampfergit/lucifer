@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
-import type { ExecutionResult } from '../types/command_types.js';
+import type { AliasesConfig, ExecutionResult } from '../types/command_types.js';
+import { resolveAlias } from './resolve_alias.js';
 import { createChildLogger } from '../../../lib/logger.js';
 
 const log = createChildLogger('executor');
@@ -14,10 +15,11 @@ export interface ExecuteOptions {
   maxOutputBytes: number;
   maxConcurrent: number;
   abortSignal?: AbortSignal;
+  aliases?: AliasesConfig;
 }
 
 export async function executeCommand(options: ExecuteOptions): Promise<ExecutionResult> {
-  const { command, requestId, cwd, timeoutMs, maxOutputBytes, maxConcurrent, abortSignal } = options;
+  const { command, requestId, cwd, timeoutMs, maxOutputBytes, maxConcurrent, abortSignal, aliases } = options;
 
   if (activeExecutions >= maxConcurrent) {
     log.warn({ requestId, active: activeExecutions, max: maxConcurrent }, 'Max concurrent executions reached');
@@ -30,11 +32,17 @@ export async function executeCommand(options: ExecuteOptions): Promise<Execution
 
   activeExecutions++;
   const startTime = Date.now();
-  log.info({ requestId, command, cwd }, 'Executing command');
+  const resolved = resolveAlias(command, aliases);
+  log.info(
+    { requestId, command, cwd, alias: resolved ? { cwd: resolved.cwd, bin: resolved.spawnCommand } : undefined },
+    'Executing command',
+  );
 
   try {
     return await new Promise<ExecutionResult>((resolve) => {
-      const child = spawn(command, { shell: true, cwd: cwd ?? process.cwd(), detached: true });
+      const child = resolved
+        ? spawn(resolved.spawnCommand, resolved.spawnArgs, { cwd: resolved.cwd, detached: true })
+        : spawn(command, { shell: true, cwd: cwd ?? process.cwd(), detached: true });
 
       let stdout = '';
       let stderr = '';

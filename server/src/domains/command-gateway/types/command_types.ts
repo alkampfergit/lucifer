@@ -85,6 +85,17 @@ export interface ApiKeysConfig {
   keys: ApiKeyConfig[];
 }
 
+export type AliasType = 'bash' | 'elf';
+
+export interface CommandAlias {
+  path: string;
+  type: AliasType;
+}
+
+export interface AliasesConfig {
+  [name: string]: CommandAlias;
+}
+
 export interface LuciferConfig {
   port: number;
   telegramChatId?: string;
@@ -98,6 +109,7 @@ export interface LuciferConfig {
   onApprovalTimeout: 'deny' | 'approve-with-warning';
   dataDir: string;
   logFile?: string;
+  aliases?: AliasesConfig;
 }
 
 export interface AuditEntry {

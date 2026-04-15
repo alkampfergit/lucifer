@@ -118,6 +118,7 @@ export function registerExecuteRoutes(deps: ExecuteRouteDeps): void {
         timeoutMs: config.executionTimeoutSeconds * 1000,
         maxOutputBytes: config.maxOutputBytes,
         maxConcurrent: config.maxConcurrentExecutions,
+        aliases: config.aliases,
       });
       auditLog.append({
         ts: new Date().toISOString(),
@@ -149,6 +150,7 @@ export function registerExecuteRoutes(deps: ExecuteRouteDeps): void {
         timeoutMs: config.executionTimeoutSeconds * 1000,
         maxOutputBytes: config.maxOutputBytes,
         maxConcurrent: config.maxConcurrentExecutions,
+        aliases: config.aliases,
       });
       auditLog.append({
         ts: new Date().toISOString(),
@@ -253,6 +255,7 @@ export function registerExecuteRoutes(deps: ExecuteRouteDeps): void {
         maxOutputBytes: config.maxOutputBytes,
         maxConcurrent: config.maxConcurrentExecutions,
         abortSignal: abortController.signal,
+        aliases: config.aliases,
       });
       auditLog.append({
         ts: new Date().toISOString(),
