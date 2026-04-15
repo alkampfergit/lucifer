@@ -22,7 +22,9 @@ describe('resolveAlias', () => {
     const resolved = resolveAlias('build', aliases);
     expect(resolved).not.toBeNull();
     expect(resolved?.spawnCommand).toBe('bash');
-    expect(resolved?.spawnArgs).toEqual(['/tmp/scripts/build.sh']);
+    // `--` ends bash option parsing so a path-looking-like-a-flag can never
+    // be misinterpreted as an option.
+    expect(resolved?.spawnArgs).toEqual(['--', '/tmp/scripts/build.sh']);
     expect(resolved?.cwd).toBe('/tmp/scripts');
   });
 
@@ -43,7 +45,7 @@ describe('resolveAlias', () => {
     };
     const resolved = resolveAlias('local', aliases);
     const expectedPath = resolvePath('scripts/local.sh');
-    expect(resolved?.spawnArgs).toEqual([expectedPath]);
+    expect(resolved?.spawnArgs).toEqual(['--', expectedPath]);
     expect(resolved?.cwd).toBe(dirname(expectedPath));
   });
 

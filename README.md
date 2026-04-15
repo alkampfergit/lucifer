@@ -73,9 +73,15 @@ execution falls back to the normal shell path.
 
 Supported `type` values:
 
-- `bash` — launched via `bash <path>`.
+- `bash` — launched via `bash -- <path>`. The `--` prevents a path that
+  happens to start with `-` from being interpreted as a bash option.
 - `elf` — launched directly (must be executable and on a filesystem without
   `noexec`).
+
+Relative alias `path` values are resolved against the **config file's
+directory**, not the daemon's working directory. So `"./scripts/deploy.sh"`
+in `config/lucifer.json` always means `config/scripts/deploy.sh` regardless
+of where the server was started from. Absolute paths are used as-is.
 
 Command rules still apply to the alias name as sent by the caller (so you can
 e.g. put `{ "prefix": "deploy", "action": "manual_approve" }` in

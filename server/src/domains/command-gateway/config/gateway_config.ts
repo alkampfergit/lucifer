@@ -1,5 +1,5 @@
-import { resolve } from 'node:path';
-import type { LuciferConfig } from '../types/command_types.js';
+import { dirname, resolve } from 'node:path';
+import type { AliasesConfig, LuciferConfig } from '../types/command_types.js';
 import { loadJsonConfig } from '../../../lib/json_config_loader.js';
 
 function checkOptionalType(d: Record<string, unknown>, key: string, expectedType: string): boolean {
@@ -48,6 +48,19 @@ const defaults: LuciferConfig = {
   dataDir: './data',
 };
 
+/**
+ * Resolve each alias `path` against the config file's directory so relative
+ * paths in `lucifer.json` are stable regardless of the daemon's working
+ * directory. Absolute paths are returned unchanged.
+ */
+function normalizeAliasPaths(aliases: AliasesConfig, configDir: string): AliasesConfig {
+  const out: AliasesConfig = {};
+  for (const [name, alias] of Object.entries(aliases)) {
+    out[name] = { ...alias, path: resolve(configDir, alias.path) };
+  }
+  return out;
+}
+
 export function loadGatewayConfig(configPath?: string): LuciferConfig {
   if (!configPath) {
     return { ...defaults };
@@ -55,13 +68,20 @@ export function loadGatewayConfig(configPath?: string): LuciferConfig {
 
   const resolvedPath = resolve(configPath);
   const loaded = loadJsonConfig(resolvedPath, isLuciferConfig);
+  const configDir = dirname(resolvedPath);
 
-  return {
+  const result: LuciferConfig = {
     ...defaults,
     ...loaded,
     port: loaded.port ?? defaults.port,
     dataDir: loaded.dataDir ?? defaults.dataDir,
   };
+  // Only set `aliases` when present so the config shape for
+  // alias-less projects stays identical to pre-feature behavior.
+  if (loaded.aliases) {
+    result.aliases = normalizeAliasPaths(loaded.aliases, configDir);
+  }
+  return result;
 }
 
 export function getTelegramToken(): string {

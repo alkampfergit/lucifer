@@ -32,7 +32,10 @@ export function resolveAlias(
   const cwd = dirname(absolutePath);
 
   if (alias.type === 'bash') {
-    return { spawnCommand: 'bash', spawnArgs: [absolutePath], cwd };
+    // `--` ends bash option parsing so a script path can never be
+    // misinterpreted as a flag. `resolvePath` always returns an absolute path,
+    // which makes this defense-in-depth rather than load-bearing, but cheap.
+    return { spawnCommand: 'bash', spawnArgs: ['--', absolutePath], cwd };
   }
   // 'elf': execute the file directly
   return { spawnCommand: absolutePath, spawnArgs: [], cwd };

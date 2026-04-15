@@ -137,4 +137,42 @@ describe('executeCommand', () => {
     expect(result.status).toBe('completed');
     expect(result.stdout?.trim()).toBe('fallback');
   });
+
+  it('fails cleanly when an elf alias points to a missing file', async () => {
+    const missingPath = join(tmpdir(), `lucifer-missing-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const result = await executeCommand({
+      command: 'ghost',
+      requestId: 'alias-elf-missing',
+      timeoutMs: 5000,
+      maxOutputBytes: 1024,
+      maxConcurrent: 5,
+      aliases: {
+        ghost: { path: missingPath, type: 'elf' },
+      },
+    });
+    expect(result.status).toBe('failed');
+    expect(result.error).toBeDefined();
+    // spawn surfaces ENOENT via child 'error' event; the executor wraps it.
+    expect(result.error).toMatch(/Failed to execute/);
+  });
+
+  it('returns a non-zero exit when a bash alias points to a missing script', async () => {
+    // bash itself runs; the missing script produces a non-zero exit code and
+    // stderr. This exercises the bash-launcher branch's error surface rather
+    // than the spawn-level 'error' event.
+    const missingPath = join(tmpdir(), `lucifer-missing-${Date.now()}-${Math.random().toString(36).slice(2)}.sh`);
+    const result = await executeCommand({
+      command: 'ghost',
+      requestId: 'alias-bash-missing',
+      timeoutMs: 5000,
+      maxOutputBytes: 1024,
+      maxConcurrent: 5,
+      aliases: {
+        ghost: { path: missingPath, type: 'bash' },
+      },
+    });
+    expect(result.status).toBe('failed');
+    expect(result.exitCode).toBeGreaterThan(0);
+    expect(result.stderr ?? '').toMatch(/No such file|cannot|not found/i);
+  });
 });

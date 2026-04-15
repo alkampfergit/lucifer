@@ -274,7 +274,7 @@ Add an optional `aliases` map to `lucifer.json` of the shape `{ [name]: { path, 
 
 - **Resolution point**: service layer (`resolveAlias` in `execute_command.ts`). The HTTP payload is unchanged; the API layer does not need to know about aliases.
 - **Match semantics (v1)**: exact full-string match. `"deploy"` invokes the alias; `"deploy --dry-run"` does not.
-- **Execution**: `spawn` with `shell: false`. `bash` aliases launch via `bash <path>`; `elf` aliases execute the path directly. The script's parent directory becomes the child `cwd`, and any caller-supplied `cwd` is ignored.
+- **Execution**: `spawn` with `shell: false`. `bash` aliases launch via `bash -- <path>` (the `--` ends option parsing); `elf` aliases execute the path directly. The script's parent directory becomes the child `cwd`, and any caller-supplied `cwd` is ignored. Relative alias paths in `lucifer.json` are normalized against the config file's directory at load time.
 - **Rule matching**: `command-rules.json` continues to match against the raw command string sent by the caller — i.e. the alias *name*, not the resolved script path.
 - **Fallback**: no alias match (or no `aliases` configured) → existing shell-based path unchanged.
 

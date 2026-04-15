@@ -108,6 +108,24 @@ describe('loadGatewayConfig', () => {
     });
     expect(() => loadGatewayConfig(filePath)).toThrow('failed validation');
   });
+
+  it('preserves absolute alias paths unchanged', () => {
+    const dir = createTempDir();
+    const filePath = writeConfig(dir, {
+      aliases: { deploy: { path: '/opt/ops/deploy.sh', type: 'bash' } },
+    });
+    const config = loadGatewayConfig(filePath);
+    expect(config.aliases?.deploy.path).toBe('/opt/ops/deploy.sh');
+  });
+
+  it('normalizes relative alias paths against the config file directory', () => {
+    const dir = createTempDir();
+    const filePath = writeConfig(dir, {
+      aliases: { deploy: { path: './scripts/deploy.sh', type: 'bash' } },
+    });
+    const config = loadGatewayConfig(filePath);
+    expect(config.aliases?.deploy.path).toBe(join(dir, 'scripts', 'deploy.sh'));
+  });
 });
 
 describe('getTelegramToken', () => {

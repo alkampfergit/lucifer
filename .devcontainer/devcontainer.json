@@ -1,6 +1,10 @@
 {
     "name": "Node.js CLI Development",
     "image": "mcr.microsoft.com/devcontainers/typescript-node:22",
+    "runArgs": [
+        "--security-opt", "seccomp=unconfined",
+        "--security-opt", "apparmor=unconfined"
+    ],
     "customizations": {
         "vscode": {
             "extensions": [
