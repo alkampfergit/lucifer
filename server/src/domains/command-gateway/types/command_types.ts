@@ -125,6 +125,11 @@ export interface AuditEntry {
   exitCode?: number;
   durationMs?: number;
   error?: string;
+  // When the command resolved to a configured alias, these record what
+  // actually ran on disk. Absent when the execution path is the shell
+  // fallback.
+  aliasPath?: string;
+  aliasType?: AliasType;
 }
 
 export interface ErrorResponse {

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { dirname, resolve as resolvePath } from 'node:path';
 import type { AliasesConfig } from '../types/command_types.js';
-import { resolveAlias } from './resolve_alias.js';
+import { findAliasArgsBypass, resolveAlias } from './resolve_alias.js';
 
 describe('resolveAlias', () => {
   it('returns null when aliases is undefined', () => {
@@ -21,6 +21,8 @@ describe('resolveAlias', () => {
     };
     const resolved = resolveAlias('build', aliases);
     expect(resolved).not.toBeNull();
+    expect(resolved?.path).toBe('/tmp/scripts/build.sh');
+    expect(resolved?.type).toBe('bash');
     expect(resolved?.spawnCommand).toBe('bash');
     // `--` ends bash option parsing so a path-looking-like-a-flag can never
     // be misinterpreted as an option.
@@ -34,6 +36,8 @@ describe('resolveAlias', () => {
     };
     const resolved = resolveAlias('hello', aliases);
     expect(resolved).not.toBeNull();
+    expect(resolved?.path).toBe('/opt/bin/hello');
+    expect(resolved?.type).toBe('elf');
     expect(resolved?.spawnCommand).toBe('/opt/bin/hello');
     expect(resolved?.spawnArgs).toEqual([]);
     expect(resolved?.cwd).toBe('/opt/bin');
@@ -45,15 +49,76 @@ describe('resolveAlias', () => {
     };
     const resolved = resolveAlias('local', aliases);
     const expectedPath = resolvePath('scripts/local.sh');
+    expect(resolved?.path).toBe(expectedPath);
     expect(resolved?.spawnArgs).toEqual(['--', expectedPath]);
     expect(resolved?.cwd).toBe(dirname(expectedPath));
   });
 
   it('does not match when the command has extra tokens', () => {
-    // v1 is exact-string match; "build --verbose" is not the alias "build".
+    // Exact-string match; "build --verbose" is not the alias "build".
     const aliases: AliasesConfig = {
       build: { path: '/tmp/scripts/build.sh', type: 'bash' },
     };
     expect(resolveAlias('build --verbose', aliases)).toBeNull();
+  });
+
+  it('tolerates leading/trailing whitespace on the command', () => {
+    const aliases: AliasesConfig = {
+      build: { path: '/tmp/scripts/build.sh', type: 'bash' },
+    };
+    expect(resolveAlias('  build  ', aliases)).not.toBeNull();
+  });
+
+  it('does not match prototype properties like "constructor" or "toString"', () => {
+    // Without an own-property guard `aliases['constructor']` would return
+    // Object's constructor and crash the alias spawn.
+    const aliases: AliasesConfig = {
+      build: { path: '/tmp/scripts/build.sh', type: 'bash' },
+    };
+    expect(resolveAlias('constructor', aliases)).toBeNull();
+    expect(resolveAlias('toString', aliases)).toBeNull();
+  });
+});
+
+describe('findAliasArgsBypass', () => {
+  const aliases: AliasesConfig = {
+    deploy: { path: '/opt/deploy.sh', type: 'bash' },
+  };
+
+  it('returns null when aliases is undefined', () => {
+    expect(findAliasArgsBypass('deploy --dry-run', undefined)).toBeNull();
+  });
+
+  it('returns null when the first word is not a configured alias', () => {
+    expect(findAliasArgsBypass('echo hi', aliases)).toBeNull();
+  });
+
+  it('returns null for an exact alias invocation', () => {
+    expect(findAliasArgsBypass('deploy', aliases)).toBeNull();
+  });
+
+  it('returns null for an exact alias invocation with surrounding whitespace', () => {
+    expect(findAliasArgsBypass('  deploy  ', aliases)).toBeNull();
+  });
+
+  it('flags "<alias> --arg" as a bypass', () => {
+    expect(findAliasArgsBypass('deploy --dry-run', aliases)).toBe('deploy');
+  });
+
+  it('flags shell-metacharacter smuggling that starts with an alias name', () => {
+    expect(findAliasArgsBypass('deploy; rm -rf /', aliases)).toBe('deploy');
+    expect(findAliasArgsBypass('deploy|cat /etc/passwd', aliases)).toBe('deploy');
+    expect(findAliasArgsBypass('deploy$(whoami)', aliases)).toBe('deploy');
+    expect(findAliasArgsBypass('deploy`id`', aliases)).toBe('deploy');
+  });
+
+  it('does not false-positive on a longer alphanumeric word starting with the alias name', () => {
+    // `deployment-status` is a different word, not the alias `deploy` followed
+    // by an argument. The leading-identifier regex captures the whole word.
+    expect(findAliasArgsBypass('deployment-status', aliases)).toBeNull();
+  });
+
+  it('does not match prototype properties', () => {
+    expect(findAliasArgsBypass('constructor --arg', aliases)).toBeNull();
   });
 });

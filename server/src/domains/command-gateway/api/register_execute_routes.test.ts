@@ -450,3 +450,54 @@ describe('MockApprovalChannel integration', () => {
     expect(mockChannel.pendingApprovals.size).toBe(0);
   });
 });
+
+describe('POST /api/v1/execute alias bypass and execution', () => {
+  let aliasCtx: TestAppContext;
+
+  beforeAll(async () => {
+    aliasCtx = createTestAppContext('alias', {
+      // A prefix rule that would approve any command starting with "deploy" — this is the
+      // vector the bypass check must close: without it, "deploy --flag" would fall through
+      // to the shell and inherit auto-approval via this prefix match.
+      extraRules: [{ prefix: 'deploy', action: 'always_approve' }],
+      extraAliases: { deploy: { path: '/usr/bin/true', type: 'elf' } },
+    });
+    await aliasCtx.start();
+  });
+
+  afterAll(async () => {
+    await aliasCtx.stop();
+  });
+
+  it('returns 403 ALIAS_ARGS_NOT_SUPPORTED when alias is invoked with extra arguments', async () => {
+    const res = await request(aliasCtx.app)
+      .post('/api/v1/execute')
+      .set('x-api-key', aliasCtx.testKey)
+      .send({ command: 'deploy --dry-run' });
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('ALIAS_ARGS_NOT_SUPPORTED');
+    expect(res.body.retryable).toBe(false);
+  });
+
+  it('returns 403 ALIAS_ARGS_NOT_SUPPORTED for shell-metacharacter smuggling via alias name', async () => {
+    const res = await request(aliasCtx.app)
+      .post('/api/v1/execute')
+      .set('x-api-key', aliasCtx.testKey)
+      .send({ command: 'deploy; rm -rf /' });
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('ALIAS_ARGS_NOT_SUPPORTED');
+  });
+
+  it('executes successfully when the alias is invoked exactly', async () => {
+    const res = await request(aliasCtx.app)
+      .post('/api/v1/execute')
+      .set('x-api-key', aliasCtx.testKey)
+      .send({ command: 'deploy' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('completed');
+    expect(res.body.exitCode).toBe(0);
+  });
+});

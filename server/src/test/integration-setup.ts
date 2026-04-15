@@ -15,6 +15,7 @@ export function createTestAppContext(
   label: string,
   options?: {
     extraRules?: Array<{ prefix: string; action: string }>;
+    extraAliases?: Record<string, { path: string; type: 'bash' | 'elf' }>;
   },
 ): TestAppContext {
   const testDir = join(process.cwd(), `.test-${label}`);
@@ -39,6 +40,7 @@ export function createTestAppContext(
     rateLimitPerMinute: 100,
     onApprovalTimeout: 'deny',
     dataDir: '../data',
+    ...(options?.extraAliases ? { aliases: options.extraAliases } : {}),
   }));
 
   writeFileSync(join(configDir, 'api-keys.json'), JSON.stringify({

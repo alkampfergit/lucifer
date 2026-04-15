@@ -7,6 +7,7 @@ import type { ApiKeyStore, CommandRulesStore, ApprovalStore, PendingRequestStore
 import { authenticateRequest, createRateLimiter } from '../service/authenticate_request.js';
 import { analyzeCommandRisk } from '../service/analyze_command_risk.js';
 import { executeCommand } from '../service/execute_command.js';
+import { findAliasArgsBypass, resolveAlias } from '../service/resolve_alias.js';
 import { createChildLogger } from '../../../lib/logger.js';
 
 const log = createChildLogger('routes');
@@ -89,6 +90,38 @@ export function registerExecuteRoutes(deps: ExecuteRouteDeps): void {
       ip,
     });
 
+    // Reject commands that start with an alias name but are not an exact
+    // alias invocation. Without this check, `"<alias> --arg"` or
+    // `"<alias>; rm -rf /"` would fail alias exact-match, fall through to the
+    // shell, and still be auto-approved by any prefix-based command rule that
+    // matches the alias name — shadow-bypassing the alias's shell-free
+    // execution guarantee. See ADR-009.
+    const aliasBypass = findAliasArgsBypass(command, config.aliases);
+    if (aliasBypass) {
+      auditLog.append({
+        ts: new Date().toISOString(),
+        type: 'denied',
+        requestId,
+        command,
+        error: `alias '${aliasBypass}' does not accept arguments`,
+      });
+      res.status(403).json({
+        code: 'ALIAS_ARGS_NOT_SUPPORTED',
+        message: `Alias '${aliasBypass}' does not accept arguments in this version. Send '${aliasBypass}' exactly.`,
+        retryable: false,
+      } satisfies ErrorResponse);
+      return;
+    }
+
+    // Resolve the alias once up front so audit entries for rule decisions,
+    // approval checks, and execution all carry `aliasPath`/`aliasType` when
+    // the command runs as an alias. `resolveAlias` is pure and cheap; the
+    // executor does its own lookup to stay self-contained.
+    const resolvedAlias = resolveAlias(command, config.aliases);
+    const aliasAudit = resolvedAlias
+      ? { aliasPath: resolvedAlias.path, aliasType: resolvedAlias.type }
+      : {};
+
     // Match against command rules
     const ruleMatch = commandRulesStore.matchRule(command);
     auditLog.append({
@@ -100,7 +133,7 @@ export function registerExecuteRoutes(deps: ExecuteRouteDeps): void {
     });
 
     if (ruleMatch.action === 'always_deny') {
-      auditLog.append({ ts: new Date().toISOString(), type: 'denied', requestId, command });
+      auditLog.append({ ts: new Date().toISOString(), type: 'denied', requestId, command, ...aliasAudit });
       res.status(403).json({
         code: 'COMMAND_DENIED',
         message: 'Command is not permitted by policy',
@@ -110,7 +143,7 @@ export function registerExecuteRoutes(deps: ExecuteRouteDeps): void {
     }
 
     if (ruleMatch.action === 'always_approve') {
-      auditLog.append({ ts: new Date().toISOString(), type: 'approved', requestId, command, duration: 'policy' });
+      auditLog.append({ ts: new Date().toISOString(), type: 'approved', requestId, command, duration: 'policy', ...aliasAudit });
       const result = await executeCommand({
         command,
         requestId,
@@ -128,6 +161,7 @@ export function registerExecuteRoutes(deps: ExecuteRouteDeps): void {
         exitCode: result.exitCode,
         durationMs: result.durationMs,
         error: result.error,
+        ...aliasAudit,
       });
       res.json(result);
       return;
@@ -142,6 +176,7 @@ export function registerExecuteRoutes(deps: ExecuteRouteDeps): void {
         requestId,
         command,
         duration: 'cached',
+        ...aliasAudit,
       });
       const result = await executeCommand({
         command,
@@ -160,6 +195,7 @@ export function registerExecuteRoutes(deps: ExecuteRouteDeps): void {
         exitCode: result.exitCode,
         durationMs: result.durationMs,
         error: result.error,
+        ...aliasAudit,
       });
       res.json(result);
       return;
@@ -265,6 +301,7 @@ export function registerExecuteRoutes(deps: ExecuteRouteDeps): void {
         exitCode: result.exitCode,
         durationMs: result.durationMs,
         error: result.error,
+        ...aliasAudit,
       });
       res.json(result);
     } catch (err) {
