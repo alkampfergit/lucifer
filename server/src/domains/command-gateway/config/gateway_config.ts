@@ -17,21 +17,24 @@ function isAliasesConfig(value: unknown): boolean {
   return true;
 }
 
+const optionalNumberKeys = [
+  'port', 'approvalTimeoutSeconds', 'executionTimeoutSeconds',
+  'maxConcurrentExecutions', 'maxOutputBytes', 'rateLimitPerMinute',
+] as const;
+
+const optionalStringKeys = [
+  'dataDir', 'telegramChatId', 'adminSecretHash', 'adminSecretSalt', 'logFile',
+] as const;
+
 function isLuciferConfig(data: unknown): data is LuciferConfig {
   if (typeof data !== 'object' || data === null) return false;
   const d = data as Record<string, unknown>;
-  if (!checkOptionalType(d, 'port', 'number')) return false;
-  if (!checkOptionalType(d, 'approvalTimeoutSeconds', 'number')) return false;
-  if (!checkOptionalType(d, 'executionTimeoutSeconds', 'number')) return false;
-  if (!checkOptionalType(d, 'maxConcurrentExecutions', 'number')) return false;
-  if (!checkOptionalType(d, 'maxOutputBytes', 'number')) return false;
-  if (!checkOptionalType(d, 'rateLimitPerMinute', 'number')) return false;
+
+  const numbersValid = optionalNumberKeys.every((k) => checkOptionalType(d, k, 'number'));
+  const stringsValid = optionalStringKeys.every((k) => checkOptionalType(d, k, 'string'));
+  if (!numbersValid || !stringsValid) return false;
+
   if (d.onApprovalTimeout !== undefined && d.onApprovalTimeout !== 'deny' && d.onApprovalTimeout !== 'approve-with-warning') return false;
-  if (!checkOptionalType(d, 'dataDir', 'string')) return false;
-  if (!checkOptionalType(d, 'telegramChatId', 'string')) return false;
-  if (!checkOptionalType(d, 'adminSecretHash', 'string')) return false;
-  if (!checkOptionalType(d, 'adminSecretSalt', 'string')) return false;
-  if (!checkOptionalType(d, 'logFile', 'string')) return false;
   if (d.aliases !== undefined && !isAliasesConfig(d.aliases)) return false;
   return true;
 }
