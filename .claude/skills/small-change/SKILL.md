@@ -87,6 +87,9 @@ Output: a one-line change statement plus the list of files you expect to edit.
 3. Decide doc strategy:
    - Behavior visible at an API or config surface → update the relevant doc
      in the same PR.
+   - Behavior visible in a documented user workflow or acceptance path →
+     update the matching section under `docs/specs/journeys/` and the root
+     index `docs/specs/USER-JOURNEYS.md`.
    - Pure internal tweak invisible outside the module → no doc change needed.
 4. Decide ADR strategy:
    - A new decision that future code must follow → write a minimal ADR in
@@ -139,6 +142,8 @@ not a suggestion. Pay particular attention to:
 Then verify docs are still accurate:
 - Did the change alter a documented command, endpoint, config field, or
   error surface? Update the owning doc.
+- Did the change alter a documented user-visible workflow? Update the owning
+  journey section under `docs/specs/journeys/` and the root journeys index.
 - Did the change materially affect a domain's risk profile? Update
   `docs/quality/QUALITY-GRADES.md`.
 - Did a quoted example in docs reference the old behavior? Fix it.

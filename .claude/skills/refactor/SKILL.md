@@ -75,6 +75,8 @@ Common orders of operation:
 2. Compare the test count. It should stay equal or increase, never drop.
 3. Run linter and structural checks.
 4. If any existing test changed, justify it explicitly in the PR description.
+5. Confirm the refactor did not change documented user journeys or acceptance
+   criteria. If it did, this is not a pure refactor and should be re-scoped.
 
 ### Step 5: Update Quality Grade
 

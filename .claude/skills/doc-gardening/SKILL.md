@@ -44,31 +44,38 @@ these paths.
 - [ ] The "Where to Look" table matches the actual `docs/` structure.
 - [ ] The "Last verified" date is within the last 2 weeks.
 
-### 2. Architecture Docs Accuracy
+### 2. User Journey Docs Accuracy
+
+- [ ] `docs/specs/USER-JOURNEYS.md` links only to section files that exist.
+- [ ] Every file under `docs/specs/journeys/` is linked from the root journeys index.
+- [ ] Root journey totals match the sums from the section files.
+- [ ] Journey guidance still matches the documented workflow for adding or changing behavior.
+
+### 3. Architecture Docs Accuracy
 
 - [ ] The domain table in `ARCHITECTURE.md` matches actual `src/domains/` directories.
 - [ ] The infrastructure table reflects the current tech stack.
 - [ ] `DEPENDENCY-RULES.md` matches what the linter actually enforces.
 - [ ] `DOMAIN-BOUNDARIES.md` lists the cross-domain contracts that exist in code.
 
-### 3. Quality Grades Currency
+### 4. Quality Grades Currency
 
 - [ ] Every domain in the codebase has a row in `QUALITY-GRADES.md`.
 - [ ] No domain has a "Last Reviewed" date older than 1 month.
 - [ ] Test coverage percentages match actual CI reports.
 
-### 4. Glossary Completeness
+### 5. Glossary Completeness
 
 - [ ] Every domain-specific type name in the codebase appears in `GLOSSARY.md`.
 - [ ] No glossary terms refer to types or concepts that no longer exist.
 
-### 5. ADR Completeness
+### 6. ADR Completeness
 
 - [ ] Every significant structural pattern in the code has a corresponding ADR.
 - [ ] No ADRs reference technologies or patterns that have been removed.
 - [ ] Superseded ADRs are marked as such with a pointer to the replacement.
 
-### 6. Code Comment Hygiene
+### 7. Code Comment Hygiene
 
 - [ ] No TODO comments without issue IDs.
 - [ ] No references to removed files or renamed modules in comments.

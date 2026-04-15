@@ -38,6 +38,8 @@
 
 - [ ] Public APIs have doc comments.
 - [ ] If behavior changed, relevant docs are updated.
+- [ ] If user-visible workflow behavior changed, `docs/specs/USER-JOURNEYS.md`
+  and the owning file under `docs/specs/journeys/` are updated.
 - [ ] If an architectural decision was made, an ADR exists.
 - [ ] QUALITY-GRADES.md reflects any significant quality changes.
 

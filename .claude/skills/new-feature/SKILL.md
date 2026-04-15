@@ -15,12 +15,15 @@ metadata:
 > Use this skill when implementing a new feature from a task/prompt description.
 > Follow every step in order. Do not skip steps.
 
+Use GStack office-hours to help you design the modification, then use this prompt to refine what we want to design.
+
 ## Prerequisites
 
 Before starting, load:
 - `docs/architecture/ARCHITECTURE.md` — identify which domain(s) are affected.
 - `docs/quality/QUALITY-GRADES.md` — check the health of affected areas.
 - `docs/design/PATTERNS.md` — review preferred patterns.
+- `docs/specs/USER-JOURNEYS.md` — identify the owning user journey section.
 
 ## Workflow
 
@@ -33,6 +36,7 @@ Read the task description and answer these questions:
 3. **Does this feature cross domain boundaries?** If yes, check DOMAIN-BOUNDARIES.md.
 4. **Are there any ambiguities?** If yes, list them and ask for clarification before proceeding.
 5. **Does this require a new ADR?** (New technology, new pattern, new boundary = yes.)
+6. **Which user journey section owns this feature?** Pick the matching file under `docs/specs/journeys/`.
 
 Write your analysis as a brief comment before proceeding.
 
@@ -68,9 +72,10 @@ If the feature involves data persistence:
 
 ### Step 6: Update Documentation
 
-1. If new domain terms were introduced, add them to GLOSSARY.md.
-2. If the feature changes domain boundaries or adds dependencies, update the relevant architecture docs.
-3. If a new decision was made, add an ADR.
+1. Add or update the feature's stories in `docs/specs/USER-JOURNEYS.md` and the matching section file under `docs/specs/journeys/` before considering the feature done.
+2. If new domain terms were introduced, add them to GLOSSARY.md.
+3. If the feature changes domain boundaries or adds dependencies, update the relevant architecture docs.
+4. If a new decision was made, add an ADR.
 
 ### Step 7: Validate
 

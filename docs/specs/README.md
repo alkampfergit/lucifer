@@ -9,6 +9,7 @@ implementation in detail. Specs should stay short, factual, and tied to code.
 
 | Spec | Scope |
 |---|---|
+| [USER-JOURNEYS.md](USER-JOURNEYS.md) | Root journey map and section index for all user journeys |
 | [command-execution.md](command-execution.md) | Execute API, request lifecycle, and result states |
 | [approval-channels.md](approval-channels.md) | Telegram, web admin, auto-approve, and cached approvals |
 | [operator-workflows.md](operator-workflows.md) | Init, pairing, logging, stats, and runtime config |
@@ -18,4 +19,6 @@ implementation in detail. Specs should stay short, factual, and tied to code.
 
 - Keep each spec short.
 - Prefer behavior and contracts over implementation trivia.
+- Treat `USER-JOURNEYS.md` as the navigation root for user-facing behavior and
+  keep detailed journey content in `docs/specs/journeys/`.
 - Update the relevant spec in the same change when a feature behavior changes.

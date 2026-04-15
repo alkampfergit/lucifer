@@ -52,6 +52,7 @@
 | Preferred patterns and anti-patterns | [docs/design/PATTERNS.md](docs/design/PATTERNS.md) |
 | Code standards and style | [docs/quality/CODE-STANDARDS.md](docs/quality/CODE-STANDARDS.md) |
 | Quality grades and risk areas | [docs/quality/QUALITY-GRADES.md](docs/quality/QUALITY-GRADES.md) |
+| User Journeys | [docs/specs/USER-JOURNEYS.md](docs/specs/USER-JOURNEYS.md) |
 | Task workflow | [docs/workflows/TASK-LIFECYCLE.md](docs/workflows/TASK-LIFECYCLE.md) |
 | Review checklist | [docs/workflows/REVIEW-CHECKLIST.md](docs/workflows/REVIEW-CHECKLIST.md) |
 | Terminology | [docs/context/GLOSSARY.md](docs/context/GLOSSARY.md) |
@@ -67,7 +68,7 @@
 3. Write a plan before changes that cross domains or touch multiple files.
 4. Validate changes with `npm run lint`, `npm run test`, and `npm run build`.
 5. Self-review against the review checklist before considering the task complete.
-
+6. Journey-level specifications for the whole software start in [docs/specs/USER-JOURNEYS.md](docs/specs/USER-JOURNEYS.md), with detailed sections under `docs/specs/journeys/`
 
 ## gstack
 
@@ -131,4 +132,4 @@ Key routing rules:
 - Architecture review → invoke plan-eng-review
 
 ---
-*Last verified: 2026-04-11. If this file feels stale, run the `doc-gardening` skill.*
+*Last verified: 2026-04-15. If this file feels stale, run the `doc-gardening` skill.*

@@ -19,7 +19,8 @@ Actions:
 3. Identify which domain(s) and layer(s) are affected.
 4. Load the relevant architecture and design docs for those areas.
 5. Check the quality grade of the affected area.
-6. Identify any ambiguities. If the task is unclear, ask — don't guess.
+6. For user-visible behavior, identify the owning user journey in `docs/specs/USER-JOURNEYS.md` and its matching section file under `docs/specs/journeys/`.
+7. Identify any ambiguities. If the task is unclear, ask — don't guess.
 
 **Output**: A mental model of what needs to change and where.
 
@@ -43,6 +44,9 @@ Actions:
    building block that unblocks the next step and scope this task to that
    block only. Deliver building blocks depth-first rather than attempting
    the entire goal at once.
+6. If behavior changes for a user-visible workflow, plan the matching updates
+   to `docs/specs/USER-JOURNEYS.md` and the owning file under
+   `docs/specs/journeys/`.
 
 **Output**: A concrete plan that can be verified before code is written.
 
@@ -88,6 +92,8 @@ Actions (agent self-review):
    plan cascades into many bad lines of code. When reviewing multi-phase work,
    verify the research and planning artifacts first — catching errors there
    prevents far more rework than catching them in implementation code.
+7. If the task touched a user-visible workflow, verify the journey root and the
+   owning section file still describe the implemented behavior accurately.
 
 **Output**: A PR ready for human review (if required) or auto-merge.
 

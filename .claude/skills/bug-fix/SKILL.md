@@ -23,6 +23,7 @@ Reproduce before you fix. Do not guess at the cause or patch the symptom first.
 Review these docs if you need context about the affected area:
 - `docs/architecture/ARCHITECTURE.md`
 - `docs/quality/QUALITY-GRADES.md`
+- `docs/specs/USER-JOURNEYS.md`
 - `docs/workflows/REVIEW-CHECKLIST.md`
 
 ## Workflow
@@ -34,6 +35,7 @@ Extract from the report:
 2. **Actual behavior**: What happens instead?
 3. **Reproduction steps**: How do you trigger the bug?
 4. **Context**: Which domain, endpoint, input, or workflow is affected?
+5. **Journey mapping**: Which existing user journey or story should cover this behavior?
 
 If any of these are missing, ask for clarification before proceeding.
 
@@ -74,6 +76,9 @@ Beyond the reproduction test, add:
 - Tests for related edge cases the bug exposed.
 - A linter rule or structural test when the bug came from a missing invariant
   that should be enforced mechanically.
+- A documentation update to the matching file under `docs/specs/journeys/`
+  and `docs/specs/USER-JOURNEYS.md` if the bug exposed missing or inaccurate
+  journey coverage.
 
 ### Step 6: Validate and Submit
 

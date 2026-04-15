@@ -250,3 +250,46 @@ the `/api/health` endpoint and the server-delivered admin approval UI.
 
 - **Keep the frontend as a placeholder**: Rejected because it was already drifting into misleading template code
 - **Rewrite the admin approval UI into React immediately**: Rejected because there is no current product requirement for that extra surface
+
+---
+
+## ADR-009: Command aliases resolved at execution time, rule-matched on the alias name
+
+**Date**: 2026-04-15
+**Status**: Accepted
+**Deciders**: alkampfergit
+
+### Context
+
+Operators wanted a way to register short names in `lucifer.json` that point at scripts or executables on disk, so that `POST /api/v1/execute` can launch them without involving a shell and with a predictable working directory.
+
+Two design axes needed a decision:
+
+1. **Where does alias resolution happen?** In the API layer before rule matching, or in the service layer at execution time.
+2. **What does `command-rules.json` match against for an alias invocation?** The alias name as sent by the caller, or the resolved script path.
+
+### Decision
+
+Add an optional `aliases` map to `lucifer.json` of the shape `{ [name]: { path, type } }`, where `type` is `"bash"` or `"elf"`.
+
+- **Resolution point**: service layer (`resolveAlias` in `execute_command.ts`). The HTTP payload is unchanged; the API layer does not need to know about aliases.
+- **Match semantics (v1)**: exact full-string match. `"deploy"` invokes the alias; `"deploy --dry-run"` does not.
+- **Execution**: `spawn` with `shell: false`. `bash` aliases launch via `bash <path>`; `elf` aliases execute the path directly. The script's parent directory becomes the child `cwd`, and any caller-supplied `cwd` is ignored.
+- **Rule matching**: `command-rules.json` continues to match against the raw command string sent by the caller — i.e. the alias *name*, not the resolved script path.
+- **Fallback**: no alias match (or no `aliases` configured) → existing shell-based path unchanged.
+
+### Consequences
+
+- (+) Shell-injection-free: shell metacharacters inside an alias `path` are never interpreted.
+- (+) Rule authoring is unchanged — operators gate aliases the same way they gate any other command.
+- (+) Opt-in: no impact on callers or configs that don't use aliases.
+- (-) Exact-string match means `"<alias> --flag"` falls through to the shell and is usually denied by policy. Surprising for operators used to shell-alias semantics. Documented in README.
+- (-) Rules cannot target the resolved script path. Acceptable because the alias admin and the rule admin are the same role.
+- (-) Caller-supplied `cwd` is silently dropped for alias invocations. Documented, not logged.
+
+### Alternatives Considered
+
+- **Resolve aliases in the API layer and match rules against the resolved script path**. Rejected: pushes filesystem paths into the rule engine and makes a typo in an alias path silently shift rule applicability. Matching on the caller-provided name is simpler and less surprising.
+- **Dedicated alias endpoint (`POST /api/v1/alias/:name`)**. Rejected: splits audit, approval, and rule flows across two endpoints. Keeping one `/execute` endpoint means alias and non-alias commands share identical machinery.
+- **More alias types (`python`, `node`, custom interpreter templates)**. Deferred. Two types cover the v1 need; adding more is additive.
+- **First-token match with argument passthrough** (`"deploy --dry-run"` → alias `deploy` with argv `["--dry-run"]`). Deferred: requires a separate decision on how to tokenize the remainder of the command string (naive whitespace vs shell-style vs an API change), and changes the behavior of inputs that currently fall through to the shell.
