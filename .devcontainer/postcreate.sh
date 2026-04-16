@@ -90,3 +90,46 @@ echo "  Indexing repository..."
 tokensave sync || true
 
 echo "  tokensave setup complete."
+
+# Install Homebrew and rtk
+append_if_missing() {
+    local line="$1"
+    local file="$2"
+
+    touch "$file"
+    if ! grep -Fqx "$line" "$file"; then
+        echo "$line" >>"$file"
+    fi
+}
+
+if ! command -v brew >/dev/null 2>&1; then
+    echo "Installing Homebrew..."
+    NONINTERACTIVE=1 bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+else
+    echo "Homebrew already installed, skipping."
+fi
+
+if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then
+    BREW_BIN="/home/linuxbrew/.linuxbrew/bin/brew"
+elif [ -x /opt/homebrew/bin/brew ]; then
+    BREW_BIN="/opt/homebrew/bin/brew"
+else
+    BREW_BIN=""
+fi
+
+if [ -n "$BREW_BIN" ]; then
+    BREW_SHELLENV_LINE="eval \"\$($BREW_BIN shellenv)\""
+    append_if_missing "$BREW_SHELLENV_LINE" "$HOME/.zprofile"
+    append_if_missing "$BREW_SHELLENV_LINE" "$HOME/.bashrc"
+    eval "$("$BREW_BIN" shellenv)"
+
+    if brew list --formula rtk >/dev/null 2>&1; then
+        echo "rtk already installed, skipping."
+    else
+        echo "Installing rtk via Homebrew..."
+        brew install rtk
+    fi
+else
+    echo "Homebrew install did not expose brew on a known path."
+    exit 1
+fi
