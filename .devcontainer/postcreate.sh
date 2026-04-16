@@ -15,14 +15,22 @@ echo "Installing system dependencies..."
 sudo apt-get update
 sudo apt-get install -y git-flow
 
+# Configure git identity
+echo "Configuring git user..."
+git config --global user.email "alkampfer@outlook.com"
+git config --global user.name "AlkampferOutlook"
+
 # Setup git aliases
 echo "Configuring git aliases..."
 bash .devcontainer/setup-git-aliases.sh
 
+# Install Claude Code CLI via official native installer (auto-updates)
+# See: https://docs.anthropic.com/en/docs/claude-code/overview
+echo "Installing Claude Code CLI..."
+curl -fsSL https://claude.ai/install.sh | bash || true
+
 # Install CLI tools that are distributed via npm
 if command -v npm >/dev/null 2>&1; then
-    echo "Installing Claude Code CLI..."
-    npm install -g @anthropic-ai/claude-code || true
     echo "Installing OpenAI Codex..."
     npm install -g @openai/codex || true
 else
@@ -78,9 +86,11 @@ sudo mv /tmp/tokensave /usr/local/bin/tokensave
 rm -f /tmp/tokensave.tar.gz
 echo "  tokensave $(tokensave --version) installed."
 
-# Configure Claude Code integration (MCP server, hooks, permissions, prompt rules)
+# Configure agent integrations (MCP server, hooks, permissions, prompt rules)
 echo "  Configuring tokensave for Claude Code..."
 tokensave install --agent claude || true
+echo "  Configuring tokensave for Codex CLI..."
+tokensave install --agent codex || true
 
 # Enable global save statistics
 tokensave enable-upload-counter || true
@@ -120,6 +130,7 @@ fi
 if [ -n "$BREW_BIN" ]; then
     BREW_SHELLENV_LINE="eval \"\$($BREW_BIN shellenv)\""
     append_if_missing "$BREW_SHELLENV_LINE" "$HOME/.zprofile"
+    append_if_missing "$BREW_SHELLENV_LINE" "$HOME/.zshrc"
     append_if_missing "$BREW_SHELLENV_LINE" "$HOME/.bashrc"
     eval "$("$BREW_BIN" shellenv)"
 
@@ -129,6 +140,12 @@ if [ -n "$BREW_BIN" ]; then
         echo "Installing rtk via Homebrew..."
         brew install rtk
     fi
+
+    # Configure rtk hooks for Claude Code and Codex CLI
+    echo "Configuring rtk for Claude Code..."
+    rtk init --global --auto-patch || true
+    echo "Configuring rtk for Codex CLI..."
+    rtk init --global --codex --auto-patch || true
 else
     echo "Homebrew install did not expose brew on a known path."
     exit 1
