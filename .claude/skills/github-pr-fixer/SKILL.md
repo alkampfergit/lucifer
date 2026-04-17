@@ -178,7 +178,32 @@ Once the call returns:
 - If the exit code is zero: CI is green. Now switch to the 5-minute poll
   below for reviewer / closure feedback.
 
-## Active polling — do not go idle while the PR is open
+## Active polling — delegate every poll to a laconic subagent
+
+**Every 5-minute poll cycle must run inside a subagent** (Agent tool,
+typically `subagent_type: "general-purpose"`). The parent context stays
+lean — subagent output is a single line returned to the parent, not the
+full `gh api` dump.
+
+Brief the subagent with:
+- the PR number and repo
+- the last comment-id / review-id watermark the parent has seen
+- the list of trigger phrases the author can post (`merge it`, `land it`,
+  `release as X.Y.Z`, `close this`)
+
+Demand a **laconic** return contract: one line.
+
+| Subagent finds | Subagent returns |
+|----------------|------------------|
+| No new comments, no state change | `nothing to do` — literally that string, nothing else |
+| New reviewer/Copilot comment requiring action | `action: <one-line summary>` + new watermark |
+| Failing check detected | `fail: <check-name>` + link |
+| Explicit closure phrase from the author | `close: <phrase> by <user>` |
+| PR merged or closed externally | `merged` or `closed` |
+
+The parent only wakes to do work when the subagent returns something
+other than `nothing to do`. This keeps the parent's context from filling
+with bot comments, Quality-Gate badges, and self-echoes.
 
 After CI has finished (the `--watch` call returned), the skill is not done.
 While the PR is open, the skill owns it. Stay active and poll every

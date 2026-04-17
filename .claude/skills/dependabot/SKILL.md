@@ -152,6 +152,21 @@ The `loop` skill will fire the polling command every 5 minutes, including
 the first cycle immediately after the PR is opened. The skill is now
 hands-free — the console can be closed.
 
+### Every poll runs in a laconic subagent
+
+Each 5-minute poll cycle must run inside a subagent (Agent tool,
+`general-purpose`). The parent context does not ingest `gh api` output —
+the subagent returns one line:
+
+- `nothing to do` — literally that string and nothing else
+- `action: <one-line summary>` + new watermark, when a reviewer/Copilot
+  comment requires work
+- `merged` / `closed` when the PR reaches a terminal state
+
+Pass the parent's last comment-id watermark into the subagent; it returns
+the new watermark. This keeps bot noise (SonarCloud badges, self-echoes,
+Dependabot unrelated activity) out of the parent.
+
 ### What each poll cycle does
 
 ```bash
