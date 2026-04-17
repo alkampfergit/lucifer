@@ -16,65 +16,43 @@ Handle this phase after `fix-loop` has run and before any release-closure
 step. Never merge a PR while unresolved reviewer comments exist unless the
 user explicitly tells you to.
 
+For raw `gh api` syntax (requested reviewers, reviews, line-level comments,
+issue comments, polling template) see `gh-cli-guide/SKILL.md` →
+**Reviews & reviewer comments**. This file covers the decision flow.
+
 ## Step 1: Detect requested reviewers
 
-A `gh pr view` call alone may under-report pending reviewer requests,
-especially for GitHub Apps such as Copilot. Use the API endpoint directly:
+Query `requested_reviewers` via the API (see gh-cli-guide). If the output
+contains `Copilot` (or any other reviewer), a review has been requested but
+not yet submitted.
 
-```bash
-gh api repos/<owner>/<repo>/pulls/<PR_NUMBER>/requested_reviewers \
-  --jq '.users[].login, .teams[].slug' 2>/dev/null
-```
-
-If the output contains `Copilot` (or any other reviewer), a review has been
-requested but not yet submitted.
+`gh pr view` alone may under-report pending reviewer requests, especially for
+GitHub Apps — always cross-check with the API endpoint.
 
 ## Step 2: Wait for the review to land
 
 Poll until the reviewer disappears from `requested_reviewers` **AND** their
 review shows up under `/pulls/<N>/reviews`, or until a reasonable deadline
 (Copilot typically takes 2–5 minutes for a medium-sized PR; 10 minutes is a
-safe upper bound).
-
-```bash
-for i in $(seq 1 20); do
-  pending=$(gh api repos/<owner>/<repo>/pulls/<N>/requested_reviewers \
-    --jq '[.users[]?.login] | join(",")' 2>/dev/null)
-  reviews=$(gh api repos/<owner>/<repo>/pulls/<N>/reviews \
-    --jq '[.[] | select(.user.login=="Copilot")] | length' 2>/dev/null)
-  echo "poll $i pending=[$pending] copilot_reviews=$reviews"
-  if [ -z "$pending" ] || [ "$reviews" != "0" ]; then break; fi
-  sleep 30
-done
-```
+safe upper bound). Use the polling template in gh-cli-guide →
+**Reviews & reviewer comments → Poll for a pending review to land**.
 
 Note: Copilot may post a `COMMENTED` review (no explicit approve/request
-changes). An empty `reviews` count combined with the reviewer having left
-`requested_reviewers` usually means the review DID land — re-check using
-the review listing, not only the filtered count.
+changes). An empty filtered `reviews` count combined with the reviewer having
+left `requested_reviewers` usually means the review DID land — re-check using
+the unfiltered review listing.
 
 ## Step 3: Collect every comment surface
 
-A GitHub review has three surfaces; you must inspect all three:
-
-```bash
-# Review-level bodies (summary, state, submitted_at)
-gh api repos/<owner>/<repo>/pulls/<N>/reviews \
-  --jq '.[] | {id,user:.user.login,state,submitted_at,body}'
-
-# Line-level review comments (the most actionable surface)
-gh api repos/<owner>/<repo>/pulls/<N>/comments \
-  --jq '.[] | {id,user:.user.login,path,line,body}'
-
-# Top-level issue comments on the PR (sometimes reviewers use these)
-gh api repos/<owner>/<repo>/issues/<N>/comments \
-  --jq '.[] | {id,user:.user.login,created_at,body: (.body[:200])}'
-```
+A GitHub review has three surfaces; you must inspect all three (review bodies,
+line-level review comments, top-level issue comments on the PR). See
+gh-cli-guide → **Reviews & reviewer comments → Review bodies & line-level comments**
+for the three `gh api` calls.
 
 Present the comments to the user categorised by file and by nature (real
 defect / style / doc / typo). Call out comments that are **outside the PR's
-scope** (for example, pre-existing modifications on the branch that this
-PR did not introduce) — the user may want to skip those.
+scope** (for example, pre-existing modifications on the branch that this PR
+did not introduce) — the user may want to skip those.
 
 ## Step 4: Fix in a dedicated round
 

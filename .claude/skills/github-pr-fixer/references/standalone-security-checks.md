@@ -7,21 +7,12 @@ Some failures are not normal workflow jobs. A PR can produce a standalone
 2. Fetch failing check-runs for that commit.
 3. Read annotations and code scanning alerts.
 
-```bash
-PR_SHA="$(gh pr view "$PR_NUMBER" --json headRefOid --jq .headRefOid)"
-gh api "repos/alkampfergit/lucifer/commits/$PR_SHA/check-runs"
-gh api 'repos/alkampfergit/lucifer/code-scanning/alerts?pr='"$PR_NUMBER"
-```
+For the exact `gh api` call forms, see `gh-cli-guide/SKILL.md` →
+**Code scanning & standalone security checks**. For this repo substitute
+`<owner>/<repo>` with `alkampfergit/lucifer` and use the PR number as
+`$PR_NUMBER`.
 
-If you need annotations for a specific check-run:
-
-```bash
-gh api "repos/alkampfergit/lucifer/check-runs/$CHECK_RUN_ID/annotations"
-```
-
-Important:
-
-- Quote `gh api` endpoints that contain `?` when running under `zsh`.
+- `gh api` endpoints that contain `?` must be quoted under `zsh`.
 - Use code scanning alerts for CodeQL-style failures; `gh run view` will not
   help when there is no workflow run behind the failing check.
 

@@ -1,15 +1,15 @@
 # Check Diagnosis
 
+For raw `gh` syntax (checks, runs, jobs, APIs) see `gh-cli-guide/SKILL.md` →
+**Checks & workflow runs**, **Code scanning & standalone security checks**.
+This file covers the diagnostic flow.
+
 ## Wait for the current check cycle
 
 Use watch mode before starting a new diagnosis so you do not read half-finished
-results.
-
-```bash
-gh pr checks "$PR_NUMBER" --watch --fail-fast
-gh pr checks "$PR_NUMBER" --json name,state,link,workflow,bucket
-gh pr view "$PR_NUMBER" --json statusCheckRollup
-```
+results. Run `gh pr checks "$PR_NUMBER" --watch --fail-fast` then fetch the
+structured status via `gh pr checks "$PR_NUMBER" --json name,state,link,workflow,bucket`
+and/or `gh pr view "$PR_NUMBER" --json statusCheckRollup`.
 
 Treat these cases differently:
 
@@ -41,14 +41,11 @@ result.
 For a failed check whose link contains a workflow run and job:
 
 1. Extract the run ID and job ID from the link.
-2. View the failing steps first.
+2. View the failing steps first (`gh run view ... --log-failed`).
 3. Fall back to the full log only if needed.
 
-```bash
-gh run view "$RUN_ID" --job "$JOB_ID" --log-failed
-gh run view "$RUN_ID" --job "$JOB_ID" --log
-gh run view "$RUN_ID" --json jobs,name,headSha,conclusion,url
-```
+See gh-cli-guide → **Checks & workflow runs → Runs & failing jobs** for the
+exact command forms.
 
 Name the failure mode before fixing it. Prefer a minimal root-cause fix over
 re-running a job unchanged.

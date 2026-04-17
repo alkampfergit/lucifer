@@ -2,16 +2,11 @@
 
 Resolve the current PR with `gh` only. Do not guess the PR number.
 
-```bash
-gh pr status
-gh pr view --json number,title,headRefName,baseRefName,url
-```
+For command syntax see `gh-cli-guide/SKILL.md` → **Pull requests → Resolve the active PR**.
 
-Capture:
+Capture and reuse for every later step:
 
 - PR number
 - head branch
 - base branch
 - PR URL
-
-Use these values for every later step.

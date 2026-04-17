@@ -1,19 +1,13 @@
 # Open Pull Request
 
-Use this path when the user wants a pull request opened from the current
-branch.
+Use this path when the user wants a pull request opened from the current branch.
+
+For raw `gh` / `git` syntax see `gh-cli-guide/SKILL.md` → **Authentication & context** and **Pull requests**. This file covers the decision logic.
 
 ## 1. Resolve the current branch
 
-Start from git, not memory:
-
-```bash
-git status --short --branch
-git branch --show-current
-git rev-parse --abbrev-ref --symbolic-full-name '@{u}'
-```
-
-Capture:
+Use `git status --short --branch`, `git branch --show-current`, and
+`git rev-parse --abbrev-ref --symbolic-full-name '@{u}'` to capture:
 
 - current branch name
 - whether the branch is clean or dirty
@@ -25,9 +19,7 @@ PR. Do not silently include unexpected work.
 
 ## 2. Check whether a PR already exists
 
-```bash
-gh pr view --json number,title,url,headRefName,baseRefName
-```
+Use `gh pr view --json number,title,url,headRefName,baseRefName` (see gh-cli-guide → **Pull requests → Resolve the active PR**).
 
 If a PR already exists for the current branch, stop and report it instead of
 opening a duplicate.
@@ -38,15 +30,9 @@ Use repository context and git state to verify the intended base branch.
 Prefer the tracked integration branch already used by the repository flow.
 Do not guess.
 
-Useful commands:
+Helpful commands: `git remote show origin` and `gh repo view --json defaultBranchRef` (see gh-cli-guide → **Authentication & context**).
 
-```bash
-git remote show origin
-gh repo view --json defaultBranchRef
-```
-
-If the correct base branch is still ambiguous, ask the user before creating the
-PR.
+If the correct base branch is still ambiguous, ask the user before creating the PR.
 
 ## 4. Check whether the current branch has been pushed
 
@@ -71,14 +57,13 @@ Interpretation:
 
 ## 5. Push the current branch if needed
 
-If the current branch does not yet exist on the remote, push it first:
+If the current branch does not yet exist on the remote:
 
 ```bash
 git push -u origin "$CURRENT_BRANCH"
 ```
 
-If the branch already tracks a remote branch, use a normal push only when local
-commits are not yet published.
+Otherwise push only when local commits are not yet published:
 
 ```bash
 git push
@@ -86,17 +71,7 @@ git push
 
 ## 6. Open the PR from the current branch
 
-Use the current branch explicitly for the head and the verified branch for the
-base.
-
-```bash
-gh pr create \
-  --head "$CURRENT_BRANCH" \
-  --base "$BASE_BRANCH"
-```
-
-Add `--title` and `--body` when the user supplied them or repository workflow
-requires them.
+Use `gh pr create --head "$CURRENT_BRANCH" --base "$BASE_BRANCH"` (see gh-cli-guide → **Pull requests → Create**). Add `--title` and `--body` when the user supplied them or repository workflow requires them.
 
 ## 7. Report the created PR
 

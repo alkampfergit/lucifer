@@ -2,6 +2,10 @@
 
 Use this path only when the user explicitly asks to close the pull request.
 
+For raw `gh` / `git` syntax see `gh-cli-guide/SKILL.md` →
+**Pull requests** (view, checks, close, comment). This file covers the
+decision flow.
+
 ## 1. Determine the release tag proposal
 
 Start from `master` and inspect the latest tag:
@@ -41,11 +45,8 @@ If the branch is already up to date, do not rebase just for the sake of it.
 
 ## 3. Ensure checks are green before release
 
-```bash
-gh pr checks "$PR_NUMBER" --watch --fail-fast
-```
-
-Do not proceed if required checks are failing.
+Run `gh pr checks "$PR_NUMBER" --watch --fail-fast` (see gh-cli-guide →
+**Checks & workflow runs**). Do not proceed if required checks are failing.
 
 ## 4. Fast-forward master, tag, push, close PR, and delete branches
 
@@ -64,14 +65,18 @@ git branch -d "$HEAD_BRANCH"
 git push origin --delete "$HEAD_BRANCH"
 ```
 
+See gh-cli-guide → **Pull requests → Close** for the `gh pr close` form.
+
 ## 4a. Post a release summary comment
 
 After closing the PR, post a final summary comment listing all fix rounds that
 were applied during the PR cycle. This gives reviewers a single place to see
-everything the automation did.
+everything the automation did. Use `gh pr comment` with a HEREDOC body (see
+gh-cli-guide → **Pull requests → Comment**).
 
-```bash
-gh pr comment "$PR_NUMBER" --body "$(cat <<'EOF'
+Template:
+
+```
 ## Release summary
 
 **Tag:** `$CONFIRMED_TAG`
@@ -80,8 +85,6 @@ gh pr comment "$PR_NUMBER" --body "$(cat <<'EOF'
 <list each fix round: round number, what check failed, what was changed, commit SHA>
 
 **Final state:** all checks green
-EOF
-)"
 ```
 
 If no fix rounds were needed, the comment should say "No fix rounds needed —

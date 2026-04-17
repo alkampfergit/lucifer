@@ -1,5 +1,8 @@
 # Fix Loop
 
+For raw `gh` syntax see `gh-cli-guide/SKILL.md` → **Checks & workflow runs**
+and **Pull requests → Comment**. This file covers what to do each round.
+
 ## Implement and validate the fix
 
 Use the repository task lifecycle:
@@ -32,12 +35,12 @@ git push
 
 After every push, post a comment on the PR summarizing what was done in this
 round. This creates a permanent audit trail of automated fixes visible to
-reviewers.
+reviewers. Use `gh pr comment` with a HEREDOC body (see gh-cli-guide →
+**Pull requests → Comment**).
 
-Use this format:
+Template:
 
-```bash
-gh pr comment "$PR_NUMBER" --body "$(cat <<'EOF'
+```
 ## Fix round $ROUND
 
 **Trigger:** <which check failed and why>
@@ -49,19 +52,14 @@ gh pr comment "$PR_NUMBER" --body "$(cat <<'EOF'
 **Commit:** `<short sha>` — <commit message>
 
 **Local validation:** lint :white_check_mark: | test :white_check_mark: | build :white_check_mark:
-EOF
-)"
 ```
 
-Replace the placeholders with actual values. Be specific about what failed and
-what the fix does. Each bullet under Changes should name the exact file and the
-concrete change, not vague summaries like "fixed code smells". Include the
+Replace placeholders with actual values. Be specific about what failed and
+what the fix does. Each bullet under Changes should name the exact file and
+the concrete change, not vague summaries like "fixed code smells". Include the
 failing check name and link when available.
 
 ## Re-watch checks
 
-```bash
-gh pr checks "$PR_NUMBER" --watch --fail-fast
-```
-
-After the push completes, return to the check diagnosis workflow.
+Run `gh pr checks "$PR_NUMBER" --watch --fail-fast` (see gh-cli-guide →
+**Checks & workflow runs**). Then return to the check-diagnosis workflow.
