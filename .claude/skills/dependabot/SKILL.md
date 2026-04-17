@@ -256,15 +256,24 @@ gh api -X PATCH repos/<owner>/<repo>/dependabot/alerts/<N> \
 Valid `dismissed_reason` values: `fix_started`, `inaccurate`, `no_bandwidth`,
 `not_used`, `tolerable_risk`.
 
-## Step 6: Validate and ship
+## Step 6: Hand off to github-pr-fixer
+
+Once the local pipeline is green and the fixes are pushed:
 
 1. `npm audit` — confirm the counts match what you expected to fix.
 2. `gh api repos/<owner>/<repo>/dependabot/alerts --jq '[.[] | select(.state=="open")] | length'` — compare before/after.
-3. Flip the PR from draft to ready (`gh pr ready <N>`) and update the body
-   with the final table: `alert # → fix (bump / override / merged #X / dismissed)`.
-4. Keep polling until the owner approves the merge or closes the PR.
-5. After merge, re-run the inventory query to confirm the GitHub security
-   tab is actually green.
+3. Update the PR body with the final resolution table (`alert # → fix
+   (bump / override / merged #X / dismissed)`) and flip it to ready with
+   `gh pr ready <N>`.
+4. **Stop the 5-minute poll.** Call `CronDelete` with the job id from
+   Step 4 so the dependabot skill is no longer polling.
+5. Post a hand-off comment on the PR: "Local pipeline green, handing off
+   to `github-pr-fixer`."
+6. Invoke the `github-pr-fixer` skill with the PR number. It takes
+   ownership from here: waiting for CI checks, responding to reviewer
+   comments, and driving the PR to merge.
+7. After merge, `github-pr-fixer` will report back. Re-run the alert
+   inventory query to confirm the GitHub security tab is actually green.
 
 ## Guardrails
 
