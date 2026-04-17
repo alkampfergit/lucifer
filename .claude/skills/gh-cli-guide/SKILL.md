@@ -173,6 +173,39 @@ gh api "repos/<owner>/<repo>/check-runs/$CHECK_RUN_ID/annotations"
 
 Quote endpoints that contain `?` when running under `zsh`.
 
+## Dependabot & security alerts
+
+The Dependabot security tab (`/security/dependabot`) is backed by the
+`/dependabot/alerts` REST endpoint. Use it instead of scraping the UI.
+
+```bash
+# List every open alert with the minimum fields needed for triage
+gh api repos/<owner>/<repo>/dependabot/alerts --paginate \
+  --jq '.[] | select(.state=="open") | {number, severity: .security_advisory.severity,
+         package: .dependency.package.name, manifest: .dependency.manifest_path,
+         scope: .dependency.scope, summary: .security_advisory.summary,
+         url: .html_url}'
+
+# Full advisory (CVSS, vulnerable range, first-patched version) for one alert
+gh api repos/<owner>/<repo>/dependabot/alerts/<N>
+
+# Dismiss an alert with a reason (see dismissed_reason values below)
+gh api -X PATCH repos/<owner>/<repo>/dependabot/alerts/<N> \
+  -f state=dismissed \
+  -f dismissed_reason=tolerable_risk \
+  -f dismissed_comment='Short justification the security tab will display.'
+
+# PRs that Dependabot itself opened
+gh pr list --state open --json number,title,author,statusCheckRollup \
+  --jq '.[] | select(.author.login=="app/dependabot")'
+```
+
+`dependency.scope` distinguishes `runtime` from `development`. `dismissed_reason`
+must be one of: `fix_started`, `inaccurate`, `no_bandwidth`, `not_used`,
+`tolerable_risk`. For the full fix workflow (triage → bump / override /
+dismiss → validate) see
+[.claude/skills/dependabot/SKILL.md](../dependabot/SKILL.md).
+
 ## Labels
 
 ```bash
