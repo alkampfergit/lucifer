@@ -147,6 +147,31 @@ Before building, read `AGENTS.md` / `CLAUDE.md` (or equivalents) in the
 target repo. Flag any binding constraints (tests required, forbidden files,
 required doc updates) in the plan comment.
 
+#### Plan-approval discipline (hard rule)
+
+**The user's console invocation of this skill (`/gstack-gh implement #X`) is
+NOT plan approval.** It authorises you to drive the flow, including posting
+the plan and polling for a reply. It does not pre-approve the plan you
+haven't written yet. Do NOT rationalise "the user already said implement,
+so I can skip the wait". That rationalisation has produced a real failure
+on this project — see the agent memory entry "gstack-gh plan-approval
+discipline" for the incident.
+
+Concrete rules:
+
+- If you wrote "gstack will poll every Ns" in the plan comment, you MUST
+  then poll. Not polling is a broken promise to the reviewer.
+- If you catch yourself starting to write or edit code before the poll
+  reply landed, stop, revert, and apologise on the issue (a brief
+  correction comment is the right response — the user is likely watching
+  the thread).
+- Preserve local work with `git stash` if you must interrupt mid-edit;
+  do not push to the branch until the plan is approved.
+- Prefer `Monitor` (or an equivalent session-length persistent poll) for
+  the wait, not a sleep loop in a single Bash call. A persistent monitor
+  keeps the session responsive to other user input while the wait is in
+  flight.
+
 ### 4. Build
 
 Implement on `feature/<N>`. Pick the matching repo skill if one applies:

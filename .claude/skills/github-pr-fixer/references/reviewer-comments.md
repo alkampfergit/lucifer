@@ -99,8 +99,9 @@ Stop reviewer-comment work when one of:
   marked as "out of scope / won't fix" with reasoning captured in the PR
   comment.
 - The user says stop.
-- Three reviewer-comment rounds have been attempted (mirrors the `fix-loop`
-  budget).
+- Five reviewer-comment rounds have been attempted (mirrors the `fix-loop`
+  budget). After exhausting the budget, do not resume automatically —
+  wait for an explicit user instruction to take another pass.
 
 When stopping, report:
 

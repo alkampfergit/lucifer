@@ -1,16 +1,18 @@
 ---
 name: github-pr-fixer
 description: >
-  Fix the current GitHub pull request until checks pass or three fix rounds are
+  Fix the current GitHub pull request until checks pass or five fix rounds are
   exhausted. Use when an open PR has failing or pending checks and you need to
   inspect GitHub checks with gh, remediate SonarCloud issues with the sonar
   skill, inspect failed workflow jobs or code scanning alerts, push fixes, and
   repeat. Also covers: opening a PR from the current branch, waiting for a
   reviewer (human or Copilot) and addressing their line-level comments, and
-  closing a ready release PR.
+  closing a ready release PR. While the PR is open, stay active and poll PR
+  comments every five minutes for new feedback or an explicit closure
+  instruction — do not go idle.
 metadata:
   author: codex
-  version: 1.3.0
+  version: 1.4.0
   category: workflow
 ---
 
@@ -40,25 +42,151 @@ release flow, or to open a PR from the current branch.
 
 ## Round limit
 
-- Maximum `3` check-fix rounds.
+- Maximum `5` check-fix rounds per session.
 - A round means: inspect failures, make fixes, validate locally, commit, push,
   and wait for checks again.
-- Reviewer-comment rounds have a separate `3`-round budget; see
+- Reviewer-comment rounds have a separate `5`-round budget; see
   `references/reviewer-comments.md`.
+- **After 5 rounds are exhausted**, stop the automatic fix loop and park the
+  PR. Do **not** resume until the user explicitly asks you to review or fix
+  the code again (e.g. comments "take another look", "keep going", "resume
+  fixes" on the PR or says so in chat). Report exactly what is still failing
+  and which rounds were attempted.
 
-## Core workflow
+## When Copilot confirms fixes in natural language — resolve the threads yourself
 
-1. Resolve the active PR with `gh`. Do not guess the PR number.
-2. Wait for the current check cycle to settle before diagnosing failures.
-3. Pick the matching failure path:
-   - Sonar path
-   - Failed GitHub Actions job path
-   - Standalone security check path
-4. Implement the smallest root-cause fix.
-5. Run standard local validation.
-6. Commit, push, and re-watch checks.
-7. Stop when checks are green, the blocker is external, or three rounds are
-   exhausted.
+When the repo owner re-triggers Copilot and Copilot replies with a
+natural-language confirmation that the fixes are correct (e.g. "All four
+fixes look correct and complete", check-marks per bullet, "Nothing
+missed"), Copilot typically does **not** mark the original line-level
+review threads as resolved. The agent must do that explicitly via the
+GraphQL API, so the PR UI reflects the state Copilot described.
+
+Steps:
+
+1. Parse Copilot's confirmation: identify which of the original
+   line-level comments it has explicitly approved (by commit SHA,
+   line number, file path, or the content of the bullet). Only resolve
+   threads Copilot confirmed — do not resolve threads it flagged as
+   still-open, nor threads it stayed silent on.
+
+2. Map each confirmed comment to its *thread* GraphQL ID. The REST
+   `comment_id` is not the thread ID. Query:
+
+   ```bash
+   gh api graphql -f query='
+     query($owner: String!, $repo: String!, $pr: Int!) {
+       repository(owner: $owner, name: $repo) {
+         pullRequest(number: $pr) {
+           reviewThreads(first: 100) {
+             nodes {
+               id
+               isResolved
+               comments(first: 5) {
+                 nodes { databaseId path line author { login } body }
+               }
+             }
+           }
+         }
+       }
+     }' -F owner=<owner> -F repo=<repo> -F pr=<N>
+   ```
+
+3. Resolve each confirmed thread:
+
+   ```bash
+   gh api graphql -f query='
+     mutation($id: ID!) {
+       resolveReviewThread(input: { threadId: $id }) {
+         thread { id isResolved }
+       }
+     }' -f id=<thread-id>
+   ```
+
+4. **Announce the resolution** in the same `gstack:status` comment that
+   records Copilot's confirmation, e.g. *"Marked the four threads
+   Copilot confirmed as resolved via GraphQL (thread ids listed
+   below)"*. This keeps the audit trail self-contained — the reader
+   sees both the confirmation and the action taken in one comment.
+
+5. Never resolve threads Copilot did not explicitly confirm. If Copilot
+   said something is *partially* fixed or introduced a new concern,
+   leave the thread open and treat the new concern as round N+1.
+
+## After fixing Copilot comments — post a resolution summary
+
+When a fix round addresses one or more Copilot review comments (whether
+line-level or summary), post a top-level PR comment **after the push has
+been accepted** that describes what was changed, concern by concern.
+
+**Do not `@`-mention Copilot.** The agent running this skill typically
+does not have permission to invoke the Copilot reviewer, and an
+ineffective mention is noise on the thread. Write the comment as a
+plain resolution summary. If the repo owner decides a re-review is
+worth the cost, they can re-trigger Copilot themselves — possibly by
+copy-pasting your summary into the Copilot re-review command.
+
+Comment body requirements:
+
+1. Reference the fix commit SHA at the top.
+2. One line per addressed concern, mapping each Copilot comment to the
+   concrete change that addressed it (and, where useful, to the test
+   that proves the fix).
+3. End with an invitation for the reviewer (human or bot) to mark any
+   comments they consider fixed as resolved and to flag anything
+   missed.
+
+Example body:
+
+```
+Pushed <sha> addressing the four comments on the Copilot review:
+
+- <concern 1>: <one-line fix> (proof test: `<test name>`)
+- <concern 2>: <one-line fix>
+- <concern 3>: <one-line fix>
+- <concern 4>: <one-line fix>
+
+Please mark any comments you consider addressed as resolved and flag
+anything I missed.
+```
+
+This is in addition to (not a replacement for) any inline replies on
+the line-level comments themselves and the `gstack:status` audit
+comment. Post the resolution summary **after** the inline replies so
+the thread reads in order.
+
+## Active polling — do not go idle while the PR is open
+
+The skill is not done when checks go green. While the PR is open, the skill
+owns it. Stay active and poll every **5 minutes** for:
+
+- new PR comments (including reviewer comments, bot comments, and new
+  check-run results)
+- an explicit closure instruction ("close this PR", "land it", "release as
+  X.Y.Z", "merge it")
+
+On each poll cycle:
+
+1. `gh pr view <N> --json comments,statusCheckRollup,reviews` — diff against
+   the state from the previous cycle.
+2. If new actionable feedback has arrived (failing check, reviewer comment
+   with a concrete ask, a direct question), resume the relevant subflow
+   (`references/check-diagnosis.md` or `references/reviewer-comments.md`).
+3. If an explicit closure instruction has arrived, switch to
+   `references/release-closure.md` — but only after confirming the phrase
+   was posted by the repo owner / PR author, not by an automated bot.
+4. Otherwise, log a single-line "no change" note and wait for the next cycle.
+
+Stop polling only when:
+
+- The PR is merged or closed.
+- The user explicitly tells you to stop watching it.
+- Five consecutive empty cycles followed by an explicit user instruction to
+  pause (the user may prefer to drive the review themselves; ask once via
+  PR comment after the fifth empty cycle, then stop if they confirm).
+
+Do not mass-poll (every cycle is one `gh pr view` call). Do not create
+cron triggers for this — polling is session-owned.
 
 ## Required validation
 
@@ -85,7 +213,18 @@ When stopping, report:
 - Never rerun failing checks blindly without understanding the failure.
 - Do not assume a failed `CodeQL` check means the CodeQL workflow jobs failed.
 - Do not assume Sonar is the only source of PR failures.
-- Do not exceed three fix rounds in one session.
+- Do not exceed five fix rounds in one session without an explicit user
+  resume instruction.
+- Do not go idle while the owned PR is still open — poll every 5 minutes.
+- After pushing a round that addresses Copilot review comments, always
+  post a top-level resolution-summary comment (commit SHA + one-line
+  per concern). **Do NOT `@`-mention Copilot** — the agent typically
+  lacks permission to invoke the reviewer and the mention is ignored /
+  errored. The repo owner re-triggers Copilot if they want a re-review.
+- When Copilot's re-review comes back as a natural-language
+  confirmation, **resolve the confirmed threads yourself via the
+  GraphQL `resolveReviewThread` mutation** and state what you resolved
+  in the same status comment. Copilot does not close its own threads.
 - Do not overwrite unrelated user changes on the branch.
 - Do not open a PR from a dirty branch without making that state explicit.
 - Do not guess the base branch for a new PR; verify it first.

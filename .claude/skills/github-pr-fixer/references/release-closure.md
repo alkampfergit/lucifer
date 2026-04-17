@@ -67,7 +67,45 @@ git push origin --delete "$HEAD_BRANCH"
 
 See gh-cli-guide → **Pull requests → Close** for the `gh pr close` form.
 
-## 4a. Post a release summary comment
+### `gh pr close` after fast-forward push is expected to no-op
+
+After the `git push origin master` step, GitHub detects that the PR's
+head commit is reachable from the base branch and auto-moves the PR
+state from `OPEN` to `MERGED`. The subsequent `gh pr close` call
+therefore prints *"Pull request … can't be closed because it was
+already merged"* — this is **not an error**. The release commentary
+that `--comment` would have attached is skipped; post it as a plain
+`gh pr comment` afterwards instead:
+
+```bash
+gh pr comment "$PR_NUMBER" --body "Released as $CONFIRMED_TAG — <release-url>"
+```
+
+Verify the final state with:
+
+```bash
+gh pr view "$PR_NUMBER" --json state,mergedAt,mergeCommit
+# state should be "MERGED" (NOT ".merged" — that JSON field does not exist)
+```
+
+## 4b. Re-sync local master after closure
+
+Once the PR is merged / closed, return to `master` and pull before
+doing anything else. This catches commits the merge flow may have
+added (squash commits, bot commits, release-note PRs, etc.) and
+guarantees the local tree is the canonical post-release state before
+any further work begins.
+
+```bash
+git checkout master
+git pull --ff-only origin master
+```
+
+Do this even if the current session pushed the merge itself — it is
+defensive and cheap, and it has repeatedly caught cases where the
+assumed-equivalent local state was behind remote.
+
+## 4c. Post a release summary comment
 
 After closing the PR, post a final summary comment listing all fix rounds that
 were applied during the PR cycle. This gives reviewers a single place to see
