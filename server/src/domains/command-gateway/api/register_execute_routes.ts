@@ -53,6 +53,12 @@ export interface ExecuteRouteDeps {
   approvalChannel: ApprovalChannel;
 }
 
+function parseClientIp(req: Request): string {
+  return (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
+    ?? req.socket.remoteAddress
+    ?? 'unknown';
+}
+
 export function registerExecuteRoutes(deps: ExecuteRouteDeps): void {
   const { router, config, apiKeyStore, commandRulesStore, approvalStore, pendingStore, auditLog, approvalChannel } = deps;
   const rateLimiter = createRateLimiter(
@@ -64,12 +70,13 @@ export function registerExecuteRoutes(deps: ExecuteRouteDeps): void {
     limit: process.env.NODE_ENV === 'development' ? 10_000 : config.rateLimitPerMinute,
     standardHeaders: true,
     legacyHeaders: false,
+    keyGenerator: parseClientIp,
     message: { code: 'RATE_LIMITED', message: 'Rate limit exceeded. Try again later.', retryable: true },
   });
 
   router.post('/api/v1/execute', ipRateLimiter, async (req: Request, res: Response) => {
     const rawKey = req.headers['x-api-key'] as string | undefined;
-    const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.socket.remoteAddress ?? 'unknown';
+    const ip = parseClientIp(req);
     const { command: rawCommand, cwd } = req.body as { command?: string; cwd?: string };
 
     const validationError = validateExecuteInput(rawCommand, cwd);
