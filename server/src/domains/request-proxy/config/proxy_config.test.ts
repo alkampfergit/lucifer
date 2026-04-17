@@ -67,6 +67,40 @@ describe('loadProxyConfig', () => {
     expect(config?.proxies[0].headers).toBeUndefined();
   });
 
+  it('loads an explicit host override', () => {
+    const dir = createTempDir();
+    const filePath = writeProxyFile(dir, {
+      proxies: [{ port: 7070, baseUrl: 'http://localhost:9000', host: '0.0.0.0' }],
+    });
+    const config = loadProxyConfig(filePath);
+    expect(config?.proxies[0].host).toBe('0.0.0.0');
+  });
+
+  it('leaves host undefined when omitted (caller applies loopback default)', () => {
+    const dir = createTempDir();
+    const filePath = writeProxyFile(dir, {
+      proxies: [{ port: 7070, baseUrl: 'http://localhost:9000' }],
+    });
+    const config = loadProxyConfig(filePath);
+    expect(config?.proxies[0].host).toBeUndefined();
+  });
+
+  it('rejects a non-string host', () => {
+    const dir = createTempDir();
+    const filePath = writeProxyFile(dir, {
+      proxies: [{ port: 7070, baseUrl: 'http://localhost:9000', host: 123 }],
+    });
+    expect(() => loadProxyConfig(filePath)).toThrow('failed validation');
+  });
+
+  it('rejects an empty host string', () => {
+    const dir = createTempDir();
+    const filePath = writeProxyFile(dir, {
+      proxies: [{ port: 7070, baseUrl: 'http://localhost:9000', host: '' }],
+    });
+    expect(() => loadProxyConfig(filePath)).toThrow('failed validation');
+  });
+
   it('rejects a non-integer port', () => {
     const dir = createTempDir();
     const filePath = writeProxyFile(dir, {

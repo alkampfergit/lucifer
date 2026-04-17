@@ -28,6 +28,7 @@ function isProxyMapping(value: unknown): value is ProxyMapping {
   if (!isValidPort(m.port)) return false;
   if (!isValidBaseUrl(m.baseUrl)) return false;
   if (m.headers !== undefined && !isValidHeaders(m.headers)) return false;
+  if (m.host !== undefined && (typeof m.host !== 'string' || m.host.length === 0)) return false;
   return true;
 }
 

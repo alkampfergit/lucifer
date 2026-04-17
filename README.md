@@ -122,6 +122,9 @@ File semantics:
 - Ports must be in 1–65535 and must not collide with the gateway port or
   with each other — validated at startup.
 - `baseUrl` must be a syntactically valid `http://` or `https://` URL.
+- Listeners bind to `127.0.0.1` by default. Set `"host": "0.0.0.0"` on a
+  mapping to expose it beyond loopback; when doing so, the operator is
+  responsible for fronting the listener with access control.
 
 See [docs/specs/transparent-proxy.md](docs/specs/transparent-proxy.md) for
 the full contract.

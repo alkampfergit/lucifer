@@ -37,6 +37,11 @@ Field rules:
   request. **Overwrites** any caller-supplied header of the same name (the
   primary use is credential injection, which must not be overridable by the
   caller).
+- `host` — optional bind address. Defaults to `127.0.0.1` (loopback only)
+  so a credentialed proxy is not accidentally exposed to the local
+  network. Set explicitly (e.g. `"0.0.0.0"`) to opt into broader binding;
+  the operator accepts responsibility for fronting the listener with its
+  own access control when doing so.
 
 File semantics:
 
@@ -64,6 +69,18 @@ Proxy listeners are created when the main server starts and closed when
 the server stops. They are independent of command-gateway lifecycle — the
 feature can be enabled even if no command-gateway config files are
 present.
+
+Startup is all-or-nothing:
+
+- If any listener fails to bind, all already-started listeners are closed
+  before the startup error is rethrown. The caller never observes a
+  half-started set.
+- Likewise, if the proxy layer fails to come up after the approval
+  channel, `createApp().start()` rolls back the approval channel before
+  rethrowing.
+
+Shutdown is best-effort: a listener that never bound (e.g. because
+startup failed partway) does not prevent cleanup of the others.
 
 ## What it does NOT do (yet)
 

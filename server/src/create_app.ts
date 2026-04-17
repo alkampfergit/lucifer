@@ -150,18 +150,41 @@ export function createApp(options: CreateAppOptions = {}) {
   }
 
   async function start() {
-    if (approvalChannel) {
-      await approvalChannel.start()
-    }
-    if (proxyServers) {
-      await proxyServers.start()
+    // All-or-nothing: if any later step fails, roll back earlier ones so
+    // callers never observe a half-started app (e.g. Telegram bot polling
+    // while the proxy port failed to bind).
+    const started: Array<() => Promise<void>> = []
+    try {
+      if (approvalChannel) {
+        await approvalChannel.start()
+        started.push(() => approvalChannel!.stop())
+      }
+      if (proxyServers) {
+        await proxyServers.start()
+        started.push(() => proxyServers!.stop())
+      }
+    } catch (err) {
+      for (const rollback of started.reverse()) {
+        try { await rollback() } catch (rollbackErr) {
+          log.warn({ err: rollbackErr }, 'Error rolling back partial startup')
+        }
+      }
+      throw err
     }
   }
 
   async function stop() {
     if (cleanupInterval) clearInterval(cleanupInterval)
-    if (approvalChannel) await approvalChannel.stop()
-    if (proxyServers) await proxyServers.stop()
+    if (approvalChannel) {
+      try { await approvalChannel.stop() } catch (err) {
+        log.warn({ err }, 'Error stopping approval channel')
+      }
+    }
+    if (proxyServers) {
+      try { await proxyServers.stop() } catch (err) {
+        log.warn({ err }, 'Error stopping proxy servers')
+      }
+    }
     closeDatabase()
   }
 
