@@ -21,6 +21,7 @@ an external caller and the local shell.
 |---|---|---|---|
 | `command-gateway` | Core domain: request auth, policy rules, approval channels, command execution, audit | Active | See QUALITY |
 | `platform-api` | Server bootstrap plus platform-facing HTTP surface such as `/api/health` | Active | See QUALITY |
+| `request-proxy` | Optional HTTP proxy listeners that forward to configured upstreams with header injection | Active | See QUALITY |
 
 ## Layer Structure (per domain)
 

@@ -88,6 +88,44 @@ e.g. put `{ "prefix": "deploy", "action": "manual_approve" }` in
 `command-rules.json`). Exact-string match only — an alias `deploy` does not
 match `deploy --dry-run`; that falls through to the shell path.
 
+### Transparent HTTP proxy (optional)
+
+Lucifer can also run one or more transparent HTTP proxy listeners alongside
+the main gateway. Each listener forwards every request it receives to a
+configured upstream, preserving path, method, query string and body, and
+injecting a fixed set of outgoing headers.
+
+Drop `config/proxy-config.json`:
+
+```json
+{
+  "proxies": [
+    {
+      "port": 6060,
+      "baseUrl": "https://api.openai.com",
+      "headers": { "Authorization": "Bearer sk-..." }
+    }
+  ]
+}
+```
+
+A request to `http://localhost:6060/v1/chat/completions` is forwarded to
+`https://api.openai.com/v1/chat/completions` with the configured
+`Authorization` header attached server-side. Configured headers **overwrite**
+any caller-supplied header of the same name, so callers never need (and
+cannot spoof) the upstream credential.
+
+File semantics:
+
+- File missing → feature disabled (no behavior change for existing installs).
+- File present with `proxies: []` → feature enabled, no listeners started.
+- Ports must be in 1–65535 and must not collide with the gateway port or
+  with each other — validated at startup.
+- `baseUrl` must be a syntactically valid `http://` or `https://` URL.
+
+See [docs/specs/transparent-proxy.md](docs/specs/transparent-proxy.md) for
+the full contract.
+
 ## Production setup (with Telegram)
 
 1. Create a Telegram bot via [@BotFather](https://t.me/BotFather) and get the token
@@ -236,6 +274,10 @@ server/src/domains/
     service/             Auth, rules, risk analysis, execution, approvals
     api/                 Execute routes + web approval UI routes
   platform-api/          Health endpoint + server runtime wiring
+  request-proxy/         Optional transparent HTTP proxy listeners
+    types/               ProxyMapping, ProxyConfig
+    config/              proxy-config.json loader + port-collision validation
+    service/             http-proxy-middleware-backed listeners
 ```
 
 Dependency flow: Types -> Config -> Repository -> Service -> Runtime -> UI/API

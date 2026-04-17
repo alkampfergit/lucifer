@@ -14,6 +14,7 @@ implementation in detail. Specs should stay short, factual, and tied to code.
 | [approval-channels.md](approval-channels.md) | Telegram, web admin, auto-approve, and cached approvals |
 | [operator-workflows.md](operator-workflows.md) | Init, pairing, logging, stats, and runtime config |
 | [platform-health.md](platform-health.md) | Health endpoint and runtime status contract |
+| [transparent-proxy.md](transparent-proxy.md) | Optional HTTP proxy listeners with header injection |
 
 ## Rules
 

@@ -293,3 +293,79 @@ Add an optional `aliases` map to `lucifer.json` of the shape `{ [name]: { path, 
 - **Dedicated alias endpoint (`POST /api/v1/alias/:name`)**. Rejected: splits audit, approval, and rule flows across two endpoints. Keeping one `/execute` endpoint means alias and non-alias commands share identical machinery.
 - **More alias types (`python`, `node`, custom interpreter templates)**. Deferred. Two types cover the v1 need; adding more is additive.
 - **First-token match with argument passthrough** (`"deploy --dry-run"` → alias `deploy` with argv `["--dry-run"]`). Deferred: requires a separate decision on how to tokenize the remainder of the command string (naive whitespace vs shell-style vs an API change), and changes the behavior of inputs that currently fall through to the shell.
+
+---
+
+## ADR-010: Transparent HTTP proxy as a separate domain on its own ports
+
+**Date**: 2026-04-17
+**Status**: Accepted
+**Deciders**: alkampfergit
+
+### Context
+
+Lucifer is primarily a command firewall, but operators also want it to act as
+a transparent HTTP proxy in front of upstream AI APIs (e.g. OpenAI). The
+proxy must inject authentication headers server-side so callers don't hold
+the credential, while preserving path, method, body, and query string.
+
+Three design axes needed decisions:
+
+1. **Where does the proxy live?** Inside `command-gateway`, inside
+   `platform-api`, or in its own domain.
+2. **Where does the config live?** Embedded in `lucifer.json` (like
+   `aliases`) or in a separate file.
+3. **Does the feature share the main gateway port?** Sub-path on the
+   existing listener, or dedicated listeners on operator-chosen ports.
+
+### Decision
+
+- **New domain `request-proxy`** with `types/`, `config/`, and `service/`
+  layers. No `api/` layer: the proxy exposes no surface on the main Express
+  app.
+- **Dedicated config file `proxy-config.json`** alongside `lucifer.json`.
+  File absent → feature disabled. File present with `{ "proxies": [] }` →
+  feature enabled, no listeners.
+- **One dedicated HTTP listener per mapping**, on an operator-chosen port.
+  Ports must not collide with each other or with the main gateway port;
+  validated at startup.
+- **Library**: `http-proxy-middleware` (well-maintained, Express-compatible,
+  wraps `http-proxy`). No bespoke proxy logic.
+- **Header semantics**: configured headers *overwrite* caller-supplied
+  headers of the same name. The primary use is credential injection where
+  the caller must not be able to override the configured value.
+
+### Consequences
+
+- (+) Clear separation: command-gateway stays focused on command firewalling.
+- (+) Secrets (proxy auth headers) live in their own file operators can
+  mount as a secret / restrict via file permissions independently of
+  `lucifer.json`.
+- (+) Opt-in: legacy installs that never create `proxy-config.json` see no
+  behavior change.
+- (+) Dedicated listeners mean proxy traffic bypasses the gateway's API-key
+  middleware and rate limiter — appropriate because the proxy has its own
+  auth model (the injected credential on the outbound side).
+- (-) Two config files to manage instead of one.
+- (-) Operators must pick and manage additional ports.
+- (-) No policy enforcement on proxied traffic beyond header injection
+  (explicitly out of scope for v1).
+
+### Alternatives Considered
+
+- **Embed proxy mappings in `lucifer.json`**. Rejected: auth headers are
+  secrets, and bundling them into the main config works against operators
+  who want to rotate credentials or mount them from a secret manager
+  independently.
+- **Sub-path on the main gateway port** (e.g. `/proxy/openai/*`). Rejected:
+  it forces the caller to know the proxy exists and rewrites path prefixes
+  — no longer "transparent". Also couples proxy lifecycle to the gateway
+  port and to its API-key middleware.
+- **Put the proxy inside `command-gateway`**. Rejected: HTTP proxying has
+  no relation to command approval or execution; mixing them would make
+  `command-gateway`'s responsibilities harder to reason about.
+- **Hand-rolled proxy using Node streams**. Rejected per the issue brief —
+  use a well-maintained library.
+- **Let configured headers *merge* with caller-supplied headers rather than
+  overwrite**. Rejected: caller-supplied `Authorization` overriding the
+  configured credential would defeat the feature's primary purpose.

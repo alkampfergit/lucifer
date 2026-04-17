@@ -52,6 +52,7 @@ function initConfig(targetDir: string) {
   const luciferJsonPath = join(configDir, 'lucifer.json');
   const apiKeysPath = join(configDir, 'api-keys.json');
   const commandRulesPath = join(configDir, 'command-rules.json');
+  const proxyConfigPath = join(configDir, 'proxy-config.json');
 
   if (existsSync(luciferJsonPath)) {
     console.log(`Config already exists: ${luciferJsonPath}`);
@@ -101,10 +102,15 @@ function initConfig(targetDir: string) {
     defaultAction: 'always_deny',
   }, null, 2) + '\n');
 
+  writeFileSync(proxyConfigPath, JSON.stringify({
+    proxies: [],
+  }, null, 2) + '\n');
+
   console.log('Config files generated:');
   console.log(`  ${luciferJsonPath}`);
   console.log(`  ${apiKeysPath}`);
   console.log(`  ${commandRulesPath}`);
+  console.log(`  ${proxyConfigPath}`);
   console.log('');
   console.log('Your API key (save this, it cannot be recovered):');
   console.log(`  ${key}`);

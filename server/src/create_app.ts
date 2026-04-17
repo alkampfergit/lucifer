@@ -19,6 +19,8 @@ import { createWebApprovalChannel } from './domains/command-gateway/service/web_
 import { createMultiApprovalChannel } from './domains/command-gateway/service/multi_approval_channel.js'
 import { registerApprovalRoutes } from './domains/command-gateway/api/register_approval_routes.js'
 import type { ApprovalChannel } from './domains/command-gateway/types/command_types.js'
+import { loadProxyConfig, validateProxyPorts } from './domains/request-proxy/config/proxy_config.js'
+import { createProxyServers, type ProxyServers } from './domains/request-proxy/service/proxy_server.js'
 import { createChildLogger, addLogFile } from './lib/logger.js'
 
 const log = createChildLogger('app')
@@ -86,6 +88,7 @@ export function createApp(options: CreateAppOptions = {}) {
   const configDir = options.configPath ? path.dirname(path.resolve(options.configPath)) : process.cwd()
   const apiKeysPath = path.join(configDir, 'api-keys.json')
   const commandRulesPath = path.join(configDir, 'command-rules.json')
+  const proxyConfigPath = path.join(configDir, 'proxy-config.json')
 
   // Resolve dataDir relative to config directory
   const resolvedDataDir = path.resolve(configDir, gatewayConfig.dataDir)
@@ -137,15 +140,28 @@ export function createApp(options: CreateAppOptions = {}) {
     log.warn('Ensure HTTPS is configured for production. API keys are transmitted in headers.')
   }
 
+  // Transparent proxy listeners (optional, separate from the gateway port)
+  let proxyServers: ProxyServers | undefined
+  const proxyConfig = loadProxyConfig(proxyConfigPath)
+  if (proxyConfig && proxyConfig.proxies.length > 0) {
+    validateProxyPorts(proxyConfig.proxies, gatewayConfig.port)
+    proxyServers = createProxyServers(proxyConfig.proxies)
+    log.info({ count: proxyConfig.proxies.length }, 'Transparent proxy mappings configured')
+  }
+
   async function start() {
     if (approvalChannel) {
       await approvalChannel.start()
+    }
+    if (proxyServers) {
+      await proxyServers.start()
     }
   }
 
   async function stop() {
     if (cleanupInterval) clearInterval(cleanupInterval)
     if (approvalChannel) await approvalChannel.stop()
+    if (proxyServers) await proxyServers.stop()
     closeDatabase()
   }
 
