@@ -204,7 +204,7 @@ gh pr list --state open --json number,title,author,statusCheckRollup \
 must be one of: `fix_started`, `inaccurate`, `no_bandwidth`, `not_used`,
 `tolerable_risk`. For the full fix workflow (triage → bump / override /
 dismiss → validate) see
-[.claude/skills/dependabot/SKILL.md](../dependabot/SKILL.md).
+[.claude/skills/gh-security-and-quality/SKILL.md](../gh-security-and-quality/SKILL.md).
 
 ## Labels
 
