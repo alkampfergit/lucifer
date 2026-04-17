@@ -16,8 +16,24 @@ metadata:
 
 Inspect and resolve the security alerts at
 `https://github.com/<owner>/<repo>/security/dependabot` by classifying each
-open alert and picking the smallest fix that closes it. Read-only inspection
-first, then the narrowest possible change.
+open alert and picking the smallest fix that closes it.
+
+## Operating contract — zero console interaction
+
+This skill runs **without asking the console anything**. From the moment it
+starts, every decision surface is the PR:
+
+- The plan is posted as the PR body.
+- Every clarification the skill would otherwise ask the user is posted as a
+  PR comment instead.
+- The skill self-enters a 5-minute polling loop and keeps going until the PR
+  is merged or closed.
+- If you hit an ambiguous situation, your options are: (a) make the safe
+  default and flag it in a PR comment, or (b) post the question to the PR
+  and wait for the next poll. Never return to the console to ask.
+
+The only console output is a one-line handoff: the PR URL plus the polling
+cadence. After that, the skill is silent until the PR closes.
 
 ## Inputs and assumptions
 
@@ -122,11 +138,21 @@ EOF
 
 Record the PR number and URL — the remaining steps poll it.
 
-## Step 4: Poll the PR for instructions
+## Step 4: Self-enter the 5-minute polling loop
 
-Until the PR is closed, poll every 5 minutes for new comments or review
-feedback. Do not silently apply fixes between polls — the PR *is* the
-approval surface.
+The skill must start the loop itself. Do not print instructions asking the
+user to run `/loop`. Invoke the `loop` skill directly, passing a polling
+command that re-enters this skill's poll phase:
+
+```
+Skill("loop", args="5m dependabot poll PR <N>")
+```
+
+The `loop` skill will fire the polling command every 5 minutes, including
+the first cycle immediately after the PR is opened. The skill is now
+hands-free — the console can be closed.
+
+### What each poll cycle does
 
 ```bash
 # New issue-level comments on the PR
@@ -136,16 +162,40 @@ gh api repos/<owner>/<repo>/issues/<N>/comments \
 # Review-level comments (line-attached feedback)
 gh api repos/<owner>/<repo>/pulls/<N>/comments \
   --jq '.[] | {id, user: .user.login, path, line, body}'
+
+# Review-level state (approved, requested changes, etc.)
+gh api repos/<owner>/<repo>/pulls/<N>/reviews \
+  --jq '.[] | {id, user: .user.login, state, submitted_at, body}'
+
+# Current PR state — stop the loop if closed or merged
+gh pr view <N> --json state,mergedAt,closedAt
 ```
 
-Keep an in-memory watermark (highest comment id seen) so repeated polls do
-not redo work. Act only when the owner explicitly approves a row, asks for a
-change, or tells you to close the PR. "Looks good" from a bot is **not**
-approval — wait for the human.
+Persist a watermark (highest comment id seen) in a scratch file inside the
+PR branch, e.g. `.dependabot-watermark`, so repeated polls do not redo
+work. Commit the watermark updates to the branch — this keeps state across
+loop iterations even if the skill process restarts.
 
-If five poll cycles pass with no new input, post a single nudge comment
-pointing at the plan table, then keep polling. Do not nag more than once
-per hour.
+### Decision rules inside the loop
+
+| Signal in the poll | Action |
+|--------------------|--------|
+| New comment approving a row | Apply that row's fix (Step 5), push, comment back with the commit SHA |
+| New comment redirecting a row | Update the PR body plan table to match, then apply the new direction |
+| New comment blocking a row | Mark that row as skipped in the plan and move on |
+| Line-level review comment on a file change | Amend the affected file, push, reply to the comment with the commit SHA |
+| PR closed with no merge | Exit the loop, delete the branch, do nothing else |
+| PR merged | Reconcile the security tab (Step 6), then exit the loop |
+| No new signal for 60 min (12 cycles) | Post one nudge comment pointing at unresolved rows. Do not nag again before another 60 minutes |
+
+Never ask the console a question. If the skill is blocked by missing
+information, it must post the question as a PR comment and keep polling.
+
+### Stopping the loop
+
+The loop exits when `gh pr view` reports `state == "MERGED"` or
+`state == "CLOSED"`. On exit, run Step 6 if merged, otherwise leave the
+branch for the user to inspect.
 
 ## Step 5: Apply fixes
 
@@ -170,8 +220,9 @@ npm audit --json | jq '.metadata.vulnerabilities'
 npm run lint && npm run test && npm run build
 ```
 
-If the patch is behind a major bump, confirm with the user before crossing
-the major boundary.
+If the patch is behind a major bump, do not apply it silently. Post a PR
+comment with the proposed bump, affected callers, and the known breaking
+changes, and wait for explicit approval in a later poll cycle.
 
 ### 5c. Add an npm override for a transitive
 
@@ -222,7 +273,8 @@ Valid `dismissed_reason` values: `fix_started`, `inaccurate`, `no_bandwidth`,
   the `first_patched_version` from the advisory or the current major.
 - Do not add `npm audit fix --force` to CI. A force-fix can cross majors on
   production deps without review.
-- Do not dismiss runtime alerts without explicit user approval.
+- Do not dismiss runtime alerts without explicit approval posted **in a PR
+  comment**. Never use the console channel to confirm a dismissal.
 - Do not bundle a security fix with an unrelated feature change.
 - Do not silently remove an `overrides` entry — leave a comment (or commit
   message) that says which alert it resolved, so a later bump can retire it.
