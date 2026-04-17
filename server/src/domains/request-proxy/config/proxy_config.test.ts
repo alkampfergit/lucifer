@@ -86,7 +86,7 @@ describe('loadProxyConfig', () => {
   it('rejects a non-http baseUrl', () => {
     const dir = createTempDir();
     const filePath = writeProxyFile(dir, {
-      proxies: [{ port: 6060, baseUrl: 'ftp://api.openai.com' }],
+      proxies: [{ port: 6060, baseUrl: 'file:///tmp/not-a-proxy' }],
     });
     expect(() => loadProxyConfig(filePath)).toThrow('failed validation');
   });
