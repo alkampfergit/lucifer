@@ -136,6 +136,7 @@ dist
 
 # Claude Code local settings (machine-specific, not for version control)
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
 
 # Vite logs files
 vite.config.js.timestamp-*
