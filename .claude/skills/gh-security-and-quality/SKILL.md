@@ -182,13 +182,33 @@ Every 5-minute fire delegates to a subagent (Agent tool,
 |----------------|------------------|
 | No new activity | `nothing to do` — literally that string, nothing else |
 | Scope selected | `scope: <selection>` |
-| Actionable reviewer / Copilot comment | `action: <summary> (watermark=<new_id>)` |
+| Any copilot/bot comment (including confirmations) | `action: <summary> (watermark=<new_id>)` |
+| Other reviewer comment requiring action | `action: <summary> (watermark=<new_id>)` |
 | Failing check | `fail: <check-name>` |
-| Closure / merge instruction | `close: <phrase> by <user>` or `tag-ok: <tag>` |
+| Closure / merge instruction from the author | `close: <phrase> by <user>` or `tag-ok: <tag>` |
 | PR merged or closed externally | `merged` or `closed` |
 
 Pass the parent's last comment-id watermark into the subagent; it returns
 the new watermark. The parent only wakes to do real work.
+
+**Subagent brief — mandatory contents:**
+
+- the PR number and repo
+- the current watermark
+- **the gh-auth login** (treated as a self-echo) plus the rule:
+  *"comments by `<login>` are the session's own echoes — IGNORE unless
+  they contain a trigger phrase (`scope: `, `tag `, `merge it`,
+  `land it`, `close this`, `release as`)"*
+- **bot-never-filter rule:** *"any author containing `copilot` or
+  `bot` is ALWAYS surfaced as `action:` regardless of tone —
+  Copilot confirmations mean the parent must resolve the threads
+  via the GraphQL `resolveReviewThread` mutation"*
+
+**Watermark discipline:** advance the watermark past every comment the
+parent posts **immediately after posting**, so the next cron fire
+doesn't see its own echo even if the self-filter misses a trigger
+phrase. When the gh auth user and the repo owner are the same person,
+this discipline is the only way to distinguish intent.
 
 ## Step 4: Apply fixes for the chosen scope
 
@@ -279,7 +299,10 @@ tab.
 ## Step 5: Validate, ship, hand off
 
 1. Run `npm audit`, `npm run lint`, `npm run test`, `npm run build` (or
-   the equivalent for the language).
+   the equivalent for the language). Do **not** use the 5-minute poll
+   to wait on CI after the push — `github-pr-fixer` will block with
+   `gh pr checks <N> --watch --fail-fast`, which returns only when
+   every check reaches a terminal state.
 2. Re-query the surfaces in scope and confirm the open-alert count dropped
    as expected.
 3. Update the PR body with the final resolution table (`alert # → fix

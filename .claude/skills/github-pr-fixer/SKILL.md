@@ -189,21 +189,52 @@ Brief the subagent with:
 - the PR number and repo
 - the last comment-id / review-id watermark the parent has seen
 - the list of trigger phrases the author can post (`merge it`, `land it`,
-  `release as X.Y.Z`, `close this`)
+  `release as X.Y.Z`, `close this`, `scope: ...`, `tag X.Y.Z`)
+- **the gh-auth login to treat as a self-echo** (see below)
+- **the explicit instruction that bot / Copilot authors are ALWAYS
+  surfaced** (see below)
+
+### Self-echo filter: what NOT to resurface
+
+`gh pr comment` posts as the gh-authenticated user, so every status
+update the parent writes is attributed to that login. The subagent has
+no other way to know which comments are self-echoes. Tell it exactly:
+
+> Comments authored by `<gh-auth-login>` are the session's own echoes —
+> IGNORE them unless they explicitly contain a trigger phrase. When
+> the gh auth user and the repo owner are the same person, this
+> self-filter is mandatory.
+
+**Watermark discipline:** advance the watermark past every comment the
+parent posts, **immediately after the push returns a comment id**, so
+the next cycle never sees its own message even if the self-filter
+misses a new trigger phrase.
+
+### Counterpart rule: NEVER filter bot reviewers
+
+A subagent that interprets a Copilot confirmation as "no action needed"
+will silently drop threads that still need explicit
+GraphQL-`resolveReviewThread` resolution. The brief must force the
+opposite: *every* comment authored by a login containing `copilot` or
+`bot` is surfaced as `action:`, regardless of tone. Interpretation
+("confirmation → resolve threads", "new concern → fix round") lives in
+the parent, not the subagent.
 
 Demand a **laconic** return contract: one line.
 
 | Subagent finds | Subagent returns |
 |----------------|------------------|
 | No new comments, no state change | `nothing to do` — literally that string, nothing else |
-| New reviewer/Copilot comment requiring action | `action: <one-line summary>` + new watermark |
+| Any copilot/bot comment (including confirmations) | `action: <one-line summary>` + new watermark |
+| New human reviewer comment requiring action | `action: <one-line summary>` + new watermark |
 | Failing check detected | `fail: <check-name>` + link |
-| Explicit closure phrase from the author | `close: <phrase> by <user>` |
+| Explicit closure / tag / scope phrase from the author | `close: <phrase> by <user>` / `tag-ok: <version>` / `scope: <selection>` |
 | PR merged or closed externally | `merged` or `closed` |
 
 The parent only wakes to do work when the subagent returns something
-other than `nothing to do`. This keeps the parent's context from filling
-with bot comments, Quality-Gate badges, and self-echoes.
+other than `nothing to do`. This keeps the parent's context from
+filling with bot badges, self-echoes, and SonarCloud Quality-Gate
+decorations.
 
 After CI has finished (the `--watch` call returned), the skill is not done.
 While the PR is open, the skill owns it. Stay active and poll every
