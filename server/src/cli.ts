@@ -9,6 +9,7 @@ import { getDatabase } from './domains/command-gateway/repository/database.js';
 import { createAuditLog } from './domains/command-gateway/repository/audit_log.js';
 import { createApprovalStore } from './domains/command-gateway/repository/approval_store.js';
 import { runTelegramPairing } from './domains/command-gateway/service/telegram_pairing.js';
+import { redactApiKeyName } from './domains/command-gateway/service/redact_api_key_name.js';
 import { getTelegramToken } from './domains/command-gateway/config/gateway_config.js';
 import { updateJsonConfig } from './lib/json_config_writer.js';
 import { logger } from './lib/logger.js';
@@ -145,7 +146,7 @@ async function runLog(limit: number) {
     const time = entry.ts.replace('T', ' ').replace(/\.\d+Z$/, 'Z');
     const parts = [time, entry.type.toUpperCase().padEnd(16)];
     if (entry.command) parts.push(entry.command);
-    if (entry.apiKeyName) parts.push(`key=${entry.apiKeyName}`);
+    if (entry.apiKeyName) parts.push(`key=${redactApiKeyName(entry.apiKeyName)}`);
     if (entry.exitCode !== undefined && entry.exitCode !== null) parts.push(`exit=${entry.exitCode}`);
     if (entry.durationMs !== undefined && entry.durationMs !== null) parts.push(`${entry.durationMs}ms`);
     if (entry.error) parts.push(`error: ${entry.error}`);

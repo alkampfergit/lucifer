@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Router, Request, Response } from 'express';
+import rateLimit from 'express-rate-limit';
 import type {
   ApprovalChannel, RequestStatus, ErrorResponse, LuciferConfig,
 } from '../types/command_types.js';
@@ -58,7 +59,15 @@ export function registerExecuteRoutes(deps: ExecuteRouteDeps): void {
     process.env.NODE_ENV === 'development' ? 1000 : config.rateLimitPerMinute,
   );
 
-  router.post('/api/v1/execute', async (req: Request, res: Response) => {
+  const ipRateLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: process.env.NODE_ENV === 'development' ? 10_000 : config.rateLimitPerMinute,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { code: 'RATE_LIMITED', message: 'Rate limit exceeded. Try again later.', retryable: true },
+  });
+
+  router.post('/api/v1/execute', ipRateLimiter, async (req: Request, res: Response) => {
     const rawKey = req.headers['x-api-key'] as string | undefined;
     const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.socket.remoteAddress ?? 'unknown';
     const { command: rawCommand, cwd } = req.body as { command?: string; cwd?: string };

@@ -1,5 +1,6 @@
 import type { ApprovalChannel, ApprovalDecision, ApprovalMatchType } from '../types/command_types.js';
 import { createChildLogger } from '../../../lib/logger.js';
+import { redactApiKeyName } from './redact_api_key_name.js';
 
 const log = createChildLogger('auto-approve');
 
@@ -7,7 +8,7 @@ export function createAutoApproveChannel(): ApprovalChannel {
   return {
     async requestApproval(command, apiKeyName, ip, requestId, riskAnalysis) {
       log.info(
-        { requestId, command, apiKeyName, ip, risk: riskAnalysis.level },
+        { requestId, command, apiKeyName: redactApiKeyName(apiKeyName), ip, risk: riskAnalysis.level },
         'AUTO-APPROVE: Command approved without Telegram',
       );
       if (riskAnalysis.warnings.length > 0) {
