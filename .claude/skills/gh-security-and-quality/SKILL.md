@@ -210,6 +210,18 @@ doesn't see its own echo even if the self-filter misses a trigger
 phrase. When the gh auth user and the repo owner are the same person,
 this discipline is the only way to distinguish intent.
 
+**Watermark = highest *processed* id, never highest *seen* id.** When
+priming the poll after opening the PR, do NOT set the watermark to
+`max(comment_id)` on the PR. An owner `scope:` / `tag ` / `merge it`
+instruction can arrive in the seconds between `gh pr create` and the
+first poll; if that comment's id *becomes* the watermark, the
+`select(.id > watermark)` filter drops it forever. Either process the
+candidate comment at the proposed watermark **before** advancing past
+it, or prime to `max(comment_id) - 1` / to the parent's last own
+comment id. The invariant is: watermark = "the id the parent has
+already acted on or knowingly discarded", never "the id it merely
+noticed existed".
+
 ## Step 4: Apply fixes for the chosen scope
 
 ### 4a. Dependabot subflow

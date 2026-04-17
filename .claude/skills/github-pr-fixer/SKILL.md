@@ -210,6 +210,18 @@ parent posts, **immediately after the push returns a comment id**, so
 the next cycle never sees its own message even if the self-filter
 misses a new trigger phrase.
 
+**Watermark = highest *processed* id, never highest *seen* id.** When
+priming the poll after opening a PR, do NOT naively set the watermark
+to `max(comment_id)` on the PR. A user instruction can arrive in the
+~60s between `gh pr create` and the first poll; if you set the
+watermark to that comment's id, the subsequent `select(.id > watermark)`
+will filter it out forever and the instruction is invisible. Either
+(a) read the candidate comment at the proposed watermark and process
+it as if it had just arrived before advancing, or (b) prime to
+`max(comment_id) - 1`, or (c) prime to the parent's last own comment
+id. Invariant: the watermark is the id the parent has already acted on
+or knowingly discarded — never the id it merely noticed existed.
+
 ### Counterpart rule: NEVER filter bot reviewers
 
 A subagent that interprets a Copilot confirmation as "no action needed"
