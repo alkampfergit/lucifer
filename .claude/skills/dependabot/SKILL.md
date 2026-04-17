@@ -266,7 +266,10 @@ Once the local pipeline is green and the fixes are pushed:
    (bump / override / merged #X / dismissed)`) and flip it to ready with
    `gh pr ready <N>`.
 4. **Stop the 5-minute poll.** Call `CronDelete` with the job id from
-   Step 4 so the dependabot skill is no longer polling.
+   Step 4 so the dependabot skill is no longer polling. CI checks kicked
+   off by the push do **not** need 5-minute polling — `github-pr-fixer`
+   will wait on them with `gh pr checks <N> --watch --fail-fast`, which
+   blocks until every check has a terminal state.
 5. Post a hand-off comment on the PR: "Local pipeline green, handing off
    to `github-pr-fixer`."
 6. Invoke the `github-pr-fixer` skill with the PR number. It takes

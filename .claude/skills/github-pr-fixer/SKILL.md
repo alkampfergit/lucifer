@@ -155,10 +155,34 @@ the line-level comments themselves and the `gstack:status` audit
 comment. Post the resolution summary **after** the inline replies so
 the thread reads in order.
 
+## Waiting for CI — block with `gh pr checks --watch`, don't poll
+
+While CI is still running (standard `validate`, `build-docker`, `CodeQL`,
+`SonarCloud`, etc.), **do not** set up the 5-minute poll. `gh` already has
+the right tool for this: it blocks until every check completes and streams
+updates as it goes.
+
+```bash
+gh pr checks <N> --watch --fail-fast
+```
+
+That call returns only when every check has a terminal state. Use it
+immediately after pushing a round and before arming the poll — one
+blocking syscall is cheaper and faster than 5-minute heartbeats into a
+pending CI run.
+
+Once the call returns:
+
+- If the exit code is non-zero: CI failed. Jump to
+  `references/check-diagnosis.md` without waiting.
+- If the exit code is zero: CI is green. Now switch to the 5-minute poll
+  below for reviewer / closure feedback.
+
 ## Active polling — do not go idle while the PR is open
 
-The skill is not done when checks go green. While the PR is open, the skill
-owns it. Stay active and poll every **5 minutes** for:
+After CI has finished (the `--watch` call returned), the skill is not done.
+While the PR is open, the skill owns it. Stay active and poll every
+**5 minutes** for:
 
 - new PR comments (including reviewer comments, bot comments, and new
   check-run results)
