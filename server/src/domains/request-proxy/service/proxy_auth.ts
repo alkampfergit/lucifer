@@ -45,14 +45,25 @@ export async function authorizeProxyRequest(
   const requestId = generateRequestId ? generateRequestId() : randomUUID();
   const authMode = mapping.authMode ?? 'none';
 
+  // Extract non-sensitive primitives once. Downstream logging/audit reads
+  // these locals, never the full mapping object — this keeps the taint-flow
+  // analyzer from painting `port`/`method`/`path` as derived from the
+  // header-configuration fields (`apiKeyHeader`, `apiKeyPrefix`), which are
+  // only header *names*, not credentials.
+  const port = mapping.port;
+  const method = req.method ?? 'GET';
+  const path = req.url ?? '/';
+  const ip = callerIp(req);
+
   if (authMode === 'none') {
     return { kind: 'pass', requestId };
   }
 
-  if (mapping.apiKeyHeader === undefined) {
+  const headerName = mapping.apiKeyHeader;
+  if (headerName === undefined) {
     // Config loader should reject this, but fail closed if we ever see it.
     recordAudit(audit, {
-      type: 'proxy_auth_denied', requestId, mapping, req,
+      type: 'proxy_auth_denied', requestId, port, method, path, ip,
       reason: 'apiKeyHeader not configured',
     });
     return {
@@ -64,7 +75,7 @@ export async function authorizeProxyRequest(
 
   if (!validator) {
     recordAudit(audit, {
-      type: 'proxy_auth_denied', requestId, mapping, req,
+      type: 'proxy_auth_denied', requestId, port, method, path, ip,
       reason: 'no validator wired',
     });
     return {
@@ -74,10 +85,10 @@ export async function authorizeProxyRequest(
     };
   }
 
-  const rawToken = extractToken(req, mapping.apiKeyHeader, mapping.apiKeyPrefix);
+  const rawToken = extractToken(req, headerName, mapping.apiKeyPrefix);
   if (rawToken === undefined) {
     recordAudit(audit, {
-      type: 'proxy_auth_denied', requestId, mapping, req,
+      type: 'proxy_auth_denied', requestId, port, method, path, ip,
       reason: 'missing or malformed header',
     });
     return {
@@ -90,7 +101,7 @@ export async function authorizeProxyRequest(
   const identity = validator.validate(rawToken);
   if (!identity) {
     recordAudit(audit, {
-      type: 'proxy_auth_denied', requestId, mapping, req,
+      type: 'proxy_auth_denied', requestId, port, method, path, ip,
       reason: 'invalid token',
     });
     return {
@@ -102,7 +113,7 @@ export async function authorizeProxyRequest(
 
   if (authMode === 'api-key') {
     recordAudit(audit, {
-      type: 'proxy_auth_ok', requestId, mapping, req, identity,
+      type: 'proxy_auth_ok', requestId, port, method, path, ip, identity,
     });
     return { kind: 'pass', requestId, keyId: identity.keyId, keyName: identity.keyName };
   }
@@ -110,7 +121,7 @@ export async function authorizeProxyRequest(
   // authMode === 'api-key-telegram'
   if (!approvalRequester) {
     recordAudit(audit, {
-      type: 'proxy_approval_error', requestId, mapping, req, identity,
+      type: 'proxy_approval_error', requestId, port, method, path, ip, identity,
       reason: 'no approval requester wired',
     });
     return {
@@ -120,34 +131,36 @@ export async function authorizeProxyRequest(
     };
   }
 
-  const cacheKey = { keyId: identity.keyId, port: mapping.port };
+  const cacheKey = { keyId: identity.keyId, port };
   if (cache?.has(cacheKey)) {
     recordAudit(audit, {
-      type: 'proxy_approval_approved', requestId, mapping, req, identity, source: 'cache',
+      type: 'proxy_approval_approved', requestId, port, method, path, ip, identity, source: 'cache',
     });
     return { kind: 'pass', requestId, keyId: identity.keyId, keyName: identity.keyName };
   }
 
   const approvalCtx: ProxyApprovalContext = {
-    port: mapping.port,
+    port,
     baseUrl: mapping.baseUrl,
-    method: req.method ?? 'GET',
-    path: req.url ?? '/',
+    method,
+    path,
     keyId: identity.keyId,
     keyName: identity.keyName,
-    ip: callerIp(req),
+    ip,
     requestId,
   };
 
-  recordAudit(audit, { type: 'proxy_approval_requested', requestId, mapping, req, identity });
+  recordAudit(audit, {
+    type: 'proxy_approval_requested', requestId, port, method, path, ip, identity,
+  });
 
   let outcome;
   try {
     outcome = await approvalRequester.request(approvalCtx);
   } catch (err) {
-    log.error({ err, requestId, port: mapping.port }, 'Approval requester threw');
+    log.error({ err, requestId, port }, 'Approval requester threw');
     recordAudit(audit, {
-      type: 'proxy_approval_error', requestId, mapping, req, identity,
+      type: 'proxy_approval_error', requestId, port, method, path, ip, identity,
       reason: err instanceof Error ? err.message : 'approval error',
     });
     return {
@@ -161,13 +174,15 @@ export async function authorizeProxyRequest(
     const ttl = mapping.telegramApprovalTtlSeconds ?? DEFAULT_PROXY_APPROVAL_TTL_SECONDS;
     cache?.set(cacheKey, ttl);
     recordAudit(audit, {
-      type: 'proxy_approval_approved', requestId, mapping, req, identity, source: 'telegram',
+      type: 'proxy_approval_approved', requestId, port, method, path, ip, identity, source: 'telegram',
     });
     return { kind: 'pass', requestId, keyId: identity.keyId, keyName: identity.keyName };
   }
 
   if (outcome === 'timeout') {
-    recordAudit(audit, { type: 'proxy_approval_timeout', requestId, mapping, req, identity });
+    recordAudit(audit, {
+      type: 'proxy_approval_timeout', requestId, port, method, path, ip, identity,
+    });
     return {
       kind: 'reject', requestId,
       status: 408, code: 'approval_timeout',
@@ -177,7 +192,7 @@ export async function authorizeProxyRequest(
 
   if (outcome === 'error') {
     recordAudit(audit, {
-      type: 'proxy_approval_error', requestId, mapping, req, identity,
+      type: 'proxy_approval_error', requestId, port, method, path, ip, identity,
       reason: 'approval channel error',
     });
     return {
@@ -188,7 +203,9 @@ export async function authorizeProxyRequest(
   }
 
   // outcome === 'denied'
-  recordAudit(audit, { type: 'proxy_approval_denied', requestId, mapping, req, identity });
+  recordAudit(audit, {
+    type: 'proxy_approval_denied', requestId, port, method, path, ip, identity,
+  });
   return {
     kind: 'reject', requestId,
     status: 403, code: 'forbidden',
@@ -231,8 +248,10 @@ function callerIp(req: http.IncomingMessage): string {
 interface AuditArgs {
   type: ProxyAuditEventType;
   requestId: string;
-  mapping: ProxyMapping;
-  req: http.IncomingMessage;
+  port: number;
+  method: string;
+  path: string;
+  ip: string;
   identity?: { keyId: string; keyName: string };
   reason?: string;
   source?: 'telegram' | 'cache';
@@ -244,12 +263,12 @@ function recordAudit(sink: ProxyAuditSink | undefined, args: AuditArgs): void {
     type: args.type,
     ts: new Date().toISOString(),
     requestId: args.requestId,
-    port: args.mapping.port,
-    method: args.req.method ?? 'GET',
-    path: args.req.url ?? '/',
+    port: args.port,
+    method: args.method,
+    path: args.path,
     keyId: args.identity?.keyId,
     keyName: args.identity?.keyName,
-    ip: callerIp(args.req),
+    ip: args.ip,
     reason: args.reason,
     source: args.source,
   };

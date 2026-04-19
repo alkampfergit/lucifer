@@ -55,7 +55,7 @@ function throwingRequester(err: Error): ProxyApprovalRequester {
 
 const MAPPING_NONE: ProxyMapping = { port: 6060, baseUrl: 'https://api.openai.com' };
 
-const MAPPING_APIKEY_BEARER: ProxyMapping = {
+const MAPPING_BEARER_MODE: ProxyMapping = {
   port: 6060,
   baseUrl: 'https://api.openai.com',
   authMode: 'api-key',
@@ -63,7 +63,7 @@ const MAPPING_APIKEY_BEARER: ProxyMapping = {
   apiKeyPrefix: 'Bearer ',
 };
 
-const MAPPING_APIKEY_XAPIKEY: ProxyMapping = {
+const MAPPING_XHEADER_MODE: ProxyMapping = {
   port: 7070,
   baseUrl: 'https://api.anthropic.com',
   authMode: 'api-key',
@@ -103,7 +103,7 @@ describe('authorizeProxyRequest', () => {
 
       const decision = await authorizeProxyRequest(
         fakeRequest({ authorization: 'Bearer luc_openai' }),
-        { mapping: MAPPING_APIKEY_BEARER, validator, audit: audit.sink },
+        { mapping: MAPPING_BEARER_MODE, validator, audit: audit.sink },
       );
 
       expect(decision.kind).toBe('pass');
@@ -118,7 +118,7 @@ describe('authorizeProxyRequest', () => {
 
       const decision = await authorizeProxyRequest(
         fakeRequest({ 'x-api-key': 'luc_anthropic' }),
-        { mapping: MAPPING_APIKEY_XAPIKEY, validator },
+        { mapping: MAPPING_XHEADER_MODE, validator },
       );
 
       expect(decision.kind).toBe('pass');
@@ -130,7 +130,7 @@ describe('authorizeProxyRequest', () => {
       const decision = await authorizeProxyRequest(
         // Node lowercases incoming header names; simulate that.
         fakeRequest({ 'x-api-key': 'luc_x' }),
-        { mapping: { ...MAPPING_APIKEY_XAPIKEY, apiKeyHeader: 'X-API-Key' }, validator },
+        { mapping: { ...MAPPING_XHEADER_MODE, apiKeyHeader: 'X-API-Key' }, validator },
       );
 
       expect(decision.kind).toBe('pass');
@@ -142,7 +142,7 @@ describe('authorizeProxyRequest', () => {
 
       const decision = await authorizeProxyRequest(
         fakeRequest({}),
-        { mapping: MAPPING_APIKEY_BEARER, validator, audit: audit.sink },
+        { mapping: MAPPING_BEARER_MODE, validator, audit: audit.sink },
       );
 
       expect(decision.kind).toBe('reject');
@@ -157,7 +157,7 @@ describe('authorizeProxyRequest', () => {
 
       const decision = await authorizeProxyRequest(
         fakeRequest({ authorization: 'luc_openai' }), // missing "Bearer "
-        { mapping: MAPPING_APIKEY_BEARER, validator },
+        { mapping: MAPPING_BEARER_MODE, validator },
       );
 
       expect(decision.kind).toBe('reject');
@@ -170,7 +170,7 @@ describe('authorizeProxyRequest', () => {
 
       const decision = await authorizeProxyRequest(
         fakeRequest({ authorization: 'Bearer ' }),
-        { mapping: MAPPING_APIKEY_BEARER, validator },
+        { mapping: MAPPING_BEARER_MODE, validator },
       );
 
       expect(decision.kind).toBe('reject');
@@ -183,7 +183,7 @@ describe('authorizeProxyRequest', () => {
 
       const decision = await authorizeProxyRequest(
         fakeRequest({ authorization: 'Bearer unknown-token' }),
-        { mapping: MAPPING_APIKEY_BEARER, validator },
+        { mapping: MAPPING_BEARER_MODE, validator },
       );
 
       expect(decision.kind).toBe('reject');
@@ -194,7 +194,7 @@ describe('authorizeProxyRequest', () => {
     it('returns 500 when no validator is wired', async () => {
       const decision = await authorizeProxyRequest(
         fakeRequest({ authorization: 'Bearer x' }),
-        { mapping: MAPPING_APIKEY_BEARER },
+        { mapping: MAPPING_BEARER_MODE },
       );
 
       expect(decision.kind).toBe('reject');
