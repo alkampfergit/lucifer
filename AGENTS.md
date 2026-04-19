@@ -58,6 +58,7 @@
 | Terminology | [docs/context/GLOSSARY.md](docs/context/GLOSSARY.md) |
 | Decisions and ADRs | [docs/context/DECISIONS.md](docs/context/DECISIONS.md) |
 | Feature specs | [docs/specs/README.md](docs/specs/README.md) |
+| Configuration reference (env vars, logging, Docker, file layout) | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) |
 | Repeatable task workflows | [.claude/skills/](.claude/skills/) |
 | Output templates | [templates/](templates/) |
 
