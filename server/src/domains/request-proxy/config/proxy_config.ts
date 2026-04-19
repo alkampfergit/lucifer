@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { ProxyConfig, ProxyMapping } from '../types/proxy_types.js';
+import type { ProxyAuthMode, ProxyConfig, ProxyMapping } from '../types/proxy_types.js';
 import { loadJsonConfig } from '../../../lib/json_config_loader.js';
 
 function isValidPort(value: unknown): value is number {
@@ -22,6 +22,10 @@ function isValidHeaders(value: unknown): value is Record<string, string> {
   return Object.values(value as Record<string, unknown>).every((v) => typeof v === 'string');
 }
 
+function isValidAuthMode(value: unknown): value is ProxyAuthMode {
+  return value === 'none' || value === 'api-key' || value === 'api-key-telegram';
+}
+
 function isProxyMapping(value: unknown): value is ProxyMapping {
   if (typeof value !== 'object' || value === null) return false;
   const m = value as Record<string, unknown>;
@@ -29,6 +33,26 @@ function isProxyMapping(value: unknown): value is ProxyMapping {
   if (!isValidBaseUrl(m.baseUrl)) return false;
   if (m.headers !== undefined && !isValidHeaders(m.headers)) return false;
   if (m.host !== undefined && (typeof m.host !== 'string' || m.host.length === 0)) return false;
+
+  if (m.authMode !== undefined && !isValidAuthMode(m.authMode)) return false;
+  if (m.apiKeyHeader !== undefined && (typeof m.apiKeyHeader !== 'string' || m.apiKeyHeader.length === 0)) return false;
+  if (m.apiKeyPrefix !== undefined && typeof m.apiKeyPrefix !== 'string') return false;
+  if (
+    m.telegramApprovalTtlSeconds !== undefined &&
+    (typeof m.telegramApprovalTtlSeconds !== 'number'
+      || !Number.isInteger(m.telegramApprovalTtlSeconds)
+      || m.telegramApprovalTtlSeconds < 0)
+  ) {
+    return false;
+  }
+
+  // When auth is required, the caller header name is mandatory. Fail fast at
+  // load time rather than at the first request — the operator wants a
+  // descriptive startup error, not a 500 later.
+  if (m.authMode !== undefined && m.authMode !== 'none' && m.apiKeyHeader === undefined) {
+    return false;
+  }
+
   return true;
 }
 

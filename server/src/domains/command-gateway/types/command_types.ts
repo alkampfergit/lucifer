@@ -112,9 +112,27 @@ export interface LuciferConfig {
   aliases?: AliasesConfig;
 }
 
+export type AuditEntryType =
+  | 'request'
+  | 'rule_match'
+  | 'approval_check'
+  | 'telegram_sent'
+  | 'web_sent'
+  | 'approved'
+  | 'denied'
+  | 'executed'
+  | 'error'
+  | 'proxy_auth_ok'
+  | 'proxy_auth_denied'
+  | 'proxy_approval_requested'
+  | 'proxy_approval_approved'
+  | 'proxy_approval_denied'
+  | 'proxy_approval_timeout'
+  | 'proxy_approval_error';
+
 export interface AuditEntry {
   ts: string;
-  type: 'request' | 'rule_match' | 'approval_check' | 'telegram_sent' | 'web_sent' | 'approved' | 'denied' | 'executed' | 'error';
+  type: AuditEntryType;
   requestId: string;
   command?: string;
   apiKeyName?: string;

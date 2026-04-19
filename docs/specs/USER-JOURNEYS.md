@@ -36,15 +36,16 @@ This root file is the navigation layer. Keep detailed journeys in
 | [Command Execution & Approval](journeys/command-execution-and-approval.md) | Agent command submission plus Telegram, web admin, and multi-channel approval decision paths. | `J2`-`J5` | 15 | `15 covered`, `0 partial`, `0 uncovered` |
 | [Security & Cached Approvals](journeys/security-and-cached-approvals.md) | Authorization, risk controls, rate limiting, and reuse of prior approvals. | `J6`-`J7` | 7 | `7 covered`, `0 partial`, `0 uncovered` |
 | [Operations & Configuration](journeys/operations-and-configuration.md) | Operator observability, development-mode auto-approve, and JSON-based runtime configuration. | `J8`-`J10` | 7 | `7 covered`, `0 partial`, `0 uncovered` |
+| [Transparent Proxy Access](journeys/transparent-proxy-access.md) | Authentication and Telegram approval for the transparent HTTP proxy listeners. | `J11`-`J13` | 10 | `10 covered`, `0 partial`, `0 uncovered` |
 
 ## Coverage Summary
 
 | Status | Count | Percentage |
 |---|---|---|
-| `covered` | 35 | 100% |
+| `covered` | 45 | 100% |
 | `partial` | 0 | 0% |
 | `uncovered` | 0 | 0% |
-| **Total** | **35** | |
+| **Total** | **45** | |
 
 ## Debt Items
 

@@ -1,7 +1,12 @@
-import { describe, it, expect, afterEach, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, afterEach, beforeAll, afterAll, vi } from 'vitest';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createProxyServers, type ProxyServers } from './proxy_server.js';
+import type {
+  ProxyApprovalOutcome,
+  ProxyApprovalRequester,
+  ProxyTokenValidator,
+} from '../types/proxy_types.js';
 
 interface CapturedRequest {
   method: string;
@@ -253,5 +258,285 @@ describe('createProxyServers', () => {
     await expect(proxies.stop()).resolves.toBeUndefined();
     await closeServer(squatter);
     proxies = undefined;
+  });
+
+  // ---------------------------------------------------------------------------
+  // Authentication modes
+  // ---------------------------------------------------------------------------
+
+  function validatorFor(tokenToIdentity: Record<string, { keyId: string; keyName: string }>): ProxyTokenValidator {
+    return {
+      validate(raw: string) {
+        return tokenToIdentity[raw];
+      },
+    };
+  }
+
+  function fixedRequester(outcome: ProxyApprovalOutcome): ProxyApprovalRequester {
+    return { request: vi.fn().mockResolvedValue(outcome) };
+  }
+
+  it('api-key mode accepts a valid Authorization: Bearer token (OpenAI shape) and strips it from the forwarded request', async () => {
+    const proxyPort = await findFreePort();
+    const validator = validatorFor({ 'luc_ok': { keyId: 'k1', keyName: 'openai' } });
+
+    proxies = createProxyServers(
+      [{
+        port: proxyPort,
+        baseUrl: `http://127.0.0.1:${upstream.port}`,
+        authMode: 'api-key',
+        apiKeyHeader: 'authorization',
+        apiKeyPrefix: 'Bearer ',
+        headers: { authorization: 'Bearer UPSTREAM-REAL-KEY' },
+      }],
+      { tokenValidator: validator },
+    );
+    await proxies.start();
+
+    const res = await fetch(`http://127.0.0.1:${proxyPort}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer luc_ok',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ model: 'gpt-4' }),
+    });
+
+    expect(res.status).toBe(200);
+    const captured = upstream.captured[0];
+    // Upstream sees the real credential, NOT the caller's lucifer-gate token.
+    expect(captured.headers['authorization']).toBe('Bearer UPSTREAM-REAL-KEY');
+    expect(captured.headers['authorization']).not.toContain('luc_ok');
+  });
+
+  it('api-key mode accepts an x-api-key token (Anthropic shape, no prefix)', async () => {
+    const proxyPort = await findFreePort();
+    const validator = validatorFor({ 'luc_ant': { keyId: 'k2', keyName: 'anthropic' } });
+
+    proxies = createProxyServers(
+      [{
+        port: proxyPort,
+        baseUrl: `http://127.0.0.1:${upstream.port}`,
+        authMode: 'api-key',
+        apiKeyHeader: 'x-api-key',
+        headers: { 'x-api-key': 'sk-ant-REAL' },
+      }],
+      { tokenValidator: validator },
+    );
+    await proxies.start();
+
+    const res = await fetch(`http://127.0.0.1:${proxyPort}/v1/messages`, {
+      method: 'POST',
+      headers: { 'x-api-key': 'luc_ant' },
+    });
+
+    expect(res.status).toBe(200);
+    expect(upstream.captured[0].headers['x-api-key']).toBe('sk-ant-REAL');
+  });
+
+  it('api-key mode accepts an api-key token (Azure shape)', async () => {
+    const proxyPort = await findFreePort();
+    const validator = validatorFor({ 'luc_az': { keyId: 'k3', keyName: 'azure' } });
+
+    proxies = createProxyServers(
+      [{
+        port: proxyPort,
+        baseUrl: `http://127.0.0.1:${upstream.port}`,
+        authMode: 'api-key',
+        apiKeyHeader: 'api-key',
+        headers: { 'api-key': 'azure-REAL' },
+      }],
+      { tokenValidator: validator },
+    );
+    await proxies.start();
+
+    const res = await fetch(`http://127.0.0.1:${proxyPort}/openai/deployments/foo/chat/completions`, {
+      method: 'POST',
+      headers: { 'api-key': 'luc_az' },
+    });
+
+    expect(res.status).toBe(200);
+    expect(upstream.captured[0].headers['api-key']).toBe('azure-REAL');
+  });
+
+  it('api-key mode returns 401 when the token is missing', async () => {
+    const proxyPort = await findFreePort();
+
+    proxies = createProxyServers(
+      [{
+        port: proxyPort,
+        baseUrl: `http://127.0.0.1:${upstream.port}`,
+        authMode: 'api-key',
+        apiKeyHeader: 'authorization',
+        apiKeyPrefix: 'Bearer ',
+      }],
+      { tokenValidator: validatorFor({}) },
+    );
+    await proxies.start();
+
+    const res = await fetch(`http://127.0.0.1:${proxyPort}/v1/chat/completions`, { method: 'POST' });
+
+    expect(res.status).toBe(401);
+    const json = await res.json() as { error: string };
+    expect(json.error).toBe('unauthorized');
+    expect(upstream.captured).toHaveLength(0);
+  });
+
+  it('api-key mode returns 401 when the token is wrong', async () => {
+    const proxyPort = await findFreePort();
+    const validator = validatorFor({ 'luc_good': { keyId: 'k1', keyName: 'n' } });
+
+    proxies = createProxyServers(
+      [{
+        port: proxyPort,
+        baseUrl: `http://127.0.0.1:${upstream.port}`,
+        authMode: 'api-key',
+        apiKeyHeader: 'authorization',
+        apiKeyPrefix: 'Bearer ',
+      }],
+      { tokenValidator: validator },
+    );
+    await proxies.start();
+
+    const res = await fetch(`http://127.0.0.1:${proxyPort}/`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer luc_bad' },
+    });
+
+    expect(res.status).toBe(401);
+    expect(upstream.captured).toHaveLength(0);
+  });
+
+  it('api-key-telegram mode forwards on approval and reuses the cache on the second request', async () => {
+    const proxyPort = await findFreePort();
+    const validator = validatorFor({ 'luc_t': { keyId: 'kt', keyName: 'tele' } });
+    const requester = fixedRequester('approved');
+
+    proxies = createProxyServers(
+      [{
+        port: proxyPort,
+        baseUrl: `http://127.0.0.1:${upstream.port}`,
+        authMode: 'api-key-telegram',
+        apiKeyHeader: 'authorization',
+        apiKeyPrefix: 'Bearer ',
+        telegramApprovalTtlSeconds: 60,
+        headers: { authorization: 'Bearer REAL' },
+      }],
+      { tokenValidator: validator, approvalRequester: requester },
+    );
+    await proxies.start();
+
+    const r1 = await fetch(`http://127.0.0.1:${proxyPort}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer luc_t' },
+    });
+    const r2 = await fetch(`http://127.0.0.1:${proxyPort}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer luc_t' },
+    });
+
+    expect(r1.status).toBe(200);
+    expect(r2.status).toBe(200);
+    expect(requester.request).toHaveBeenCalledTimes(1);
+    expect(upstream.captured).toHaveLength(2);
+  });
+
+  it('api-key-telegram mode returns 403 when the approver denies', async () => {
+    const proxyPort = await findFreePort();
+    const validator = validatorFor({ 'luc_t': { keyId: 'kt', keyName: 'tele' } });
+
+    proxies = createProxyServers(
+      [{
+        port: proxyPort,
+        baseUrl: `http://127.0.0.1:${upstream.port}`,
+        authMode: 'api-key-telegram',
+        apiKeyHeader: 'authorization',
+        apiKeyPrefix: 'Bearer ',
+      }],
+      { tokenValidator: validator, approvalRequester: fixedRequester('denied') },
+    );
+    await proxies.start();
+
+    const res = await fetch(`http://127.0.0.1:${proxyPort}/`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer luc_t' },
+    });
+
+    expect(res.status).toBe(403);
+    expect(upstream.captured).toHaveLength(0);
+  });
+
+  it('api-key-telegram mode returns 408 when approval times out', async () => {
+    const proxyPort = await findFreePort();
+    const validator = validatorFor({ 'luc_t': { keyId: 'kt', keyName: 'tele' } });
+
+    proxies = createProxyServers(
+      [{
+        port: proxyPort,
+        baseUrl: `http://127.0.0.1:${upstream.port}`,
+        authMode: 'api-key-telegram',
+        apiKeyHeader: 'authorization',
+        apiKeyPrefix: 'Bearer ',
+      }],
+      { tokenValidator: validator, approvalRequester: fixedRequester('timeout') },
+    );
+    await proxies.start();
+
+    const res = await fetch(`http://127.0.0.1:${proxyPort}/`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer luc_t' },
+    });
+
+    expect(res.status).toBe(408);
+  });
+
+  it('api-key-telegram mode returns 503 when the approval channel errors', async () => {
+    const proxyPort = await findFreePort();
+    const validator = validatorFor({ 'luc_t': { keyId: 'kt', keyName: 'tele' } });
+    const requester: ProxyApprovalRequester = { request: vi.fn().mockRejectedValue(new Error('bot offline')) };
+
+    proxies = createProxyServers(
+      [{
+        port: proxyPort,
+        baseUrl: `http://127.0.0.1:${upstream.port}`,
+        authMode: 'api-key-telegram',
+        apiKeyHeader: 'authorization',
+        apiKeyPrefix: 'Bearer ',
+      }],
+      { tokenValidator: validator, approvalRequester: requester },
+    );
+    await proxies.start();
+
+    const res = await fetch(`http://127.0.0.1:${proxyPort}/`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer luc_t' },
+    });
+
+    expect(res.status).toBe(503);
+  });
+
+  it('throws at construction when api-key mapping has no token validator', () => {
+    expect(() => createProxyServers(
+      [{
+        port: 9999,
+        baseUrl: `http://127.0.0.1:${upstream.port}`,
+        authMode: 'api-key',
+        apiKeyHeader: 'authorization',
+      }],
+      {},
+    )).toThrow(/no token validator/i);
+  });
+
+  it('throws at construction when api-key-telegram mapping has no approval channel', () => {
+    expect(() => createProxyServers(
+      [{
+        port: 9999,
+        baseUrl: `http://127.0.0.1:${upstream.port}`,
+        authMode: 'api-key-telegram',
+        apiKeyHeader: 'authorization',
+        apiKeyPrefix: 'Bearer ',
+      }],
+      { tokenValidator: validatorFor({}) },
+    )).toThrow(/no approval channel/i);
   });
 });

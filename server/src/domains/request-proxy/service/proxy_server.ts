@@ -1,8 +1,15 @@
 import http from 'node:http';
 import { createProxyMiddleware } from 'http-proxy-middleware';
-import type { ProxyMapping } from '../types/proxy_types.js';
+import type {
+  ProxyApprovalRequester,
+  ProxyAuditSink,
+  ProxyMapping,
+  ProxyTokenValidator,
+} from '../types/proxy_types.js';
 import { DEFAULT_PROXY_HOST } from '../types/proxy_types.js';
 import { createChildLogger } from '../../../lib/logger.js';
+import { authorizeProxyRequest } from './proxy_auth.js';
+import { createProxyApprovalCache, type ProxyApprovalCache } from './proxy_approval_cache.js';
 
 const log = createChildLogger('proxy');
 
@@ -11,18 +18,54 @@ export interface ProxyServers {
   stop(): Promise<void>;
 }
 
+/**
+ * Runtime dependencies shared by every proxy mapping. All fields are
+ * optional so that legacy callers with only open (`authMode: 'none'`)
+ * proxies keep working without wiring them up.
+ */
+export interface ProxyServerDeps {
+  tokenValidator?: ProxyTokenValidator;
+  approvalRequester?: ProxyApprovalRequester;
+  auditSink?: ProxyAuditSink;
+  /** Injected primarily so tests can isolate per-mapping cache state. */
+  approvalCacheFactory?: () => ProxyApprovalCache;
+}
+
 interface RunningProxy {
   mapping: ProxyMapping;
   server: http.Server;
+  cache: ProxyApprovalCache;
 }
 
-function buildProxyServer(mapping: ProxyMapping): http.Server {
+function writeJsonError(
+  res: http.ServerResponse,
+  status: number,
+  code: string,
+  message: string,
+): void {
+  if (res.headersSent) return;
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: code, message }));
+}
+
+function buildProxyServer(
+  mapping: ProxyMapping,
+  deps: ProxyServerDeps,
+  cache: ProxyApprovalCache,
+): http.Server {
   const middleware = createProxyMiddleware({
     target: mapping.baseUrl,
     changeOrigin: true,
     logger: log,
     on: {
       proxyReq: (proxyReq) => {
+        // Defense-in-depth: also strip the caller's auth header from the
+        // outgoing request. The incoming req.headers has already been
+        // mutated (see handler below), but proxyReq.removeHeader is the
+        // authoritative write onto the outgoing socket.
+        if (mapping.authMode && mapping.authMode !== 'none' && mapping.apiKeyHeader) {
+          proxyReq.removeHeader(mapping.apiKeyHeader);
+        }
         if (!mapping.headers) return;
         for (const [name, value] of Object.entries(mapping.headers)) {
           proxyReq.setHeader(name, value);
@@ -41,13 +84,37 @@ function buildProxyServer(mapping: ProxyMapping): http.Server {
   });
 
   return http.createServer((req, res) => {
-    middleware(req, res).catch((err: unknown) => {
-      log.error({ err, port: mapping.port }, 'Proxy middleware threw');
-      if (!res.headersSent) {
-        res.writeHead(502, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'bad_gateway', message: 'Proxy handler failed' }));
-      }
-    });
+    authorizeProxyRequest(req, {
+      mapping,
+      validator: deps.tokenValidator,
+      approvalRequester: deps.approvalRequester,
+      cache,
+      audit: deps.auditSink,
+    })
+      .then((decision) => {
+        if (decision.kind === 'reject') {
+          writeJsonError(res, decision.status, decision.code, decision.message);
+          return;
+        }
+
+        // Strip the caller's auth header from req.headers before the proxy
+        // middleware forwards it, so the lucifer-gate token does not leak
+        // upstream. The proxyReq handler also removes it on the outgoing
+        // socket (belt and braces).
+        if (mapping.authMode && mapping.authMode !== 'none' && mapping.apiKeyHeader) {
+          delete req.headers[mapping.apiKeyHeader.toLowerCase()];
+        }
+
+        middleware(req, res).catch((err: unknown) => {
+          log.error({ err, port: mapping.port }, 'Proxy middleware threw');
+          writeJsonError(res, 502, 'bad_gateway', 'Proxy handler failed');
+        });
+      })
+      .catch((err: unknown) => {
+        // authorizeProxyRequest never rejects, but guard just in case.
+        log.error({ err, port: mapping.port }, 'Proxy auth threw unexpectedly');
+        writeJsonError(res, 500, 'internal_error', 'Proxy authorization failed');
+      });
   });
 }
 
@@ -86,6 +153,30 @@ async function bestEffortClose(server: http.Server): Promise<void> {
 }
 
 /**
+ * Validate that every mapping with a non-`none` authMode has the runtime
+ * deps it needs. Called at startup so operators get a descriptive error
+ * rather than a confusing 500 on the first request.
+ */
+function validateMappingDeps(mappings: ProxyMapping[], deps: ProxyServerDeps): void {
+  for (const [index, m] of mappings.entries()) {
+    const mode = m.authMode ?? 'none';
+    if (mode === 'none') continue;
+    if (!deps.tokenValidator) {
+      throw new Error(
+        `Proxy mapping proxies[${index}] (port ${m.port}) has authMode='${mode}' but no token validator is wired. ` +
+        `Ensure api-keys.json is present so the gateway is initialized before the proxy.`,
+      );
+    }
+    if (mode === 'api-key-telegram' && !deps.approvalRequester) {
+      throw new Error(
+        `Proxy mapping proxies[${index}] (port ${m.port}) has authMode='api-key-telegram' but no approval channel is wired. ` +
+        `Configure Telegram (LUCIFER_TELEGRAM_TOKEN + chat id) or the web approval UI.`,
+      );
+    }
+  }
+}
+
+/**
  * Build proxy servers for a set of mappings. Listeners are NOT bound until
  * `start()` is called so that `createApp()` stays synchronous and config
  * errors surface before any socket is opened.
@@ -94,11 +185,22 @@ async function bestEffortClose(server: http.Server): Promise<void> {
  * started listeners are closed before the error is rethrown, so the caller
  * never observes a partially-started set.
  */
-export function createProxyServers(mappings: ProxyMapping[]): ProxyServers {
-  const running: RunningProxy[] = mappings.map((mapping) => ({
-    mapping,
-    server: buildProxyServer(mapping),
-  }));
+export function createProxyServers(
+  mappings: ProxyMapping[],
+  deps: ProxyServerDeps = {},
+): ProxyServers {
+  validateMappingDeps(mappings, deps);
+
+  const cacheFactory = deps.approvalCacheFactory ?? (() => createProxyApprovalCache());
+
+  const running: RunningProxy[] = mappings.map((mapping) => {
+    const cache = cacheFactory();
+    return {
+      mapping,
+      cache,
+      server: buildProxyServer(mapping, deps, cache),
+    };
+  });
 
   async function start(): Promise<void> {
     const started: RunningProxy[] = [];
@@ -108,7 +210,7 @@ export function createProxyServers(mappings: ProxyMapping[]): ProxyServers {
         await listenAsync(entry.server, entry.mapping.port, host);
         started.push(entry);
         log.info(
-          { port: entry.mapping.port, host, baseUrl: entry.mapping.baseUrl },
+          { port: entry.mapping.port, host, baseUrl: entry.mapping.baseUrl, authMode: entry.mapping.authMode ?? 'none' },
           'Proxy listening',
         );
       }
@@ -123,7 +225,10 @@ export function createProxyServers(mappings: ProxyMapping[]): ProxyServers {
   async function stop(): Promise<void> {
     // Best-effort close: a listener that never bound (e.g. because start()
     // failed partway) must not prevent cleanup of the rest.
-    await Promise.all(running.map(({ server }) => bestEffortClose(server)));
+    await Promise.all(running.map(({ server, cache }) => {
+      cache.clear();
+      return bestEffortClose(server);
+    }));
   }
 
   return { start, stop };
