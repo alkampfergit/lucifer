@@ -115,6 +115,43 @@ A request to `http://localhost:6060/v1/chat/completions` is forwarded to
 any caller-supplied header of the same name, so callers never need (and
 cannot spoof) the upstream credential.
 
+#### Gating the proxy with a lucifer-gate API key
+
+Each mapping can require the caller to present a valid lucifer-gate token —
+placed in the **upstream SDK's native auth header** so client SDKs work
+unmodified. The server validates the token, strips it from the outgoing
+request, and injects the real upstream credential from `headers`.
+
+```json
+{
+  "proxies": [
+    {
+      "port": 6060,
+      "baseUrl": "https://api.openai.com",
+      "authMode": "api-key",
+      "apiKeyHeader": "authorization",
+      "apiKeyPrefix": "Bearer ",
+      "headers": { "Authorization": "Bearer sk-openai-REAL" }
+    },
+    {
+      "port": 6061,
+      "baseUrl": "https://api.anthropic.com",
+      "authMode": "api-key-telegram",
+      "apiKeyHeader": "x-api-key",
+      "telegramApprovalTtlSeconds": 3600,
+      "headers": { "x-api-key": "sk-ant-REAL" }
+    }
+  ]
+}
+```
+
+Available `authMode` values:
+
+- `"none"` (default) — open proxy, today's behavior.
+- `"api-key"` — require a valid lucifer-gate token in `apiKeyHeader`.
+- `"api-key-telegram"` — `"api-key"` plus Telegram approval, cached per
+  `(api-key-id, port)` for `telegramApprovalTtlSeconds` (default 3600s).
+
 File semantics:
 
 - File missing → feature disabled (no behavior change for existing installs).
@@ -125,6 +162,9 @@ File semantics:
 - Listeners bind to `127.0.0.1` by default. Set `"host": "0.0.0.0"` on a
   mapping to expose it beyond loopback; when doing so, the operator is
   responsible for fronting the listener with access control.
+- When `authMode` is `"api-key"` or `"api-key-telegram"`, the gateway must
+  be initialised (i.e. `api-keys.json` present); otherwise startup fails
+  fast with a descriptive error.
 
 See [docs/specs/transparent-proxy.md](docs/specs/transparent-proxy.md) for
 the full contract.

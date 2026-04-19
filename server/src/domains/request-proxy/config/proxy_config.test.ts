@@ -146,6 +146,118 @@ describe('loadProxyConfig', () => {
     const filePath = writeProxyFile(dir, {});
     expect(() => loadProxyConfig(filePath)).toThrow('failed validation');
   });
+
+  it('accepts authMode "none" without requiring apiKeyHeader', () => {
+    const dir = createTempDir();
+    const filePath = writeProxyFile(dir, {
+      proxies: [{ port: 6060, baseUrl: 'https://api.openai.com', authMode: 'none' }],
+    });
+    const config = loadProxyConfig(filePath);
+    expect(config?.proxies[0].authMode).toBe('none');
+  });
+
+  it('accepts authMode "api-key" with apiKeyHeader', () => {
+    const dir = createTempDir();
+    const filePath = writeProxyFile(dir, {
+      proxies: [{
+        port: 6060,
+        baseUrl: 'https://api.openai.com',
+        authMode: 'api-key',
+        apiKeyHeader: 'authorization',
+        apiKeyPrefix: 'Bearer ',
+      }],
+    });
+    const config = loadProxyConfig(filePath);
+    expect(config?.proxies[0].authMode).toBe('api-key');
+    expect(config?.proxies[0].apiKeyHeader).toBe('authorization');
+    expect(config?.proxies[0].apiKeyPrefix).toBe('Bearer ');
+  });
+
+  it('accepts authMode "api-key-telegram" with custom TTL', () => {
+    const dir = createTempDir();
+    const filePath = writeProxyFile(dir, {
+      proxies: [{
+        port: 6060,
+        baseUrl: 'https://api.anthropic.com',
+        authMode: 'api-key-telegram',
+        apiKeyHeader: 'x-api-key',
+        telegramApprovalTtlSeconds: 900,
+      }],
+    });
+    const config = loadProxyConfig(filePath);
+    expect(config?.proxies[0].authMode).toBe('api-key-telegram');
+    expect(config?.proxies[0].telegramApprovalTtlSeconds).toBe(900);
+  });
+
+  it('rejects authMode "api-key" without apiKeyHeader', () => {
+    const dir = createTempDir();
+    const filePath = writeProxyFile(dir, {
+      proxies: [{ port: 6060, baseUrl: 'https://api.openai.com', authMode: 'api-key' }],
+    });
+    expect(() => loadProxyConfig(filePath)).toThrow('failed validation');
+  });
+
+  it('rejects authMode "api-key-telegram" without apiKeyHeader', () => {
+    const dir = createTempDir();
+    const filePath = writeProxyFile(dir, {
+      proxies: [{ port: 6060, baseUrl: 'https://api.anthropic.com', authMode: 'api-key-telegram' }],
+    });
+    expect(() => loadProxyConfig(filePath)).toThrow('failed validation');
+  });
+
+  it('rejects an unknown authMode', () => {
+    const dir = createTempDir();
+    const filePath = writeProxyFile(dir, {
+      proxies: [{
+        port: 6060,
+        baseUrl: 'https://api.openai.com',
+        authMode: 'basic-auth',
+        apiKeyHeader: 'authorization',
+      }],
+    });
+    expect(() => loadProxyConfig(filePath)).toThrow('failed validation');
+  });
+
+  it('rejects an empty apiKeyHeader', () => {
+    const dir = createTempDir();
+    const filePath = writeProxyFile(dir, {
+      proxies: [{
+        port: 6060,
+        baseUrl: 'https://api.openai.com',
+        authMode: 'api-key',
+        apiKeyHeader: '',
+      }],
+    });
+    expect(() => loadProxyConfig(filePath)).toThrow('failed validation');
+  });
+
+  it('rejects a non-integer telegramApprovalTtlSeconds', () => {
+    const dir = createTempDir();
+    const filePath = writeProxyFile(dir, {
+      proxies: [{
+        port: 6060,
+        baseUrl: 'https://api.anthropic.com',
+        authMode: 'api-key-telegram',
+        apiKeyHeader: 'x-api-key',
+        telegramApprovalTtlSeconds: 10.5,
+      }],
+    });
+    expect(() => loadProxyConfig(filePath)).toThrow('failed validation');
+  });
+
+  it('rejects a negative telegramApprovalTtlSeconds', () => {
+    const dir = createTempDir();
+    const filePath = writeProxyFile(dir, {
+      proxies: [{
+        port: 6060,
+        baseUrl: 'https://api.anthropic.com',
+        authMode: 'api-key-telegram',
+        apiKeyHeader: 'x-api-key',
+        telegramApprovalTtlSeconds: -1,
+      }],
+    });
+    expect(() => loadProxyConfig(filePath)).toThrow('failed validation');
+  });
 });
 
 describe('validateProxyPorts', () => {

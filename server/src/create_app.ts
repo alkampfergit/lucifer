@@ -20,7 +20,14 @@ import { createMultiApprovalChannel } from './domains/command-gateway/service/mu
 import { registerApprovalRoutes } from './domains/command-gateway/api/register_approval_routes.js'
 import type { ApprovalChannel } from './domains/command-gateway/types/command_types.js'
 import { loadProxyConfig, validateProxyPorts } from './domains/request-proxy/config/proxy_config.js'
-import { createProxyServers, type ProxyServers } from './domains/request-proxy/service/proxy_server.js'
+import { createProxyServers, type ProxyServerDeps, type ProxyServers } from './domains/request-proxy/service/proxy_server.js'
+import type {
+  ProxyApprovalContext,
+  ProxyApprovalOutcome,
+  ProxyApprovalRequester,
+  ProxyAuditSink,
+  ProxyTokenValidator,
+} from './domains/request-proxy/types/proxy_types.js'
 import { createChildLogger, addLogFile } from './lib/logger.js'
 
 const log = createChildLogger('app')
@@ -73,6 +80,86 @@ function initApprovalChannel(deps: GatewayDeps, autoApprove: boolean, telegramAp
   return channels.length === 1 ? channels[0] : createMultiApprovalChannel(channels)
 }
 
+/**
+ * Adapter from the command-gateway ApiKeyStore to the proxy-domain
+ * ProxyTokenValidator contract. Kept in this composition file so
+ * `request-proxy` never imports from `command-gateway`.
+ */
+function createProxyTokenValidator(apiKeyStore: ReturnType<typeof createApiKeyStore>): ProxyTokenValidator {
+  return {
+    validate(rawToken: string) {
+      const entry = apiKeyStore.findByKey(rawToken)
+      if (!entry) return undefined
+      return { keyId: entry.id, keyName: entry.name }
+    },
+  }
+}
+
+/**
+ * Adapter from the command-gateway ApprovalChannel to the proxy-domain
+ * ProxyApprovalRequester contract. Synthesises a human-readable descriptor
+ * as the "command" string and races against an approval timeout so the
+ * proxy request cannot block indefinitely waiting for a human.
+ */
+function createProxyApprovalRequester(
+  approvalChannel: ApprovalChannel,
+  approvalTimeoutSeconds: number,
+): ProxyApprovalRequester {
+  return {
+    async request(ctx: ProxyApprovalContext): Promise<ProxyApprovalOutcome> {
+      const descriptor = `HTTP proxy ${ctx.method} ${ctx.path} (port ${ctx.port}) by ${ctx.keyName}`
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const timeoutPromise = new Promise<'timeout'>((resolve) => {
+        timer = setTimeout(() => resolve('timeout'), approvalTimeoutSeconds * 1000)
+      })
+
+      try {
+        const approvalPromise = approvalChannel
+          .requestApproval(descriptor, ctx.keyName, ctx.ip, ctx.requestId, { level: 'safe', warnings: [] })
+          .then((r): 'approved' | 'denied' => (r.decision === 'approved' ? 'approved' : 'denied'))
+
+        const outcome = await Promise.race<ProxyApprovalOutcome>([approvalPromise, timeoutPromise])
+
+        if (outcome === 'timeout') {
+          approvalChannel.cancel?.(ctx.requestId)
+        }
+        return outcome
+      } catch (err) {
+        log.warn({ err, requestId: ctx.requestId }, 'Proxy approval channel threw')
+        return 'error'
+      } finally {
+        if (timer) clearTimeout(timer)
+      }
+    },
+  }
+}
+
+/**
+ * Adapter from proxy audit events to the command-gateway audit log, so
+ * proxy auth/approval activity shows up in `lucifer-gate log` alongside
+ * command activity.
+ */
+function createProxyAuditSink(auditLog: ReturnType<typeof createAuditLog>): ProxyAuditSink {
+  return {
+    record(event) {
+      try {
+        auditLog.append({
+          ts: event.ts,
+          type: event.type,
+          requestId: event.requestId,
+          command: `HTTP proxy ${event.method} ${event.path} (port ${event.port})`,
+          apiKeyName: event.keyName,
+          ip: event.ip,
+          approvedBy: event.source,
+          error: event.reason,
+        })
+      } catch (err) {
+        log.warn({ err }, 'Failed to write proxy audit event')
+      }
+    },
+  }
+}
+
 export function createApp(options: CreateAppOptions = {}) {
   const serverConfig = getServerConfig()
   const metadataRepository = createRuntimeMetadataRepository()
@@ -103,6 +190,7 @@ export function createApp(options: CreateAppOptions = {}) {
 
   let approvalChannel: ApprovalChannel | undefined
   let cleanupInterval: ReturnType<typeof setInterval> | undefined
+  const proxyDeps: ProxyServerDeps = {}
 
   // Only initialize gateway if config files exist
   if (fs.existsSync(apiKeysPath) && fs.existsSync(commandRulesPath)) {
@@ -130,6 +218,12 @@ export function createApp(options: CreateAppOptions = {}) {
       pendingStore.cleanup(gatewayConfig.approvalTimeoutSeconds * 1000)
     }, 60_000)
 
+    // Wire the proxy bridges over gateway stores so request-proxy stays
+    // isolated from command-gateway code (Dependency Rules).
+    proxyDeps.tokenValidator = createProxyTokenValidator(apiKeyStore)
+    proxyDeps.approvalRequester = createProxyApprovalRequester(approvalChannel, gatewayConfig.approvalTimeoutSeconds)
+    proxyDeps.auditSink = createProxyAuditSink(auditLog)
+
     log.info('Command gateway initialized')
   } else {
     log.warn({ apiKeysPath, commandRulesPath }, 'Config files not found. Run with --init to generate them. Gateway disabled.')
@@ -145,7 +239,7 @@ export function createApp(options: CreateAppOptions = {}) {
   const proxyConfig = loadProxyConfig(proxyConfigPath)
   if (proxyConfig && proxyConfig.proxies.length > 0) {
     validateProxyPorts(proxyConfig.proxies, gatewayConfig.port)
-    proxyServers = createProxyServers(proxyConfig.proxies)
+    proxyServers = createProxyServers(proxyConfig.proxies, proxyDeps)
     log.info({ count: proxyConfig.proxies.length }, 'Transparent proxy mappings configured')
   }
 

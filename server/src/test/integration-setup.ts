@@ -36,7 +36,9 @@ export function createTestAppContext(
     approvalTimeoutSeconds: 5,
     executionTimeoutSeconds: 10,
     maxConcurrentExecutions: 3,
-    maxOutputBytes: 1024,
+    // Integration tests run real commands against the repo (e.g. `git status`),
+    // so this needs to accommodate a growing working tree. 1 KiB was brittle.
+    maxOutputBytes: 65536,
     rateLimitPerMinute: 100,
     onApprovalTimeout: 'deny',
     dataDir: '../data',
