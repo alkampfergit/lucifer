@@ -73,7 +73,7 @@ Copy the ai-landscape template into Lucifer and customize the key architecture, 
 ## ADR-003: Deploy Docker images through Azure Container Apps with GitHub Actions
 
 **Date**: 2026-04-06
-**Status**: Accepted
+**Status**: Superseded (2026-04-19)
 **Deciders**: alkampfergit
 
 ### Context
@@ -94,6 +94,13 @@ Build a Docker image from the repository and deploy it to Azure Container Apps u
 
 - **Azure App Service source deployment**: Rejected because the project now standardizes on container delivery.
 - **Manual portal deployments**: Rejected because they are harder to reproduce and review.
+
+### Superseded 2026-04-19
+
+The `azure-container-apps.yml` GitHub Actions workflow was removed. Deployment
+to Azure Container Apps (or any other target) is no longer automated from the
+repository. `ci.yml` still builds the Docker image for verification and
+publishes the npm package; any environment promotion is now done out of band.
 
 ---
 

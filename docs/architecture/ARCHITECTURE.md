@@ -63,7 +63,7 @@ Anti-patterns:
 | Rate limiting | `express-rate-limit` + in-memory auth limiter | Protects execute and admin approval routes |
 | Logging | `pino` | Console logs plus optional JSON file logging |
 | Command execution | Node child process APIs | Timeout, output caps, and concurrency limits enforced in service layer |
-| CI/CD | GitHub Actions | `ci.yml` validates and `azure-container-apps.yml` deploys |
+| CI/CD | GitHub Actions | `ci.yml` validates, builds the Docker image, and publishes to npm |
 | Observability | Console logs + Azure Container Apps logs/metrics | Expand to structured telemetry when features grow |
 
 ## Key Architectural Decisions
@@ -72,8 +72,7 @@ For the full list, see [DECISIONS.md](../context/DECISIONS.md).
 
 Most impactful decisions:
 1. [ADR-002]: Initialize the repository with the ai-landscape harness-engineering template.
-2. [ADR-003]: Deploy Docker images through Azure Container Apps using GitHub Actions.
-3. [ADR-004]: Use Telegram as the primary approval channel for command gating.
-4. [ADR-005]: Split persistence between JSON config and SQLite runtime state.
-5. [ADR-007]: Model approvals behind a channel abstraction so Telegram, web UI, and auto-approve can share the same flow.
-6. [ADR-008]: Remove the unused bundled React/Vite frontend and keep Lucifer backend-first.
+2. [ADR-004]: Use Telegram as the primary approval channel for command gating.
+3. [ADR-005]: Split persistence between JSON config and SQLite runtime state.
+4. [ADR-007]: Model approvals behind a channel abstraction so Telegram, web UI, and auto-approve can share the same flow.
+5. [ADR-008]: Remove the unused bundled React/Vite frontend and keep Lucifer backend-first.
