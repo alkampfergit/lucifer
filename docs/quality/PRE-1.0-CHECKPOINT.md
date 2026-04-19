@@ -18,12 +18,12 @@
 
 ## 1. Executive verdict
 
-**Ship 1.0 after closing the four Must-fix items listed in §9.** Structurally the
+**Ship 1.0 after closing the three Must-fix items listed in §9.** Structurally the
 codebase is in good shape: zero circular dependencies, zero recursion cycles, zero
 dead code, zero unused imports, zero `TODO`/`FIXME`/`@ts-expect-error` markers, and
 a mechanically-enforced layered dependency direction (`Types → Config → Repository
 → Service → Runtime → UI/API`). The gaps that block a confident 1.0 cut are
-*release-hygiene* gaps (version/changelog discipline) and a small number of
+a *release-hygiene* gap (missing `CHANGELOG.md`) and a small number of
 *complexity hotspots* in the newer HTTP-boundary code.
 
 ## 2. Repo snapshot
@@ -46,7 +46,7 @@ a mechanically-enforced layered dependency direction (`Types → Config → Repo
 | Lint | clean | `npm run lint` |
 | Structure check | clean | `npm run check:structure` |
 | Semver tags in history | 21 (latest: `0.8.1`) | `git tag --list` |
-| `package.json` version | `0.1.0-alpha.1` | `package.json:3` |
+| `package.json` version | `0.1.0-alpha.1` (placeholder — CI overrides) | `package.json:3`, `.github/workflows/ci.yml:137` |
 | `CHANGELOG.md` | absent | `ls` |
 | `VERSION` file | absent | `ls` |
 
@@ -129,7 +129,7 @@ another. This is consistent with the documented UI-layer rule (UI may only impor
 - **In-memory pending-request store** (documented in
   [QUALITY-GRADES.md:17](./QUALITY-GRADES.md)). A restart drops every in-flight
   approval. Not a bug; an advertised constraint — but a 1.0 release should state it
-  in the README's operational-limits section. See Finding R1.
+  in the README's operational-limits section. See Finding R3.
 
 ## 5. Testing review
 
@@ -321,14 +321,22 @@ before 1.0.
 
 - 21 semver tags following the `x.y.z` convention (AGENTS rule 8: no `v` prefix) ✓
 - Latest tag: `0.8.1`
-- `package.json` version: `0.1.0-alpha.1` — **stale by 8 minor versions** ✗
+- `package.json` version: `0.1.0-alpha.1` — **intentional placeholder** ✓
 - No `CHANGELOG.md` ✗
 - No `VERSION` file ✗
 
-**Finding R1 (confidence 10/10, P0 for 1.0):** Version drift between
-`package.json` and the semver tag stream. Every `npm publish` from the tip of
-master would publish `0.1.0-alpha.1`, *not* the real version. This is a
-ship-stopper for 1.0.
+**Finding R1 — resolved / not a drift.** The `version` field in
+`package.json` is a placeholder. The publish pipeline derives the real
+version from the nearest semver tag in
+`.github/workflows/ci.yml` (`version` job, lines 46–108) and overwrites
+`package.json` at publish time with
+`npm version "$VERSION" --no-git-tag-version --allow-same-version`
+(line 137) before `npm publish`. The committed value is therefore
+expected to lag the tag stream and is not a ship blocker. No action
+required; an optional hardening would be a CI comment in
+`package.json` (via a separate `.md` or a `publishConfig` note) that
+states the field is CI-managed, to prevent future readers from
+re-flagging it.
 
 **Finding R2 (confidence 10/10):** No `CHANGELOG.md`. With 21 tags worth of
 history, reconstructing release notes at 1.0 is cheap now and expensive later.
@@ -351,7 +359,7 @@ Commit-type hygiene per CODE-STANDARDS §Commit Messages is solid.
 | Complexity caps | ⚠️ 3 hotspots (C1, C2, C3) | All in newer HTTP code |
 | File-length caps | ⚠️ 2 source files over (C5) |  |
 | Semver tag stream | ✅ consistent `x.y.z` | AGENTS rule 8 |
-| package.json version | ❌ stale (R1) | Must match tag before 1.0 |
+| package.json version | ✅ CI-managed | Placeholder overwritten by publish pipeline |
 | CHANGELOG | ❌ missing (R2) |  |
 | Security posture | ✅ trending green | 18 alerts recently closed |
 | Logging | ✅ consistent Pino |  |
@@ -360,16 +368,18 @@ Commit-type hygiene per CODE-STANDARDS §Commit Messages is solid.
 
 ### 9.1 Must-fix before 1.0 (P0)
 
-1. **R1 — version drift.** Update `package.json:version` to match the next real
-   semver tag. Consider adding a CI gate that fails if `package.json.version`
-   ≠ `git describe --tags --abbrev=0` on a tag commit.
-2. **A1 + D1 — doc drift from #21.** Add `request-proxy` to
+1. **A1 + D1 — doc drift from #21.** Add `request-proxy` to
    `DOMAIN-BOUNDARIES.md` (registry, boundary map, integration contracts) and a
    row to `QUALITY-GRADES.md`.
-3. **R2 — CHANGELOG.** At minimum, generate a 1.0 CHANGELOG from `git log` that
+2. **R2 — CHANGELOG.** At minimum, generate a 1.0 CHANGELOG from `git log` that
    lists every tagged release from 0.1.0 through 0.8.1 and the 1.0 summary.
-4. **C1 — `registerExecuteRoutes` decomposition.** 289 lines with `cc=21` is a
+3. **C1 — `registerExecuteRoutes` decomposition.** 289 lines with `cc=21` is a
    future-regression magnet. Split as described in §6.1.
+
+> R1 (package.json version drift) was investigated and dropped: the
+> publish pipeline overwrites the field at publish time
+> (`.github/workflows/ci.yml:137`), so the committed placeholder is
+> intentional. See §8.4.
 
 ### 9.2 Should-fix before 1.0 (P1)
 
