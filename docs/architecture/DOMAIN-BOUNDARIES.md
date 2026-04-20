@@ -17,7 +17,18 @@
                            │      platform-api      │
                            │  Health + app wiring   │
                            └────────────────────────┘
+
+                              ┌────────────────────┐
+                              │   request-proxy    │
+                              │ Transparent HTTP   │
+                              │ API key + approval │
+                              │   (separate port)  │
+                              └────────────────────┘
 ```
+
+`request-proxy` runs in the same process but binds its own listener port; it
+shares the API-key store and (optionally) the Telegram approval channel with
+`command-gateway` through explicit service interfaces, not cross-domain imports.
 
 ## Domain Registry
 
@@ -40,6 +51,16 @@
 - **Data ownership**: SQLite database in the configured `dataDir` for approvals and audit log; in-memory pending request store; operator-owned JSON config files (`lucifer.json`, `api-keys.json`, `command-rules.json`).
 - **Key interfaces**: `ApprovalChannel` abstracts Telegram, web admin, multi-channel fan-out, and auto-approve development mode.
 
+### request-proxy
+
+- **Responsibility**: Transparently forward HTTP traffic from agent clients to configured upstreams, gated by API-key authentication and (optionally) per-request Telegram approval.
+- **Bounded context**: Dedicated listener port, proxy request authorization, in-memory approval decision cache, upstream request forwarding with header injection. Landed in #21.
+- **Published events**: None (approval cache is process-local; audit of proxy decisions is out of scope for 1.0).
+- **Consumed events**: Telegram approval callbacks (shared channel with `command-gateway`).
+- **Public API surface**: Transparent HTTP passthrough on the configured proxy port. No REST routes of its own.
+- **Data ownership**: Process-local `ProxyApprovalCache` (pending + recent decisions). Reads the shared API-key store owned by `command-gateway`; does not mutate it.
+- **Key interfaces**: `authorizeProxyRequest` (request-level decision chain), `createProxyApprovalCache`, `createProxyServer`.
+
 ## Integration Contracts
 
 | Source Domain | Target Domain | Mechanism | Contract Location |
@@ -49,6 +70,9 @@
 | `command-gateway` | Telegram Bot API | HTTPS (telegraf) | Inline keyboard messages + callback queries |
 | `command-gateway` | SQLite | `better-sqlite3` | `<dataDir>/lucifer.db` (approvals + audit log tables) |
 | `command-gateway` | JSON config | filesystem reads | `lucifer.json`, `api-keys.json`, `command-rules.json` |
+| External caller | `request-proxy` | Transparent HTTP on configured proxy port | `x-api-key` header required; request either forwarded to the upstream, rejected with `401`/`403`, or held pending Telegram approval before forwarding. Spec: [docs/specs/transparent-proxy.md](../specs/transparent-proxy.md) |
+| `request-proxy` | `command-gateway` (API-key store) | In-process read-only reference | Shared `ApiKeyStore` instance; `request-proxy` validates keys but never writes |
+| `request-proxy` | Telegram Bot API | HTTPS via shared `ApprovalChannel` (optional) | Reuses the same Telegram approval channel instance when proxy approval mode is enabled |
 
 ## Rules for Modifying Boundaries
 
