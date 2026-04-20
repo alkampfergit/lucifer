@@ -382,6 +382,32 @@ correct primitive for CI (see `feedback_pr_checks_watch` memory).
   `gstack:status` on the PR for each fix iteration summarising the
   failure and the fix.
 
+### Re-fetch before you post (hard rule)
+
+**Before posting ANY comment on the issue or PR, always re-fetch
+`gh pr view --json comments` (or `gh issue view --json comments`) and
+process new owner comments first.** CI waits (`gh pr checks --watch`) and
+long-running validation commands are often long enough that the owner
+posts feedback while the skill is blocked. Posting a status comment
+without re-reading collides with that feedback and makes it look ignored
+— a real failure has happened on this project (see
+`feedback_gh_refetch_before_post`).
+
+Concrete rules:
+
+- Immediately after any blocking call (`gh pr checks --watch`,
+  `npm test`, long-running subagents), re-read the active thread and
+  diff against the last watermark before emitting the next comment.
+- If there is new owner feedback since the last watermark, address that
+  first: post an `answer-ack` quoting the relevant part, apply fixes,
+  then post the planned status (or skip it if the owner's comment has
+  superseded its content).
+- If the only thing you were going to post is a redundant announcement
+  that restates PR metadata the owner can already see (e.g. "CI green",
+  "PR marked ready"), consider skipping the comment entirely and going
+  straight into step 9's poll loop. A comment with no new information
+  for the owner is noise and crowds out real feedback.
+
 ### 9. Poll reviewer comments until the PR is merged or closed
 
 Once CI is green, poll for owner feedback on the PR every 5 minutes
