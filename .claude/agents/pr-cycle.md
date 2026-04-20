@@ -34,13 +34,13 @@ gh pr status
 gh pr view --json number,title,headRefName,baseRefName,url 2>/dev/null
 ```
 
-If no PR exists, load the `github-pr-fixer` skill and follow the `references/open-pr.md` workflow to create one.
+If no PR exists, follow the workflow in `.claude/skills/github-pr-fixer/references/open-pr.md` to create one. (Do NOT invoke `/github-pr-fixer`; read the reference doc directly as documentation.)
 
 Capture and carry forward: PR number, head branch, base branch, PR URL.
 
 ### Step 2: Wait for checks and diagnose
 
-Load the `github-pr-fixer` skill and follow `references/check-diagnosis.md`:
+Follow the workflow in `.claude/skills/github-pr-fixer/references/check-diagnosis.md`:
 
 1. Wait for the current check cycle to settle before reading results.
 2. Classify each failure: Sonar path, GitHub Actions job path, or standalone security check path.
@@ -90,9 +90,8 @@ gh api repos/<owner>/<repo>/pulls/<PR_NUMBER>/requested_reviewers \
   --jq '.users[].login, .teams[].slug'
 ```
 
-If any reviewer is listed (e.g., `Copilot`), load the
-`github-pr-fixer` skill and follow
-`references/reviewer-comments.md`:
+If any reviewer is listed (e.g., `Copilot`), follow the workflow in
+`.claude/skills/github-pr-fixer/references/reviewer-comments.md`:
 
 1. Poll until the reviewer leaves `requested_reviewers` AND a review
    appears under `/pulls/<N>/reviews` (or until a reasonable timeout).
@@ -107,7 +106,7 @@ comments unless the user explicitly authorises it.
 
 ### Step 5: Merge and release
 
-Load the `github-pr-fixer` skill and follow `references/release-closure.md`:
+Follow the workflow in `.claude/skills/github-pr-fixer/references/release-closure.md`:
 
 1. Determine the release tag from the branch name or latest existing tag.
 2. Ask the user to confirm the tag before proceeding.
@@ -175,9 +174,15 @@ When stopping (success or failure), report:
 - The exact blocking check names and URLs (if blocked)
 - The release tag (if merged)
 
-## Skills Used
+## Reference Docs Used
 
-| Skill | When | Reference docs |
-|-------|------|----------------|
-| `github-pr-fixer` | Open PR, diagnose checks, fix loop, handle reviewer comments, merge | `references/open-pr.md`, `references/pr-resolution.md`, `references/check-diagnosis.md`, `references/fix-loop.md`, `references/reviewer-comments.md`, `references/release-closure.md` |
-| `sonar` | Verify/fix SonarCloud issues | `SKILL.md`, `references/fix-workflow.md` |
+This agent reads reference documents directly — it does NOT invoke the
+`github-pr-fixer` skill. That skill is manual-slash-only (`/github-pr-fixer`)
+and is never auto-invoked. The reference files below are plain markdown
+documentation; read them with the Read tool and follow their workflow
+inline.
+
+| Source | When | Path |
+|--------|------|------|
+| `github-pr-fixer` references | Open PR, diagnose checks, fix loop, handle reviewer comments, merge | `.claude/skills/github-pr-fixer/references/{open-pr,pr-resolution,check-diagnosis,fix-loop,reviewer-comments,release-closure}.md` |
+| `sonar` skill | Verify/fix SonarCloud issues | `.claude/skills/sonar/{SKILL.md,references/fix-workflow.md}` |

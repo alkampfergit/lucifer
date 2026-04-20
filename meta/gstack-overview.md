@@ -1,9 +1,9 @@
 # gstack — how the three skills fit together
 
 `gstack` is the label we use for the GitHub-issue-driven automation loop in
-this repo. It is not a single skill: it is three skills layered on top of
-each other, plus `github-pr-fixer` as a downstream helper when a PR needs
-babysitting.
+this repo. It is three skills layered on top of each other. `github-pr-fixer`
+is **not** part of the chain — it is a separate, manual-slash-only tool the
+owner may choose to run on a PR. Nothing in gstack invokes it automatically.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -19,7 +19,7 @@ babysitting.
 │   (reference manual: issues, PRs, checks, reviews, code scanning)    │
 └──────────────────────────────────────────────────────────────────────┘
 
-         If PR checks fail or a reviewer posts comments → github-pr-fixer
+         (PR babysitting is NOT automatic — owner may run `/github-pr-fixer` manually)
 ```
 
 ## Role of each skill
@@ -36,17 +36,31 @@ duplicating command blocks.
 Takes a single issue identifier (`123`, `owner/repo#123`, or a full URL) and
 drives it through:
 
-1. Fetch & understand the issue
-2. Claim (`@me` + `claim-label` + pick-up comment)
-3. Plan (light inline or formal plan for big changes)
-4. Build — delegates to the matching implementation skill
-   (`new-feature`, `bug-fix`, `small-change`, `refactor`, `add-domain`)
-5. Test — discovers the repo's toolchain (`package.json`, `Makefile`, `*.sln`, ...)
-6. Ship — push branch, open PR with `Closes #N`
-7. Hand off — comment PR URL on the issue
+1. Fetch & understand the issue (channel: **issue**)
+2. Claim — `@me` + `claim-label` + pick-up comment on the issue
+3. Plan — post plan as issue comment and wait for owner approval (channel:
+   **issue**; no code exists yet)
+4. **Open the DRAFT PR before writing any code.** This is the fixed
+   channel-switch point: from this moment forward every question, status
+   update, decision request, and failure report goes on the PR thread,
+   not the issue and not the console
+5. Build — delegates to the matching implementation skill
+   (`new-feature`, `bug-fix`, `small-change`, `refactor`, `add-domain`).
+   Delegated skills inherit the "PR thread only" rule
+6. Test — discover the repo's toolchain (`package.json`, `Makefile`,
+   `*.sln`, …) and run validation locally
+7. Mark the PR ready — `gh pr ready`, update test-plan section, post
+   final `gstack:handoff` on the issue and `gstack:status` on the PR
 
-On failure: swap `claim-label` → `fail-label`, post a detailed comment,
-leave the branch intact, surface the failure in chat.
+**Communication protocol.** All user interaction goes through GitHub —
+issue thread before the draft PR exists, PR thread from draft-open
+onward. Never the Claude console. This binds `gstack-gh` and every skill
+it delegates to.
+
+On failure: swap `claim-label` → `fail-label`, post a `gstack:failure`
+comment on whichever channel is currently active (issue pre-draft-PR, PR
+after), cross-link if the failure is on the PR. Leave branch and draft
+PR intact. Surface the failure in chat.
 
 **Never merges.** Merge/land is always a human decision.
 
@@ -72,12 +86,14 @@ Safety rails: never auto-merge, never `max-per-cycle > 3` without consent,
 stop touching an issue after two `fail-label` cycles, confirm repo before
 running in `cron` mode.
 
-### `github-pr-fixer` — downstream helper
-Not part of the gstack chain, but often invoked right after `gstack-gh`
-opens a PR. It drives a PR to green through up to three fix rounds, handles
-reviewer comments (human or Copilot), can open a PR from the current
-branch, and can close a ready release PR. Also uses `gh-cli-guide` as its
-sole source of `gh` syntax.
+### `github-pr-fixer` — MANUAL SLASH-ONLY tool (not part of the chain)
+Invoked ONLY by the user typing `/github-pr-fixer`. gstack never chains to
+it, never auto-invokes it, and never posts handoff comments that act as
+triggers. When the owner chooses to run it, it drives a PR to green through
+up to five fix rounds, handles reviewer comments (human or Copilot), can
+open a PR from the current branch, and can close a ready release PR. Its
+frontmatter carries `disable-model-invocation: true` to enforce this
+belt-and-braces alongside the prose rule.
 
 ## Typical end-to-end invocation
 
@@ -130,20 +146,21 @@ them, it must stop and park the issue with `fail-label` instead of fudging.
 2. **Issue ↔ PR binding:** every PR body contains `Closes #<N>`, and a
    `gstack:handoff` comment on the issue links to the PR URL. The
    connection is discoverable from either side.
-3. **PR babysitting:** once the PR is open, `github-pr-fixer` owns the
-   check-fix / reviewer-comment loop. `gstack-gh` does not duplicate it.
-4. **Closure requires explicit user consent:** no part of the chain
-   (`gstack-gh`, `gstack-full`, `github-pr-fixer`) merges, closes, or
-   release-tags a PR without a direct instruction from the user. That
-   instruction is valid whether it arrives in chat or as a comment on the
-   PR/issue.
+3. **PR babysitting is NOT automatic.** Once `gstack-gh` opens the PR and
+   posts its `gstack:handoff` comment, gstack stops touching it. The owner
+   chooses whether to run `/github-pr-fixer` manually for CI fixing,
+   reviewer-comment handling, or closure. No skill in the chain may invoke
+   `github-pr-fixer` on its own.
+4. **Closure requires explicit user consent:** `gstack-gh` and `gstack-full`
+   never merge, close, or release-tag a PR. If the owner wants that work
+   driven by an automation, they invoke `/github-pr-fixer` themselves.
 5. **All Q&A flows through the issue or PR.** No skill in the chain may
    ask the user a question through the Claude console. Questions are
    posted as issue/PR comments (with a `gstack:question:<uuid>` marker),
    and the skill polls the same thread every `poll-seconds` (default `60`)
    for a reply. Answers are acknowledged with a follow-up comment before
-   work resumes. This rule applies to `github-pr-fixer` and any
-   implementation skill gstack delegates to.
+   work resumes. This rule applies to every implementation skill gstack
+   delegates to.
 
 ## What gstack does NOT do
 

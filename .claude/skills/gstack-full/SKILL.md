@@ -1,6 +1,7 @@
 ---
 name: gstack-full
 description: Poll GitHub for open issues carrying a user-specified label and drive each one through gstack's end-to-end flow (plan → build → test → ship) via the `gstack-gh` skill. Use when the user says "watch GH for issues with label X and implement them", "auto-process the backlog", or "poll for ready stories". Supports three scheduling modes — in-session loop, self-paced loop, or cron (remote trigger).
+disable-model-invocation: true
 ---
 
 # gstack-full — label-driven automation loop
@@ -150,8 +151,11 @@ orchestrator level:
 - **All human Q&A goes through `gh issue comment` / `gh pr comment`**, never
   the Claude console. When a question is outstanding, the skill polls the
   issue/PR every `poll-seconds` (default 60) for a reply.
-- **Once the PR is open, `github-pr-fixer` takes over monitoring** (checks,
-  reviewer comments). Do not duplicate that work from this orchestrator.
+- **Once the PR is open, this orchestrator stops touching it.** PR-side
+  work (CI fixing, reviewer comments, closure) is owned by the primary
+  owner, who may — at their discretion — run `/github-pr-fixer` manually.
+  This skill MUST NOT auto-invoke `github-pr-fixer`; that skill is
+  manual-slash-only.
 - **The PR is closed only when the user says so explicitly** — typically as
   a comment on the PR/issue or a chat instruction like "close PR #456" or
   "release as X.Y.Z". `gstack-full` must not close PRs unattended.
