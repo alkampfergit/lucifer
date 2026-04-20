@@ -23,7 +23,7 @@ marked ready (step 7), `gstack-gh` continues to:
 
 1. Block on `gh pr checks <pr> --watch --fail-fast` until CI reaches a
    terminal state.
-2. Poll PR reviewer comments at the ≥ 600 s floor, delegating each cycle
+2. Poll PR reviewer comments every 5 minutes (300 s), delegating each cycle
    to a laconic subagent that ignores its own comments.
 3. Address CI failures and reviewer feedback itself — fix, commit, push,
    repeat.
@@ -384,8 +384,8 @@ correct primitive for CI (see `feedback_pr_checks_watch` memory).
 
 ### 9. Poll reviewer comments until the PR is merged or closed
 
-Once CI is green, poll for owner feedback on the PR with the ≥ 600 s floor
-(per `feedback_poll_min_interval`), delegating each cycle to a laconic
+Once CI is green, poll for owner feedback on the PR every 5 minutes
+(300 s cadence), delegating each cycle to a laconic
 subagent that returns `nothing to do` when idle (per
 `feedback_poll_in_laconic_subagent` and `feedback_poll_ignore_self_echo`).
 
