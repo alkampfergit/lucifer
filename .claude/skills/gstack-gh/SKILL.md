@@ -18,11 +18,20 @@ would leave the issue out of the loop.**
 - Repo-specific implementation skills: `new-feature`, `bug-fix`, `small-change`,
   `refactor`, `add-domain` — pick the one that matches the issue's nature.
 
-**Do NOT auto-invoke `github-pr-fixer`.** That skill is manual-slash-only
-(`/github-pr-fixer`) and is never chained from here. Once the PR is open,
-this skill posts a `gstack:handoff` comment and stops. Any downstream
-CI-fix, reviewer-comment, or release-closure work happens only if the
-primary owner explicitly runs `/github-pr-fixer` themselves.
+**This skill owns the PR until it is merged or closed.** After the PR is
+marked ready (step 7), `gstack-gh` continues to:
+
+1. Block on `gh pr checks <pr> --watch --fail-fast` until CI reaches a
+   terminal state.
+2. Poll PR reviewer comments at the ≥ 600 s floor, delegating each cycle
+   to a laconic subagent that ignores its own comments.
+3. Address CI failures and reviewer feedback itself — fix, commit, push,
+   repeat.
+4. Exit only when the PR state is `MERGED` or `CLOSED`, or when the
+   primary owner explicitly tells the skill to stand down.
+
+`github-pr-fixer` is NOT auto-invoked from here — `gstack-gh` handles
+reviewer and CI follow-up directly, in the same continuous session.
 
 ## Inputs (from args)
 
@@ -351,31 +360,59 @@ gh pr ready <pr-number>
   `gstack:handoff`) noting the PR is out of draft and ready for review. The
   issue thread has already been told (in step 4) that communication moved
   to the PR; this final issue comment is just the closing pointer.
-- `gstack-gh` stops here. Any PR-side work (CI fixing, reviewer comments,
-  closure) is owned by the primary owner, who may — at their discretion —
-  run `/github-pr-fixer` manually on the PR. This skill MUST NOT
-  auto-invoke that flow.
+- After the PR is marked ready, `gstack-gh` continues owning the PR through
+  CI and review (steps 8 and 9). `github-pr-fixer` is NOT invoked.
 
-### 8. Stop after hand-off — do NOT auto-invoke downstream skills
+### 8. Watch CI to terminal state
 
-Once the PR is open and the `gstack:handoff` comment is posted:
+Immediately after `gh pr ready`, block on GitHub Actions:
 
-1. Post a final `gstack:status` update on the issue summarising the work
-   (branch, commit, PR URL, validation commands run).
-2. Exit. Do not start polling the PR, do not invoke `github-pr-fixer`,
-   do not loop. The owner chooses whether to run `/github-pr-fixer` (or any
-   other skill) manually.
+```bash
+gh pr checks <pr-number> --watch --fail-fast
+```
 
-### 9. Closing the PR — explicit user action only
+This call blocks until every required check reaches a terminal state. Do
+NOT replace it with a 5-minute polling loop — the `--watch` command is the
+correct primitive for CI (see `feedback_pr_checks_watch` memory).
 
-**The PR is never closed, merged, or land-and-deployed by this skill.**
+- If all checks pass, move to step 9.
+- If any check fails, read the failing workflow logs
+  (`gh run view <run-id> --log-failed`), fix on `feature/<N>`, commit, push,
+  and re-enter `gh pr checks --watch`. Loop until green. Post a
+  `gstack:status` on the PR for each fix iteration summarising the
+  failure and the fix.
 
-- `done-label` is NOT applied at ship time.
-- Release closure is driven by the owner through `/github-pr-fixer` or an
-  equivalent manual action — this skill neither invokes it nor monitors it.
-- If the owner later asks this skill to apply `done-label` and post a final
-  `gstack:status` on the issue after a merge, that's fine — but the merge
-  itself is never done from here.
+### 9. Poll reviewer comments until the PR is merged or closed
+
+Once CI is green, poll for owner feedback on the PR with the ≥ 600 s floor
+(per `feedback_poll_min_interval`), delegating each cycle to a laconic
+subagent that returns `nothing to do` when idle (per
+`feedback_poll_in_laconic_subagent` and `feedback_poll_ignore_self_echo`).
+
+Advance the watermark immediately after any comment `gstack-gh` posts, so
+the subagent never re-reads the session's own output.
+
+For each owner comment that asks for a change or raises a finding:
+
+1. Apply the change on `feature/<N>`, commit with a scope-matched message,
+   push.
+2. Re-enter `gh pr checks --watch` to confirm CI stays green.
+3. Post a `gstack:status` reply on the PR summarising what changed and the
+   commit hash.
+
+Exit conditions:
+
+- PR state becomes `MERGED` — post a final `gstack:status` on the **issue**
+  noting the merge commit, apply `done-label`, remove `claim-label`, exit.
+- PR state becomes `CLOSED` without merge — post a `gstack:status` on the
+  issue noting the close, remove `claim-label`, apply `fail-label` if the
+  close was not owner-directed, exit.
+- Owner explicitly tells `gstack-gh` to stand down (comment: "stand down",
+  "stop polling", or equivalent, owner-filtered) — post an acknowledgement
+  and exit without applying `done-label`.
+
+Do NOT auto-merge. Merging is the owner's decision; wait for them to click
+merge (or to post an owner-authored directive asking this skill to merge).
 
 ## Failure handling
 
@@ -395,7 +432,9 @@ If any step fails and cannot be recovered automatically:
 ## What this skill does NOT do
 
 - Does not ask the user anything through the console — issue/PR comments only.
-- Does not merge or close PRs. Closure requires explicit user confirmation.
+- Does not auto-merge. The owner clicks merge (or issues an owner-filtered
+  directive asking this skill to merge). `gstack-gh` does apply `done-label`
+  and post the final status once the PR becomes `MERGED`.
 - Does not re-plan architecture decisions without a human reply on the issue.
 - Does not touch `.env` or read secrets.
 - Does not run integration tests against real external services unless the
