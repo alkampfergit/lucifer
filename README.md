@@ -100,6 +100,16 @@ Per-feature contracts live under [docs/specs/](docs/specs/):
 For agent-specific instructions (task lifecycle, review checklist, skills),
 start at [AGENTS.md](AGENTS.md).
 
+## Operational limits
+
+Before you plan a deployment, note the current shape of the runtime:
+
+- **Single-process state.** Lucifer Gate runs as one Node process. There is no cluster-aware approval fan-out and no leader election — running more than one instance against the same data directory is not supported.
+- **In-memory pending approvals are lost on restart.** Requests that are waiting for Telegram or web-admin approval at the moment of a restart are dropped: callers see their in-flight `POST /api/v1/execute` fail, and the approval notification stays orphaned in the channel. Approvals that have already resolved are persisted; only *pending* ones are volatile.
+- **SQLite is the sole persistence layer.** Approvals, audit log, and related state all live in `<dataDir>/lucifer.db` via `better-sqlite3`. There is no network database driver, no clustering, and no replication; back up the file directly. Per-domain grading for these trade-offs is tracked in [docs/quality/QUALITY-GRADES.md](docs/quality/QUALITY-GRADES.md).
+
+These are conscious pre-1.0 trade-offs, not bugs. If any of them is a blocker for your environment, open an issue before building on top of the current shape.
+
 ## Stack
 
 - Express 5 + TypeScript
