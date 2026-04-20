@@ -61,13 +61,16 @@ function parseClientIp(req: Request): string {
 
 export function registerExecuteRoutes(deps: ExecuteRouteDeps): void {
   const { router, config, apiKeyStore, commandRulesStore, approvalStore, pendingStore, auditLog, approvalChannel } = deps;
+  const perKeyLimit = config.rateLimitPerKeyPerMinute ?? config.rateLimitPerMinute;
+  const perIpLimit = config.rateLimitPerIpPerMinute ?? config.rateLimitPerMinute;
+
   const rateLimiter = createRateLimiter(
-    process.env.NODE_ENV === 'development' ? 1000 : config.rateLimitPerMinute,
+    process.env.NODE_ENV === 'development' ? 1000 : perKeyLimit,
   );
 
   const ipRateLimiter = rateLimit({
     windowMs: 60_000,
-    limit: process.env.NODE_ENV === 'development' ? 10_000 : config.rateLimitPerMinute,
+    limit: process.env.NODE_ENV === 'development' ? 10_000 : perIpLimit,
     standardHeaders: true,
     legacyHeaders: false,
     keyGenerator: parseClientIp,

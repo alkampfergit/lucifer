@@ -20,6 +20,7 @@ function isAliasesConfig(value: unknown): boolean {
 const optionalNumberKeys = [
   'port', 'approvalTimeoutSeconds', 'executionTimeoutSeconds',
   'maxConcurrentExecutions', 'maxOutputBytes', 'rateLimitPerMinute',
+  'rateLimitPerIpPerMinute', 'rateLimitPerKeyPerMinute',
 ] as const;
 
 const optionalStringKeys = [

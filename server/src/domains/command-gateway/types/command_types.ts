@@ -105,7 +105,12 @@ export interface LuciferConfig {
   executionTimeoutSeconds: number;
   maxConcurrentExecutions: number;
   maxOutputBytes: number;
+  /** Legacy shared rate limit; still honoured as the fallback default for both per-IP and per-key limits when those are not set. */
   rateLimitPerMinute: number;
+  /** Express-rate-limit layer keyed by client IP; defends the network edge. Defaults to `rateLimitPerMinute` when unset. */
+  rateLimitPerIpPerMinute?: number;
+  /** Internal limiter keyed by authenticated API-key name; per-client quota enforcement. Defaults to `rateLimitPerMinute` when unset. */
+  rateLimitPerKeyPerMinute?: number;
   onApprovalTimeout: 'deny' | 'approve-with-warning';
   dataDir: string;
   logFile?: string;
