@@ -382,16 +382,33 @@ correct primitive for CI (see `feedback_pr_checks_watch` memory).
   `gstack:status` on the PR for each fix iteration summarising the
   failure and the fix.
 
-### Re-fetch before you post (hard rule)
+### Re-fetch before you post, and watermark correctly (hard rule)
 
 **Before posting ANY comment on the issue or PR, always re-fetch
-`gh pr view --json comments` (or `gh issue view --json comments`) and
-process new owner comments first.** CI waits (`gh pr checks --watch`) and
-long-running validation commands are often long enough that the owner
-posts feedback while the skill is blocked. Posting a status comment
-without re-reading collides with that feedback and makes it look ignored
-— a real failure has happened on this project (see
-`feedback_gh_refetch_before_post`).
+`gh pr view --json comments,reviews` (or `gh issue view --json comments`)
+— plus `gh api repos/<o>/<r>/pulls/<N>/comments` for inline review-thread
+comments on PRs — and process new owner comments first.** CI waits
+(`gh pr checks --watch`) and long-running validation commands are long
+enough that the owner may post feedback while the skill is blocked.
+Posting a status comment without re-reading collides with that feedback
+and makes it look ignored — a real failure has happened on this project
+(see memory `feedback_gh_refetch_before_post`).
+
+**The poll watermark is the GitHub `createdAt` of the skill's OWN last
+comment on the thread — never wall-clock "now".** Capture the `createdAt`
+the API returns when you post, store it as the per-thread watermark, and
+hand it to every subsequent poll cycle. The filter is then
+`.comments[] | select(.createdAt > $watermark) | select(.author.login == $owner)`.
+Advance the watermark again to the newly posted comment's `createdAt`
+after every post.
+
+**Why the watermark must not be `now`.** If the watermark is set to the
+time the next `ScheduleWakeup` is scheduled, any owner comment that lands
+in the gap between your post (e.g. 13:52:48Z) and the schedule call (e.g.
+13:54:00Z) is silently below the cutoff and the next poll misses it. On
+PR #38 the owner posted a "close + patch bump" directive at 13:53:32Z
+and two polls in a row missed it because the watermark had been set to
+13:54:00Z. Use the GitHub-returned `createdAt`, not `date -u +%s`.
 
 Concrete rules:
 
@@ -402,11 +419,18 @@ Concrete rules:
   first: post an `answer-ack` quoting the relevant part, apply fixes,
   then post the planned status (or skip it if the owner's comment has
   superseded its content).
+- Include `.comments` AND `.reviews` from `gh pr view`, plus inline
+  review-thread comments from `gh api /pulls/<N>/comments`, in the poll
+  sweep. A review left via GitHub's "Finish your review" dialog does not
+  appear in `.comments`.
 - If the only thing you were going to post is a redundant announcement
   that restates PR metadata the owner can already see (e.g. "CI green",
-  "PR marked ready"), consider skipping the comment entirely and going
-  straight into step 9's poll loop. A comment with no new information
-  for the owner is noise and crowds out real feedback.
+  "PR marked ready", "nothing changed"), skip the comment entirely and
+  stay in the poll loop. A comment with no new information for the
+  owner is noise and crowds out real feedback.
+- For threads the skill has never posted on yet, the initial watermark
+  is the `createdAt` of the most recent pre-existing comment — not
+  `now` — so comments posted before the skill joined are not dropped.
 
 ### 9. Poll reviewer comments until the PR is merged or closed
 
