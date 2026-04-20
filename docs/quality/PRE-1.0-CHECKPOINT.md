@@ -366,34 +366,35 @@ Commit-type hygiene per CODE-STANDARDS §Commit Messages is solid.
 | Docs coverage (JSDoc) | ⚠️ security symbols undocumented (S2) |  |
 | Operational limits documented | ⚠️ in-memory pending store not in README (R3) |  |
 
-### 9.1 Must-fix before 1.0 (P0)
+### 9.1 Tracked in GitHub issues
 
-1. **A1 + D1 — doc drift from #21.** Add `request-proxy` to
-   `DOMAIN-BOUNDARIES.md` (registry, boundary map, integration contracts) and a
-   row to `QUALITY-GRADES.md`.
-2. **R2 — CHANGELOG.** At minimum, generate a 1.0 CHANGELOG from `git log` that
-   lists every tagged release from 0.1.0 through 0.8.1 and the 1.0 summary.
-3. **C1 — `registerExecuteRoutes` decomposition.** 289 lines with `cc=21` is a
-   future-regression magnet. Split as described in §6.1.
+Every P0 and P1 finding from this checkpoint has been promoted to its own
+tracking issue. Work and discussion happens there — this report no longer
+restates them.
+
+**Must-fix before 1.0 (P0):**
+
+- #28 — A1 + D1: add `request-proxy` to `DOMAIN-BOUNDARIES.md` and
+  `QUALITY-GRADES.md`
+- #29 — R2: add `CHANGELOG.md`
+- #30 — C1: decompose `registerExecuteRoutes`
+
+**Should-fix before 1.0 (P1):**
+
+- #31 — C2: decompose `authorizeProxyRequest` into a typed decision chain
+- #32 — C3: flatten `executeCommand` nesting
+- #33 — C4: hoist optional-collaborator branches out of `createApp`
+- #34 — C5: split `cli.ts` and `register_execute_routes.ts`
+- #35 — S2: JSDoc on the API-key-store surface
+- #36 — S3: audit `command-gateway` for redundant rate limiting
+- #37 — R3: README section on operational limits
 
 > R1 (package.json version drift) was investigated and dropped: the
 > publish pipeline overwrites the field at publish time
 > (`.github/workflows/ci.yml:137`), so the committed placeholder is
 > intentional. See §8.4.
 
-### 9.2 Should-fix before 1.0 (P1)
-
-5. **C2** — decompose `authorizeProxyRequest` into a typed decision chain.
-6. **C3** — flatten `executeCommand` from `max_nesting=6` to ≤3.
-7. **C4** — pull optional-collaborator branches out of `createApp`.
-8. **C5** — split `cli.ts` (per-subcommand) and `register_execute_routes.ts`
-   (per the C1 split).
-9. **S2** — add JSDoc to the API-key-store public surface.
-10. **S3** — audit `command-gateway` request path for redundant rate limiting.
-11. **R3** — README section on operational limits (single-process state,
-    SQLite-only).
-
-### 9.3 Nice-to-have / post-1.0 (P2)
+### 9.2 Nice-to-have / post-1.0 (P2)
 
 12. **S1** — shared boundary-validation helper.
 13. **T1** — dedicated tests for `stats` / `log` CLI commands.
