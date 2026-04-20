@@ -1,6 +1,6 @@
 ---
 name: gh-cli-guide
-description: Reference guide for the `gh` GitHub CLI. Invoke when another skill (github-pr-fixer, gstack-gh, gstack-full, etc.) needs canonical command patterns for issues, PRs, checks, workflow logs, reviewer comments, code scanning, labels, or the REST API. Also used when the user asks "how do I X with gh".
+description: Reference guide for the `gh` GitHub CLI. Invoke when another skill (gstack-gh, gstack-full, gh-security-and-quality, etc.) needs canonical command patterns for issues, PRs, checks, workflow logs, reviewer comments, code scanning, labels, or the REST API. Also used when the user asks "how do I X with gh".
 ---
 
 # gh CLI reference

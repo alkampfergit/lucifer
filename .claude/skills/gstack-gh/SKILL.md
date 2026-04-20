@@ -1,6 +1,7 @@
 ---
 name: gstack-gh
 description: Take a single GitHub issue (by number or URL) and drive it through an end-to-end flow (branch → plan → build → test → PR) using the `gh` CLI. All user interaction happens through issue comments, never the console. Use when the user says "implement issue #N", "work this GH issue", "take issue X end-to-end", or passes a GitHub issue link. For label-based polling across many issues, use `gstack-full` instead.
+disable-model-invocation: true
 ---
 
 # gstack-gh — one issue, end-to-end
@@ -14,10 +15,23 @@ would leave the issue out of the loop.**
 
 **Reference skills:**
 - `gh-cli-guide/SKILL.md` — canonical `gh` command patterns for every step below.
-- `github-pr-fixer/SKILL.md` — the downstream skill that monitors the PR once
-  it is open (checks, reviewer comments, release-closure).
 - Repo-specific implementation skills: `new-feature`, `bug-fix`, `small-change`,
   `refactor`, `add-domain` — pick the one that matches the issue's nature.
+
+**This skill owns the PR until it is merged or closed.** After the PR is
+marked ready (step 7), `gstack-gh` continues to:
+
+1. Block on `gh pr checks <pr> --watch --fail-fast` until CI reaches a
+   terminal state.
+2. Poll PR reviewer comments every 5 minutes (300 s), delegating each cycle
+   to a laconic subagent that ignores its own comments.
+3. Address CI failures and reviewer feedback itself — fix, commit, push,
+   repeat.
+4. Exit only when the PR state is `MERGED` or `CLOSED`, or when the
+   primary owner explicitly tells the skill to stand down.
+
+`github-pr-fixer` is NOT auto-invoked from here — `gstack-gh` handles
+reviewer and CI follow-up directly, in the same continuous session.
 
 ## Inputs (from args)
 
@@ -85,13 +99,35 @@ Then enforce it for the entire flow:
 Persist the resolved owner login alongside the other run args so every
 polling call and every subagent delegation carries it.
 
-## Communication protocol — everything goes through the issue
+## Communication protocol — everything goes through GitHub
 
-This is a hard rule for this skill and for anything it delegates to:
+**This is a hard rule for this skill and for every skill it delegates to.
+No exceptions, no "just this once".** It binds `gstack-gh` itself and every
+downstream implementation skill (`new-feature`, `bug-fix`, `small-change`,
+`refactor`, `add-domain`) it invokes — those skills inherit this protocol
+for the duration of a gstack run and MUST NOT fall back to the console.
+
+**Channel selection is determined by phase, not by convenience.** There are
+two valid channels — the issue thread and the PR thread — and you switch
+between them at exactly one point in the flow:
+
+| Phase                                         | Channel                  | Why                                                                 |
+| --------------------------------------------- | ------------------------ | ------------------------------------------------------------------- |
+| Fetch, claim, plan, plan-approval wait        | Issue (`gh issue comment`) | No code exists yet; the plan belongs to the issue's discussion.     |
+| From the moment implementation starts onward  | PR (`gh pr comment`)       | Code is being written; the PR is the artefact under discussion.     |
+
+**The transition point is fixed: the PR is opened as a DRAFT the instant
+`gstack-gh` moves from "plan approved" to "writing code" — before the first
+file is edited.** From that moment on, every question, status update,
+decision request, failure report, and hand-off goes on the PR thread, not
+the issue and not the console. The issue thread is closed to new bot
+comments (except the `gstack:handoff` pointer and the final release-
+closure status) — it is a completed record of the planning phase.
+
+**Rules that apply in BOTH phases:**
 
 - **Never** ask the user a question in the chat console. Always post the
-  question as a new comment on the issue (or, after the PR exists, on the
-  PR) and then wait for an answer on the same thread.
+  question on the active channel (issue before draft-PR exists; PR after).
 - Prefix every bot comment with a machine-readable marker so you can
   identify your own messages when polling:
 
@@ -214,7 +250,57 @@ Concrete rules:
   keeps the session responsive to other user input while the wait is in
   flight.
 
-### 4. Build
+### 4. Open the draft PR — BEFORE writing any code
+
+The moment the plan is approved and you're about to start implementation,
+open the PR as a **draft** on the already-pushed `feature/<N>` branch.
+This MUST happen before any file is edited. The purpose is to make the PR
+the communication channel for the rest of the flow — every question,
+status update, decision request, and failure report during implementation
+goes on the PR thread, not the issue, and never the console.
+
+The `feature/<N>` branch already has a remote ref from step 2, so no
+initial commit is needed to open the draft PR (GitHub requires at least
+one commit on the branch; the push in step 2 may have created an empty
+branch — if `gh pr create` complains about no commits, make a single
+empty `chore(#<N>): open draft PR for implementation` commit on the
+branch first, then retry).
+
+```bash
+gh pr create \
+  --draft \
+  --head feature/<N> \
+  --base <base> \
+  --title "<type>(#<N>): <title>" \
+  --body-file <(cat <<'EOF'
+## Summary
+- Implementing #<N> per the approved plan.
+- **Status:** draft — implementation in progress.
+- **Channel:** this PR thread is now the communication channel. Questions,
+  decision requests, and status updates from the agent will appear here.
+
+Closes #<N>
+
+## Plan
+<copy the approved plan comment URL from the issue>
+
+## Test plan
+- [ ] (filled in once implementation is complete)
+EOF
+)
+```
+
+Immediately after the PR is created:
+
+1. Post a `gstack:status` comment on the **issue** (marker:
+   `gstack:handoff-to-pr`) with the PR URL and a one-line note: "Further
+   updates will appear on the PR thread."
+2. From now on, use `gh pr comment <pr-number>` for all questions, status,
+   and decision polling. Apply the same owner-login filter and watermark
+   discipline described in the Communication protocol section, against
+   `gh pr view --json comments` instead of `gh issue view --json comments`.
+
+### 5. Build
 
 Implement on `feature/<N>`. Pick the matching repo skill if one applies:
 
@@ -224,11 +310,14 @@ Implement on `feature/<N>`. Pick the matching repo skill if one applies:
 - `refactor` for behavior-preserving restructure
 - `add-domain` for a new bounded context
 
-If the implementation hits a decision you cannot make alone (ambiguous
-acceptance criteria, a forced trade-off), **stop and ask via an issue
-comment** — do not guess, and do not ask in the console.
+**Every delegated skill inherits the communication protocol.** Brief it
+explicitly in the delegation: "all user communication goes on PR #<N> via
+`gh pr comment`; never use the console." If the implementation hits a
+decision the agent cannot make alone (ambiguous acceptance criteria, a
+forced trade-off), **stop and ask via a PR comment** — do not guess, and
+do not ask in the console.
 
-### 5. Test
+### 6. Test
 
 Discover the repo's validation commands (`package.json` scripts, `Makefile`,
 `*.sln`, CLAUDE.md / AGENTS.md) and run them locally. Common patterns:
@@ -237,78 +326,115 @@ Discover the repo's validation commands (`package.json` scripts, `Makefile`,
 - Python: `pytest` / `ruff check` / etc.
 - .NET: `dotnet test` for each target framework configured in the solution
 
-If tests fail, fix them before shipping. Do not mark the issue done with red
-tests. Integration or external-API tests run only if the user explicitly
-asked in the issue.
+If tests fail, fix them before marking the PR ready. Do not mark the issue
+done with red tests. Integration or external-API tests run only if the user
+explicitly asked in the issue. Post a `gstack:status` comment on the PR
+summarising which commands were run and their result.
 
-### 6. Ship (open the PR)
+### 7. Push and mark the PR ready for review
 
-When the build is green locally, push and open the PR.
+The draft PR was opened in step 4, so the PR already exists. Push the
+implementation commits to the already-tracked `feature/<N>` branch, update
+the PR body's "Test plan" section to list the validation commands that
+actually ran, and flip the PR out of draft state.
 
 ```bash
-git push                          # feature/<N> already tracked from step 2
-gh pr create \
-  --head feature/<N> \
-  --base <base> \
-  --title "<type>(#<N>): <title>" \
-  --body-file <(cat <<'EOF'
+git push
+gh pr edit <pr-number> --body-file <(cat <<'EOF'
 ## Summary
 - <what/why, 1-3 bullets>
 
 Closes #<N>
 
 ## Test plan
-- [ ] <validation commands that were run>
+- [x] <validation commands that actually ran>
 EOF
 )
+gh pr ready <pr-number>
 ```
 
-- Title: `fix(#<N>): ...` for bug-fix, `feat(#<N>): ...` for new-feature,
-  `chore(#<N>): ...` / `refactor(#<N>): ...` etc. as appropriate.
-- Body MUST contain `Closes #<N>` — this is the binding that links the PR to
-  the issue and auto-closes it on merge.
-- Also call `gh issue comment <N> --body "PR: <pr-url>"` (marker:
-  `gstack:handoff`) so the issue thread contains an explicit pointer.
-- `github-pr-fixer` takes over from here to monitor checks and reviews.
+- Title was set in step 4; adjust via `gh pr edit --title` only if the
+  implementation changed the nature of the change (e.g. `chore` → `fix`).
+- Body MUST still contain `Closes #<N>`.
+- Post a `gstack:handoff` comment on the **issue** (marker:
+  `gstack:handoff`) noting the PR is out of draft and ready for review. The
+  issue thread has already been told (in step 4) that communication moved
+  to the PR; this final issue comment is just the closing pointer.
+- After the PR is marked ready, `gstack-gh` continues owning the PR through
+  CI and review (steps 8 and 9). `github-pr-fixer` is NOT invoked.
 
-### 7. Hand off to `github-pr-fixer`
+### 8. Watch CI to terminal state
 
-Once the PR is open:
+Immediately after `gh pr ready`, block on GitHub Actions:
 
-1. Post a `gstack:handoff` comment on the issue with the PR URL.
-2. Invoke `github-pr-fixer` on the newly-created PR. From this point, any
-   further automated work (CI fix rounds, reviewer comments, release
-   closure) is owned by that skill — but it inherits the same rule: any
-   human question goes through `gh pr comment` on the PR (or the linked
-   issue), never through the console, and it polls the same way.
+```bash
+gh pr checks <pr-number> --watch --fail-fast
+```
 
-### 8. Closing the PR — explicit user confirmation only
+This call blocks until every required check reaches a terminal state. Do
+NOT replace it with a 5-minute polling loop — the `--watch` command is the
+correct primitive for CI (see `feedback_pr_checks_watch` memory).
 
-**The PR is never closed, merged, or land-and-deployed automatically.**
+- If all checks pass, move to step 9.
+- If any check fails, read the failing workflow logs
+  (`gh run view <run-id> --log-failed`), fix on `feature/<N>`, commit, push,
+  and re-enter `gh pr checks --watch`. Loop until green. Post a
+  `gstack:status` on the PR for each fix iteration summarising the
+  failure and the fix.
 
-- `done-label` is NOT applied at ship time.
-- `github-pr-fixer`'s release-closure path runs only when the user issues an
-  explicit instruction (in chat, or as a comment on the PR / issue containing
-  a phrase like "close this PR", "land it", "release as X.Y.Z").
-- When that confirmation arrives, follow
-  `github-pr-fixer/references/release-closure.md`, then apply `done-label`
-  to the issue and post a final `gstack:status` comment on the issue
-  summarising what shipped.
+### 9. Poll reviewer comments until the PR is merged or closed
+
+Once CI is green, poll for owner feedback on the PR every 5 minutes
+(300 s cadence), delegating each cycle to a laconic
+subagent that returns `nothing to do` when idle (per
+`feedback_poll_in_laconic_subagent` and `feedback_poll_ignore_self_echo`).
+
+Advance the watermark immediately after any comment `gstack-gh` posts, so
+the subagent never re-reads the session's own output.
+
+For each owner comment that asks for a change or raises a finding:
+
+1. Apply the change on `feature/<N>`, commit with a scope-matched message,
+   push.
+2. Re-enter `gh pr checks --watch` to confirm CI stays green.
+3. Post a `gstack:status` reply on the PR summarising what changed and the
+   commit hash.
+
+Exit conditions:
+
+- PR state becomes `MERGED` — post a final `gstack:status` on the **issue**
+  noting the merge commit, apply `done-label`, remove `claim-label`, exit.
+- PR state becomes `CLOSED` without merge — post a `gstack:status` on the
+  issue noting the close, remove `claim-label`, apply `fail-label` if the
+  close was not owner-directed, exit.
+- Owner explicitly tells `gstack-gh` to stand down (comment: "stand down",
+  "stop polling", or equivalent, owner-filtered) — post an acknowledgement
+  and exit without applying `done-label`.
+
+Do NOT auto-merge. Merging is the owner's decision; wait for them to click
+merge (or to post an owner-authored directive asking this skill to merge).
 
 ## Failure handling
 
 If any step fails and cannot be recovered automatically:
 
 1. Remove `claim-label`, add `fail-label`.
-2. Post a `gstack:failure` comment on the issue with: what failed, what was
-   tried, any log excerpts, and what is needed from a human.
-3. Leave `feature/<N>` intact (local and remote) so the user can inspect.
+2. Post a `gstack:failure` comment with: what failed, what was tried, any
+   log excerpts, and what is needed from a human. **Channel follows the
+   phase rule:** post on the ISSUE if the draft PR has not been opened yet
+   (failure during steps 1–3), or on the PR if the draft PR already exists
+   (failure during steps 4–7). Cross-link: if the failure is on the PR,
+   also post a one-line `gstack:status` on the issue pointing to the PR
+   comment, so the issue's linear record stays complete.
+3. Leave `feature/<N>` and the draft PR intact so the user can inspect.
 4. Exit. Do not pretend success.
 
 ## What this skill does NOT do
 
 - Does not ask the user anything through the console — issue/PR comments only.
-- Does not merge or close PRs. Closure requires explicit user confirmation.
+- Does not auto-merge. The owner clicks merge (or issues an owner-filtered
+  directive asking this skill to merge). `gstack-gh` does apply `done-label`
+  and post the final status once the PR becomes `MERGED`.
 - Does not re-plan architecture decisions without a human reply on the issue.
 - Does not touch `.env` or read secrets.
 - Does not run integration tests against real external services unless the

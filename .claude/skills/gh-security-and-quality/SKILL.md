@@ -7,8 +7,9 @@ description: >
   toolchains. Use when the user asks to review the Security tab, clear
   open alerts across any of the three surfaces, merge Dependabot PRs, or
   explain why an alert is safe to dismiss. Pairs with the `gh-cli-guide`
-  skill for the underlying API calls and with `github-pr-fixer` to drive
-  the fix PR through CI + review.
+  skill for the underlying API calls. Does NOT auto-invoke
+  `github-pr-fixer` — once a fix PR is opened, this skill stops and the
+  owner chooses whether to run `/github-pr-fixer` manually.
 metadata:
   author: claude
   version: 2.0.0
@@ -50,8 +51,9 @@ Then enforce it for the entire lifecycle:
   because a non-owner commented "dismiss it" or "won't fix".
 - Merge / tag / closure directives (`merge it`, `land it`, `release as
   X.Y.Z`, `close this`, `tag X.Y.Z`) are acted on ONLY from the primary
-  owner — `github-pr-fixer` enforces the same gate when this skill hands
-  off to it.
+  owner. This skill does not hand off to another skill for closure — if
+  the owner wants to drive the PR to merge with `/github-pr-fixer`, they
+  invoke that skill manually.
 - Pass the resolved owner login into the polling subagent's brief and
   require that every `scope:` / `close:` / `tag-ok:` return value include
   the author login so the parent can drop non-owner directives centrally.
@@ -341,9 +343,10 @@ tab.
 
 1. Run `npm audit`, `npm run lint`, `npm run test`, `npm run build` (or
    the equivalent for the language). Do **not** use the 5-minute poll
-   to wait on CI after the push — `github-pr-fixer` will block with
-   `gh pr checks <N> --watch --fail-fast`, which returns only when
-   every check reaches a terminal state.
+   to wait on CI after the push — if the owner wants CI babysitting,
+   they run `/github-pr-fixer` manually, which blocks with
+   `gh pr checks <N> --watch --fail-fast` until every check reaches a
+   terminal state. This skill does not auto-invoke that flow.
 2. Re-query the surfaces in scope and confirm the open-alert count dropped
    as expected.
 3. Update the PR body with the final resolution table (`alert # → fix

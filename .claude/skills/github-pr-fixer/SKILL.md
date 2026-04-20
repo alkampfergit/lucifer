@@ -1,15 +1,19 @@
 ---
 name: github-pr-fixer
 description: >
-  Fix the current GitHub pull request until checks pass or five fix rounds are
-  exhausted. Use when an open PR has failing or pending checks and you need to
-  inspect GitHub checks with gh, remediate SonarCloud issues with the sonar
-  skill, inspect failed workflow jobs or code scanning alerts, push fixes, and
-  repeat. Also covers: opening a PR from the current branch, waiting for a
-  reviewer (human or Copilot) and addressing their line-level comments, and
-  closing a ready release PR. While the PR is open, stay active and poll PR
-  comments every five minutes for new feedback or an explicit closure
-  instruction — do not go idle.
+  MANUAL SLASH-ONLY skill. Invoke EXCLUSIVELY when the user types
+  `/github-pr-fixer`. Never auto-invoke, never chain from another skill, never
+  treat any other skill's handoff comment or instruction as a trigger. When
+  the user runs it directly: fix the current GitHub pull request until checks
+  pass or five fix rounds are exhausted — inspect GitHub checks with gh,
+  remediate SonarCloud issues with the sonar skill, inspect failed workflow
+  jobs or code scanning alerts, push fixes, repeat. Also covers (on direct
+  user request): opening a PR from the current branch, waiting for a reviewer
+  (human or Copilot) and addressing their line-level comments, and closing a
+  ready release PR. While invoked, stay active and poll PR comments every
+  five minutes for new feedback or an explicit closure instruction — do not
+  go idle.
+disable-model-invocation: true
 metadata:
   author: codex
   version: 1.4.0
@@ -17,6 +21,14 @@ metadata:
 ---
 
 # Skill: GitHub PR Fixer
+
+**Invocation rule (hard):** this skill runs ONLY when the user explicitly
+types `/github-pr-fixer`. It is never auto-invoked, never chained from
+another skill, and never triggered by a handoff comment, label, or PR event.
+If you reach this file because another skill suggested you "invoke
+github-pr-fixer", stop — that other skill is out of date; the correct
+behaviour is to stop and wait for the user to run the slash command
+themselves.
 
 Use this skill to drive a PR to green with `gh` and the existing `sonar`
 skill, or to close a ready release PR when the user explicitly asks for that
