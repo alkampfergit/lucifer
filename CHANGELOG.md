@@ -14,6 +14,14 @@ Target content for 1.0 (tracked in [`docs/quality/PRE-1.0-CHECKPOINT.md`](docs/q
 - Stabilise the public HTTP surface on `command-gateway` and `request-proxy`.
 - Lock the layered dependency direction (Types → Config → Repository → Service → Runtime → UI/API) as a hard CI invariant.
 
+## [0.8.8] — 2026-04-21
+
+### Changed
+- `command-gateway`: split the single `rateLimitPerMinute` knob into a per-IP limit (`rateLimitPerIpPerMinute`, enforced at the Express edge) and a per-API-key limit (`rateLimitPerKeyPerMinute`, enforced after authentication). Both are optional and fall back to `rateLimitPerMinute` when unset, so existing `lucifer.json` files keep identical behaviour (#36, #43).
+
+### Added
+- Tests covering the new precedence logic: config loader accepts / preserves the two new knobs and rejects non-numeric values; route registration wires the exact per-IP / per-key limits (with fallback) to each limiter layer.
+
 ## [0.8.3] — 2026-04-20
 
 ### Changed
