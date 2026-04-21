@@ -14,6 +14,13 @@ Target content for 1.0 (tracked in [`docs/quality/PRE-1.0-CHECKPOINT.md`](docs/q
 - Stabilise the public HTTP surface on `command-gateway` and `request-proxy`.
 - Lock the layered dependency direction (Types → Config → Repository → Service → Runtime → UI/API) as a hard CI invariant.
 
+## [0.8.10] — 2026-04-21
+
+### Changed
+- `server/src/cli.ts` (350 → 63 lines): subcommand bodies moved into `server/src/cli/` (`print_help`, `init_config`, `run_log`, `run_stats`, `run_pair`, `run_server`) with a small `args.ts` helper. `cli.ts` is now a thin dispatcher.
+- `server/src/domains/command-gateway/api/register_execute_routes.ts` (353 → 188 lines): the `always_approve` / cached-approval execute-and-audit pattern is hoisted into `service/execute_and_audit.ts`; the manual-approve try/catch is hoisted into `service/handle_manual_approval.ts`.
+- Behaviour-preserving: audit shape, HTTP status codes, ADR-009 alias-bypass ordering, abort-on-disconnect semantics, and rate-limiter placement all unchanged. All 329 tests still pass (#34, #45).
+
 ## [0.8.9] — 2026-04-21
 
 ### Changed
