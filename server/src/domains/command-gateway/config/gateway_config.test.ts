@@ -70,6 +70,37 @@ describe('loadGatewayConfig', () => {
     expect(() => loadGatewayConfig(filePath)).toThrow('failed validation');
   });
 
+  it('accepts and preserves the per-IP and per-key rate-limit overrides', () => {
+    const dir = createTempDir();
+    const filePath = writeConfig(dir, {
+      rateLimitPerMinute: 50,
+      rateLimitPerIpPerMinute: 200,
+      rateLimitPerKeyPerMinute: 20,
+    });
+
+    const config = loadGatewayConfig(filePath);
+    expect(config.rateLimitPerMinute).toBe(50);
+    expect(config.rateLimitPerIpPerMinute).toBe(200);
+    expect(config.rateLimitPerKeyPerMinute).toBe(20);
+  });
+
+  it('leaves per-IP and per-key overrides undefined when only the legacy shared limit is set', () => {
+    const dir = createTempDir();
+    const filePath = writeConfig(dir, { rateLimitPerMinute: 77 });
+
+    const config = loadGatewayConfig(filePath);
+    expect(config.rateLimitPerMinute).toBe(77);
+    expect(config.rateLimitPerIpPerMinute).toBeUndefined();
+    expect(config.rateLimitPerKeyPerMinute).toBeUndefined();
+  });
+
+  it('rejects non-numeric per-IP or per-key rate-limit values', () => {
+    const dir = createTempDir();
+    const filePath = writeConfig(dir, { rateLimitPerKeyPerMinute: 'lots' });
+
+    expect(() => loadGatewayConfig(filePath)).toThrow('failed validation');
+  });
+
   it('accepts extra unknown fields for forward compatibility', () => {
     const dir = createTempDir();
     const filePath = writeConfig(dir, { futureField: 'hello', anotherOne: 42 });
