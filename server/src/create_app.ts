@@ -160,6 +160,90 @@ function createProxyAuditSink(auditLog: ReturnType<typeof createAuditLog>): Prox
   }
 }
 
+interface ConfigPaths {
+  configDir: string
+  apiKeysPath: string
+  commandRulesPath: string
+  proxyConfigPath: string
+}
+
+function resolveConfigPaths(configPath: string | undefined): ConfigPaths {
+  const configDir = configPath ? path.dirname(path.resolve(configPath)) : process.cwd()
+  return {
+    configDir,
+    apiKeysPath: path.join(configDir, 'api-keys.json'),
+    commandRulesPath: path.join(configDir, 'command-rules.json'),
+    proxyConfigPath: path.join(configDir, 'proxy-config.json'),
+  }
+}
+
+function enableFileLoggingIfConfigured(gatewayConfig: ReturnType<typeof loadGatewayConfig>, resolvedDataDir: string) {
+  if (!gatewayConfig.logFile) return
+  const logPath = path.resolve(resolvedDataDir, gatewayConfig.logFile)
+  addLogFile(logPath)
+  log.info({ logFile: logPath }, 'File logging enabled')
+}
+
+interface GatewayWiring {
+  approvalChannel: ApprovalChannel
+  cleanupInterval: ReturnType<typeof setInterval>
+  proxyDeps: ProxyServerDeps
+}
+
+function wireCommandGateway(
+  app: ReturnType<typeof express>,
+  gatewayConfig: ReturnType<typeof loadGatewayConfig>,
+  paths: ConfigPaths,
+  options: CreateAppOptions,
+): GatewayWiring {
+  const db = getDatabase(gatewayConfig.dataDir)
+  const approvalStore = createApprovalStore(db)
+  const auditLog = createAuditLog(db)
+  const apiKeyStore = createApiKeyStore(paths.apiKeysPath)
+  const commandRulesStore = createCommandRulesStore(paths.commandRulesPath)
+  const pendingStore = createPendingRequestStore()
+
+  const approvalChannel = initApprovalChannel(
+    { app, pendingStore, approvalStore, auditLog, gatewayConfig },
+    options.autoApprove ?? false,
+    options.telegramApiRoot,
+  )
+
+  registerExecuteRoutes({
+    router: app, config: gatewayConfig, apiKeyStore, commandRulesStore,
+    approvalStore, pendingStore, auditLog, approvalChannel,
+  })
+
+  const cleanupInterval = setInterval(() => {
+    approvalStore.removeExpired()
+    pendingStore.cleanup(gatewayConfig.approvalTimeoutSeconds * 1000)
+  }, 60_000)
+
+  // Wire the proxy bridges over gateway stores so request-proxy stays
+  // isolated from command-gateway code (Dependency Rules).
+  const proxyDeps: ProxyServerDeps = {
+    tokenValidator: createProxyTokenValidator(apiKeyStore),
+    approvalRequester: createProxyApprovalRequester(approvalChannel, gatewayConfig.approvalTimeoutSeconds),
+    auditSink: createProxyAuditSink(auditLog),
+  }
+
+  log.info('Command gateway initialized')
+  return { approvalChannel, cleanupInterval, proxyDeps }
+}
+
+function wireProxyServers(
+  proxyConfigPath: string,
+  gatewayPort: number,
+  proxyDeps: ProxyServerDeps,
+): ProxyServers | undefined {
+  const proxyConfig = loadProxyConfig(proxyConfigPath)
+  if (!proxyConfig || proxyConfig.proxies.length === 0) return undefined
+  validateProxyPorts(proxyConfig.proxies, gatewayPort)
+  const proxyServers = createProxyServers(proxyConfig.proxies, proxyDeps)
+  log.info({ count: proxyConfig.proxies.length }, 'Transparent proxy mappings configured')
+  return proxyServers
+}
+
 export function createApp(options: CreateAppOptions = {}) {
   const serverConfig = getServerConfig()
   const metadataRepository = createRuntimeMetadataRepository()
@@ -170,78 +254,35 @@ export function createApp(options: CreateAppOptions = {}) {
   app.use(express.json())
   registerHealthRoutes(app, getHealthReport)
 
-  // Initialize Lucifer command gateway
   const gatewayConfig = loadGatewayConfig(options.configPath)
-  const configDir = options.configPath ? path.dirname(path.resolve(options.configPath)) : process.cwd()
-  const apiKeysPath = path.join(configDir, 'api-keys.json')
-  const commandRulesPath = path.join(configDir, 'command-rules.json')
-  const proxyConfigPath = path.join(configDir, 'proxy-config.json')
+  const paths = resolveConfigPaths(options.configPath)
 
   // Resolve dataDir relative to config directory
-  const resolvedDataDir = path.resolve(configDir, gatewayConfig.dataDir)
-  gatewayConfig.dataDir = resolvedDataDir
+  gatewayConfig.dataDir = path.resolve(paths.configDir, gatewayConfig.dataDir)
 
-  // Enable file logging (logFile is relative to dataDir)
-  if (gatewayConfig.logFile) {
-    const logPath = path.resolve(resolvedDataDir, gatewayConfig.logFile)
-    addLogFile(logPath)
-    log.info({ logFile: logPath }, 'File logging enabled')
-  }
+  enableFileLoggingIfConfigured(gatewayConfig, gatewayConfig.dataDir)
 
   let approvalChannel: ApprovalChannel | undefined
   let cleanupInterval: ReturnType<typeof setInterval> | undefined
-  const proxyDeps: ProxyServerDeps = {}
+  let proxyDeps: ProxyServerDeps = {}
 
-  // Only initialize gateway if config files exist
-  if (fs.existsSync(apiKeysPath) && fs.existsSync(commandRulesPath)) {
-    const db = getDatabase(gatewayConfig.dataDir)
-    const approvalStore = createApprovalStore(db)
-    const auditLog = createAuditLog(db)
-    const apiKeyStore = createApiKeyStore(apiKeysPath)
-    const commandRulesStore = createCommandRulesStore(commandRulesPath)
-    const pendingStore = createPendingRequestStore()
-
-    approvalChannel = initApprovalChannel(
-      { app, pendingStore, approvalStore, auditLog, gatewayConfig },
-      options.autoApprove ?? false,
-      options.telegramApiRoot,
-    )
-
-    registerExecuteRoutes({
-      router: app, config: gatewayConfig, apiKeyStore, commandRulesStore,
-      approvalStore, pendingStore, auditLog, approvalChannel,
-    })
-
-    // Clean up expired approvals and stale pending requests periodically
-    cleanupInterval = setInterval(() => {
-      approvalStore.removeExpired()
-      pendingStore.cleanup(gatewayConfig.approvalTimeoutSeconds * 1000)
-    }, 60_000)
-
-    // Wire the proxy bridges over gateway stores so request-proxy stays
-    // isolated from command-gateway code (Dependency Rules).
-    proxyDeps.tokenValidator = createProxyTokenValidator(apiKeyStore)
-    proxyDeps.approvalRequester = createProxyApprovalRequester(approvalChannel, gatewayConfig.approvalTimeoutSeconds)
-    proxyDeps.auditSink = createProxyAuditSink(auditLog)
-
-    log.info('Command gateway initialized')
+  if (fs.existsSync(paths.apiKeysPath) && fs.existsSync(paths.commandRulesPath)) {
+    const wiring = wireCommandGateway(app, gatewayConfig, paths, options)
+    approvalChannel = wiring.approvalChannel
+    cleanupInterval = wiring.cleanupInterval
+    proxyDeps = wiring.proxyDeps
   } else {
-    log.warn({ apiKeysPath, commandRulesPath }, 'Config files not found. Run with --init to generate them. Gateway disabled.')
+    log.warn(
+      { apiKeysPath: paths.apiKeysPath, commandRulesPath: paths.commandRulesPath },
+      'Config files not found. Run with --init to generate them. Gateway disabled.',
+    )
   }
 
-  // TLS warning
   if (process.env.NODE_ENV === 'production') {
     log.warn('Ensure HTTPS is configured for production. API keys are transmitted in headers.')
   }
 
-  // Transparent proxy listeners (optional, separate from the gateway port)
-  let proxyServers: ProxyServers | undefined
-  const proxyConfig = loadProxyConfig(proxyConfigPath)
-  if (proxyConfig && proxyConfig.proxies.length > 0) {
-    validateProxyPorts(proxyConfig.proxies, gatewayConfig.port)
-    proxyServers = createProxyServers(proxyConfig.proxies, proxyDeps)
-    log.info({ count: proxyConfig.proxies.length }, 'Transparent proxy mappings configured')
-  }
+  const proxyServers = wireProxyServers(paths.proxyConfigPath, gatewayConfig.port, proxyDeps)
 
   async function start() {
     // All-or-nothing: if any later step fails, roll back earlier ones so
