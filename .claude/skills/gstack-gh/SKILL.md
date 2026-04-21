@@ -1,7 +1,7 @@
 ---
 name: gstack-gh
 description: Take a single GitHub issue (by number or URL) and drive it through an end-to-end flow (branch → plan → build → test → PR) using the `gh` CLI. All user interaction happens through issue comments, never the console. Use when the user says "implement issue #N", "work this GH issue", "take issue X end-to-end", or passes a GitHub issue link. For label-based polling across many issues, use `gstack-full` instead.
-disable-model-invocation: true
+disable-model-invocation: false
 ---
 
 # gstack-gh — one issue, end-to-end
