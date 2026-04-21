@@ -14,6 +14,11 @@ Target content for 1.0 (tracked in [`docs/quality/PRE-1.0-CHECKPOINT.md`](docs/q
 - Stabilise the public HTTP surface on `command-gateway` and `request-proxy`.
 - Lock the layered dependency direction (Types → Config → Repository → Service → Runtime → UI/API) as a hard CI invariant.
 
+## [0.8.9] — 2026-04-21
+
+### Changed
+- `server/src/create_app.ts`: hoisted optional-collaborator branches in `createApp` into named helpers (`wireCommandGateway`, `wireProxyServers`, `resolveConfigPaths`, `enableFileLoggingIfConfigured`), reducing composition-root nesting from 5 to 2. Behaviour-preserving refactor; all 329 tests pass (#33, #44).
+
 ## [0.8.8] — 2026-04-21
 
 ### Changed
