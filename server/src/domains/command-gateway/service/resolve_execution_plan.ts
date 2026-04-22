@@ -1,23 +1,27 @@
-import type { AliasesConfig, RuleAction } from '../types/command_types.js';
+import type { AliasesConfig } from '../types/command_types.js';
 import type { ApprovalStore, CommandRulesStore } from '../types/store_interfaces.js';
 import { findAliasArgsBypass, resolveAlias } from './resolve_alias.js';
+import type { AliasAudit } from './execute_and_audit.js';
+
+export type { AliasAudit };
 
 /**
  * Decision shape the route handler acts on. Each kind is terminal: the caller
  * inspects `kind` and performs the matching audit + HTTP response. Keeping
- * this pure means it is straightforward to unit-test the (b) rule-resolution
- * + risk-analysis phase of the execute pipeline in isolation (see #30).
+ * this as a pure decision function means the (b) rule-resolution +
+ * risk-analysis phase of the execute pipeline (see #30) is unit-testable in
+ * isolation.
+ *
+ * Per-variant `ruleAction` is the specific literal produced by the check
+ * that selected that variant, so a `kind: 'always-approve'` plan cannot
+ * carry `ruleAction: 'always_deny'`.
  */
 export type ExecutionPlan =
   | { kind: 'alias-args-bypass'; alias: string }
-  | { kind: 'rule-deny'; aliasAudit: AliasAudit; ruleAction: RuleAction }
-  | { kind: 'always-approve'; aliasAudit: AliasAudit; ruleAction: RuleAction }
-  | { kind: 'cached-approval'; aliasAudit: AliasAudit; ruleAction: RuleAction }
-  | { kind: 'manual-approve'; aliasAudit: AliasAudit; ruleAction: RuleAction };
-
-export type AliasAudit =
-  | { aliasPath: string; aliasType: import('../types/command_types.js').AliasType }
-  | Record<string, never>;
+  | { kind: 'rule-deny'; aliasAudit: AliasAudit; ruleAction: 'always_deny' }
+  | { kind: 'always-approve'; aliasAudit: AliasAudit; ruleAction: 'always_approve' }
+  | { kind: 'cached-approval'; aliasAudit: AliasAudit; ruleAction: 'manual_approve' }
+  | { kind: 'manual-approve'; aliasAudit: AliasAudit; ruleAction: 'manual_approve' };
 
 export interface ResolveExecutionPlanDeps {
   command: string;
@@ -27,7 +31,11 @@ export interface ResolveExecutionPlanDeps {
 }
 
 /**
- * Pure decision function — no audit writes, no HTTP, no I/O side effects.
+ * Pure decision function — no audit writes, no HTTP response, no filesystem
+ * or network I/O. It does read from the injected rule/approval stores
+ * (which may perform their own lookup, e.g. SQLite `findApproval`), but
+ * the function itself is side-effect-free relative to the execute
+ * pipeline: it produces a decision and returns.
  *
  * Order of checks (invariant; ADR-009):
  *  1. Alias-args bypass detection — reject commands that look like alias

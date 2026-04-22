@@ -13,7 +13,11 @@ function rulesStore(action: RuleAction): CommandRulesStore {
 function approvalStore(hit: CommandApproval | undefined): ApprovalStore {
   return {
     findApproval: () => hit,
-    addApproval: () => ({ id: 1, command: '', matchType: 'exact', duration: 'session', approvedBy: 'test', approvedAt: '' }),
+    addApproval: () => ({
+      id: 1, command: '', matchType: 'exact',
+      duration: 'session', approvedBy: 'test',
+      approvedAt: '', expiresAt: null,
+    }),
     removeExpired: () => 0,
     listAll: () => [],
     revokeById: () => false,
@@ -83,7 +87,8 @@ describe('resolveExecutionPlan', () => {
   it('returns cached-approval when manual_approve matches but a cached approval exists', () => {
     const cached: CommandApproval = {
       id: 42, command: 'git push', matchType: 'exact',
-      duration: 'session', approvedBy: 'owner', approvedAt: new Date().toISOString(),
+      duration: 'session', approvedBy: 'owner',
+      approvedAt: new Date().toISOString(), expiresAt: null,
     };
     const plan = resolveExecutionPlan({
       command: 'git push',
