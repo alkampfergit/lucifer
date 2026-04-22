@@ -8,7 +8,7 @@ import type { ApiKeyStore, CommandRulesStore, ApprovalStore, PendingRequestStore
 import { authenticateRequest, createRateLimiter } from '../service/authenticate_request.js';
 import { executeAndAudit } from '../service/execute_and_audit.js';
 import { handleManualApproval } from '../service/handle_manual_approval.js';
-import { findAliasArgsBypass, resolveAlias } from '../service/resolve_alias.js';
+import { resolveExecutionPlan } from '../service/resolve_execution_plan.js';
 
 interface ValidationError {
   statusCode: number;
@@ -106,49 +106,44 @@ export function registerExecuteRoutes(deps: ExecuteRouteDeps): void {
       ip,
     });
 
-    // Reject commands that start with an alias name but are not an exact
-    // alias invocation. Without this check, `"<alias> --arg"` or
-    // `"<alias>; rm -rf /"` would fail alias exact-match, fall through to the
-    // shell, and still be auto-approved by any prefix-based command rule that
-    // matches the alias name — shadow-bypassing the alias's shell-free
-    // execution guarantee. See ADR-009.
-    const aliasBypass = findAliasArgsBypass(command, config.aliases);
-    if (aliasBypass) {
+    const plan = resolveExecutionPlan({
+      command,
+      aliases: config.aliases,
+      commandRulesStore,
+      approvalStore,
+    });
+
+    if (plan.kind === 'alias-args-bypass') {
+      // ADR-009: reject commands that start with an alias name but are not an
+      // exact alias invocation, before any rule match runs. Without this check
+      // a prefix-based command rule on the alias name would shadow-bypass the
+      // alias's shell-free execution guarantee.
       auditLog.append({
         ts: new Date().toISOString(),
         type: 'denied',
         requestId,
         command,
-        error: `alias '${aliasBypass}' does not accept arguments`,
+        error: `alias '${plan.alias}' does not accept arguments`,
       });
       res.status(403).json({
         code: 'ALIAS_ARGS_NOT_SUPPORTED',
-        message: `Alias '${aliasBypass}' does not accept arguments in this version. Send '${aliasBypass}' exactly.`,
+        message: `Alias '${plan.alias}' does not accept arguments in this version. Send '${plan.alias}' exactly.`,
         retryable: false,
       } satisfies ErrorResponse);
       return;
     }
 
-    // Resolve the alias once up front so audit entries for rule decisions,
-    // approval checks, and execution all carry `aliasPath`/`aliasType` when
-    // the command runs as an alias. `resolveAlias` is pure and cheap; the
-    // executor does its own lookup to stay self-contained.
-    const resolvedAlias = resolveAlias(command, config.aliases);
-    const aliasAudit = resolvedAlias
-      ? { aliasPath: resolvedAlias.path, aliasType: resolvedAlias.type }
-      : {};
-
-    // Match against command rules
-    const ruleMatch = commandRulesStore.matchRule(command);
     auditLog.append({
       ts: new Date().toISOString(),
       type: 'rule_match',
       requestId,
       command,
-      ruleAction: ruleMatch.action,
+      ruleAction: plan.ruleAction,
     });
 
-    if (ruleMatch.action === 'always_deny') {
+    const { aliasAudit } = plan;
+
+    if (plan.kind === 'rule-deny') {
       auditLog.append({ ts: new Date().toISOString(), type: 'denied', requestId, command, ...aliasAudit });
       res.status(403).json({
         code: 'COMMAND_DENIED',
@@ -158,15 +153,13 @@ export function registerExecuteRoutes(deps: ExecuteRouteDeps): void {
       return;
     }
 
-    if (ruleMatch.action === 'always_approve') {
+    if (plan.kind === 'always-approve') {
       auditLog.append({ ts: new Date().toISOString(), type: 'approved', requestId, command, duration: 'policy', ...aliasAudit });
       await executeAndAudit({ command, requestId, cwd, config, auditLog, aliasAudit, res });
       return;
     }
 
-    // manual_approve: check existing approval in SQLite
-    const existingApproval = approvalStore.findApproval(command);
-    if (existingApproval) {
+    if (plan.kind === 'cached-approval') {
       auditLog.append({
         ts: new Date().toISOString(),
         type: 'approval_check',
@@ -179,7 +172,7 @@ export function registerExecuteRoutes(deps: ExecuteRouteDeps): void {
       return;
     }
 
-    // Need manual approval (Telegram / web admin)
+    // plan.kind === 'manual-approve'
     await handleManualApproval({
       command, requestId, apiKeyName, ip, cwd, config,
       approvalChannel, pendingStore, auditLog, aliasAudit, res,
