@@ -14,6 +14,11 @@ Target content for 1.0 (tracked in [`docs/quality/PRE-1.0-CHECKPOINT.md`](docs/q
 - Stabilise the public HTTP surface on `command-gateway` and `request-proxy`.
 - Lock the layered dependency direction (Types → Config → Repository → Service → Runtime → UI/API) as a hard CI invariant.
 
+## [0.8.11] — 2026-04-22
+
+### Changed
+- `server/src/domains/request-proxy/service/proxy_auth.ts`: decomposed `authorizeProxyRequest` (13 return sites in a single function) into a typed decision chain — `stepAuthModeAndHeader` → `stepExtractAndValidate` → `stepApiKeyShortCircuit` → `stepApproval`. Each step returns a discriminated `StepResult<T>` (`decided` or `continue`), keeping the composed flow linear. Behaviour-preserving: every `recordAudit` call site, every HTTP status/code, and the public signature of `authorizeProxyRequest` are unchanged; all 329 tests pass (#31).
+
 ## [0.8.10] — 2026-04-21
 
 ### Changed

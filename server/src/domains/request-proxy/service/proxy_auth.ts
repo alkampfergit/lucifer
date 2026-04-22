@@ -29,6 +29,27 @@ export type ProxyAuthDecision =
   | { kind: 'pass'; requestId: string; keyId?: string; keyName?: string }
   | { kind: 'reject'; requestId: string; status: number; code: string; message: string };
 
+type Identity = { keyId: string; keyName: string };
+
+// Shared primitives every step needs for logging/audit. Derived once from
+// the incoming request so downstream code never re-reads the header-
+// configuration fields on `mapping` (see note in `authorizeProxyRequest`).
+interface StepCtx {
+  requestId: string;
+  port: number;
+  method: string;
+  path: string;
+  ip: string;
+}
+
+// A step either decides the whole flow (terminal) or yields a typed value
+// for the next link in the chain. Keeping this discriminated union small
+// and local is the whole point of the refactor — the chain is linear and
+// each step is individually testable by shape.
+type StepResult<T> =
+  | { kind: 'decided'; decision: ProxyAuthDecision }
+  | { kind: 'continue'; value: T };
+
 /**
  * Authenticate and (optionally) request approval for a single proxy request.
  *
@@ -50,121 +71,224 @@ export async function authorizeProxyRequest(
   // analyzer from painting `port`/`method`/`path` as derived from the
   // header-configuration fields (`apiKeyHeader`, `apiKeyPrefix`), which are
   // only header *names*, not credentials.
-  const port = mapping.port;
-  const method = req.method ?? 'GET';
-  const path = req.url ?? '/';
-  const ip = callerIp(req);
+  const ctx: StepCtx = {
+    requestId,
+    port: mapping.port,
+    method: req.method ?? 'GET',
+    path: req.url ?? '/',
+    ip: callerIp(req),
+  };
 
+  const headerCheck = stepAuthModeAndHeader(authMode, mapping, audit, ctx);
+  if (headerCheck.kind === 'decided') return headerCheck.decision;
+
+  const credentialCheck = stepExtractAndValidate(
+    req, headerCheck.value.headerName, mapping.apiKeyPrefix, validator, audit, ctx,
+  );
+  if (credentialCheck.kind === 'decided') return credentialCheck.decision;
+
+  const apiKeyGate = stepApiKeyShortCircuit(authMode, credentialCheck.value, audit, ctx);
+  if (apiKeyGate.kind === 'decided') return apiKeyGate.decision;
+
+  return stepApproval(apiKeyGate.value, mapping, approvalRequester, cache, audit, ctx);
+}
+
+/**
+ * Step 1 — authMode + header config gate.
+ *
+ * - `authMode === 'none'` passes immediately (no credential required).
+ * - Any auth mode requires `apiKeyHeader`; if it is missing, fail closed
+ *   with a 500. The config loader should already have rejected this shape,
+ *   but we double-check here because the cost of a silent pass is high.
+ */
+function stepAuthModeAndHeader(
+  authMode: ProxyMapping['authMode'] | 'none',
+  mapping: ProxyMapping,
+  audit: ProxyAuditSink | undefined,
+  ctx: StepCtx,
+): StepResult<{ headerName: string }> {
   if (authMode === 'none') {
-    return { kind: 'pass', requestId };
+    return { kind: 'decided', decision: { kind: 'pass', requestId: ctx.requestId } };
   }
 
   const headerName = mapping.apiKeyHeader;
   if (headerName === undefined) {
-    // Config loader should reject this, but fail closed if we ever see it.
     recordAudit(audit, {
-      type: 'proxy_auth_denied', requestId, port, method, path, ip,
+      type: 'proxy_auth_denied', requestId: ctx.requestId,
+      port: ctx.port, method: ctx.method, path: ctx.path, ip: ctx.ip,
       reason: 'apiKeyHeader not configured',
     });
     return {
-      kind: 'reject', requestId,
-      status: 500, code: 'misconfigured',
-      message: 'Proxy mapping is misconfigured (apiKeyHeader missing).',
+      kind: 'decided',
+      decision: {
+        kind: 'reject', requestId: ctx.requestId,
+        status: 500, code: 'misconfigured',
+        message: 'Proxy mapping is misconfigured (apiKeyHeader missing).',
+      },
     };
   }
 
+  return { kind: 'continue', value: { headerName } };
+}
+
+/**
+ * Step 2 — extract the credential and resolve it to an identity.
+ *
+ * Covers three failure modes:
+ *  - no validator wired (misconfiguration → 500),
+ *  - header missing/malformed (401),
+ *  - token unknown to the validator (401).
+ */
+function stepExtractAndValidate(
+  req: http.IncomingMessage,
+  headerName: string,
+  prefix: string | undefined,
+  validator: ProxyTokenValidator | undefined,
+  audit: ProxyAuditSink | undefined,
+  ctx: StepCtx,
+): StepResult<Identity> {
   if (!validator) {
     recordAudit(audit, {
-      type: 'proxy_auth_denied', requestId, port, method, path, ip,
+      type: 'proxy_auth_denied', requestId: ctx.requestId,
+      port: ctx.port, method: ctx.method, path: ctx.path, ip: ctx.ip,
       reason: 'no validator wired',
     });
     return {
-      kind: 'reject', requestId,
-      status: 500, code: 'misconfigured',
-      message: 'Proxy auth is configured but no token validator is available.',
+      kind: 'decided',
+      decision: {
+        kind: 'reject', requestId: ctx.requestId,
+        status: 500, code: 'misconfigured',
+        message: 'Proxy auth is configured but no token validator is available.',
+      },
     };
   }
 
-  const rawToken = extractToken(req, headerName, mapping.apiKeyPrefix);
+  const rawToken = extractToken(req, headerName, prefix);
   if (rawToken === undefined) {
     recordAudit(audit, {
-      type: 'proxy_auth_denied', requestId, port, method, path, ip,
+      type: 'proxy_auth_denied', requestId: ctx.requestId,
+      port: ctx.port, method: ctx.method, path: ctx.path, ip: ctx.ip,
       reason: 'missing or malformed header',
     });
     return {
-      kind: 'reject', requestId,
-      status: 401, code: 'unauthorized',
-      message: 'Missing or malformed authentication header.',
+      kind: 'decided',
+      decision: {
+        kind: 'reject', requestId: ctx.requestId,
+        status: 401, code: 'unauthorized',
+        message: 'Missing or malformed authentication header.',
+      },
     };
   }
 
   const identity = validator.validate(rawToken);
   if (!identity) {
     recordAudit(audit, {
-      type: 'proxy_auth_denied', requestId, port, method, path, ip,
+      type: 'proxy_auth_denied', requestId: ctx.requestId,
+      port: ctx.port, method: ctx.method, path: ctx.path, ip: ctx.ip,
       reason: 'invalid token',
     });
     return {
-      kind: 'reject', requestId,
-      status: 401, code: 'unauthorized',
-      message: 'Invalid authentication token.',
+      kind: 'decided',
+      decision: {
+        kind: 'reject', requestId: ctx.requestId,
+        status: 401, code: 'unauthorized',
+        message: 'Invalid authentication token.',
+      },
     };
   }
 
+  return { kind: 'continue', value: identity };
+}
+
+/**
+ * Step 3 — `authMode === 'api-key'` passes as soon as the identity is known.
+ * For `authMode === 'api-key-telegram'` we continue into the approval stage.
+ */
+function stepApiKeyShortCircuit(
+  authMode: ProxyMapping['authMode'] | 'none',
+  identity: Identity,
+  audit: ProxyAuditSink | undefined,
+  ctx: StepCtx,
+): StepResult<Identity> {
   if (authMode === 'api-key') {
     recordAudit(audit, {
-      type: 'proxy_auth_ok', requestId, port, method, path, ip, identity,
+      type: 'proxy_auth_ok', requestId: ctx.requestId,
+      port: ctx.port, method: ctx.method, path: ctx.path, ip: ctx.ip, identity,
     });
-    return { kind: 'pass', requestId, keyId: identity.keyId, keyName: identity.keyName };
+    return {
+      kind: 'decided',
+      decision: { kind: 'pass', requestId: ctx.requestId, keyId: identity.keyId, keyName: identity.keyName },
+    };
   }
+  return { kind: 'continue', value: identity };
+}
 
-  // authMode === 'api-key-telegram'
+/**
+ * Step 4 — Telegram-based human approval.
+ *
+ * Terminal for every call: either returns a decision or throws never —
+ * every approval outcome (approved / timeout / error / denied) and every
+ * misconfiguration (no requester) maps to a concrete `ProxyAuthDecision`.
+ * Cache hits bypass the approval channel entirely.
+ */
+async function stepApproval(
+  identity: Identity,
+  mapping: ProxyMapping,
+  approvalRequester: ProxyApprovalRequester | undefined,
+  cache: ProxyApprovalCache | undefined,
+  audit: ProxyAuditSink | undefined,
+  ctx: StepCtx,
+): Promise<ProxyAuthDecision> {
   if (!approvalRequester) {
     recordAudit(audit, {
-      type: 'proxy_approval_error', requestId, port, method, path, ip, identity,
+      type: 'proxy_approval_error', requestId: ctx.requestId,
+      port: ctx.port, method: ctx.method, path: ctx.path, ip: ctx.ip, identity,
       reason: 'no approval requester wired',
     });
     return {
-      kind: 'reject', requestId,
+      kind: 'reject', requestId: ctx.requestId,
       status: 500, code: 'misconfigured',
       message: 'Telegram approval is configured but no approval channel is available.',
     };
   }
 
-  const cacheKey = { keyId: identity.keyId, port };
+  const cacheKey = { keyId: identity.keyId, port: ctx.port };
   if (cache?.has(cacheKey)) {
     recordAudit(audit, {
-      type: 'proxy_approval_approved', requestId, port, method, path, ip, identity, source: 'cache',
+      type: 'proxy_approval_approved', requestId: ctx.requestId,
+      port: ctx.port, method: ctx.method, path: ctx.path, ip: ctx.ip, identity, source: 'cache',
     });
-    return { kind: 'pass', requestId, keyId: identity.keyId, keyName: identity.keyName };
+    return { kind: 'pass', requestId: ctx.requestId, keyId: identity.keyId, keyName: identity.keyName };
   }
 
   const approvalCtx: ProxyApprovalContext = {
-    port,
+    port: ctx.port,
     baseUrl: mapping.baseUrl,
-    method,
-    path,
+    method: ctx.method,
+    path: ctx.path,
     keyId: identity.keyId,
     keyName: identity.keyName,
-    ip,
-    requestId,
+    ip: ctx.ip,
+    requestId: ctx.requestId,
   };
 
   recordAudit(audit, {
-    type: 'proxy_approval_requested', requestId, port, method, path, ip, identity,
+    type: 'proxy_approval_requested', requestId: ctx.requestId,
+    port: ctx.port, method: ctx.method, path: ctx.path, ip: ctx.ip, identity,
   });
 
   let outcome;
   try {
     outcome = await approvalRequester.request(approvalCtx);
   } catch (err) {
-    log.error({ err, requestId, port }, 'Approval requester threw');
+    log.error({ err, requestId: ctx.requestId, port: ctx.port }, 'Approval requester threw');
     recordAudit(audit, {
-      type: 'proxy_approval_error', requestId, port, method, path, ip, identity,
+      type: 'proxy_approval_error', requestId: ctx.requestId,
+      port: ctx.port, method: ctx.method, path: ctx.path, ip: ctx.ip, identity,
       reason: err instanceof Error ? err.message : 'approval error',
     });
     return {
-      kind: 'reject', requestId,
+      kind: 'reject', requestId: ctx.requestId,
       status: 503, code: 'approval_error',
       message: 'Approval channel failed.',
     };
@@ -174,17 +298,19 @@ export async function authorizeProxyRequest(
     const ttl = mapping.telegramApprovalTtlSeconds ?? DEFAULT_PROXY_APPROVAL_TTL_SECONDS;
     cache?.set(cacheKey, ttl);
     recordAudit(audit, {
-      type: 'proxy_approval_approved', requestId, port, method, path, ip, identity, source: 'telegram',
+      type: 'proxy_approval_approved', requestId: ctx.requestId,
+      port: ctx.port, method: ctx.method, path: ctx.path, ip: ctx.ip, identity, source: 'telegram',
     });
-    return { kind: 'pass', requestId, keyId: identity.keyId, keyName: identity.keyName };
+    return { kind: 'pass', requestId: ctx.requestId, keyId: identity.keyId, keyName: identity.keyName };
   }
 
   if (outcome === 'timeout') {
     recordAudit(audit, {
-      type: 'proxy_approval_timeout', requestId, port, method, path, ip, identity,
+      type: 'proxy_approval_timeout', requestId: ctx.requestId,
+      port: ctx.port, method: ctx.method, path: ctx.path, ip: ctx.ip, identity,
     });
     return {
-      kind: 'reject', requestId,
+      kind: 'reject', requestId: ctx.requestId,
       status: 408, code: 'approval_timeout',
       message: 'Approval timed out.',
     };
@@ -192,11 +318,12 @@ export async function authorizeProxyRequest(
 
   if (outcome === 'error') {
     recordAudit(audit, {
-      type: 'proxy_approval_error', requestId, port, method, path, ip, identity,
+      type: 'proxy_approval_error', requestId: ctx.requestId,
+      port: ctx.port, method: ctx.method, path: ctx.path, ip: ctx.ip, identity,
       reason: 'approval channel error',
     });
     return {
-      kind: 'reject', requestId,
+      kind: 'reject', requestId: ctx.requestId,
       status: 503, code: 'approval_error',
       message: 'Approval channel failed.',
     };
@@ -204,10 +331,11 @@ export async function authorizeProxyRequest(
 
   // outcome === 'denied'
   recordAudit(audit, {
-    type: 'proxy_approval_denied', requestId, port, method, path, ip, identity,
+    type: 'proxy_approval_denied', requestId: ctx.requestId,
+    port: ctx.port, method: ctx.method, path: ctx.path, ip: ctx.ip, identity,
   });
   return {
-    kind: 'reject', requestId,
+    kind: 'reject', requestId: ctx.requestId,
     status: 403, code: 'forbidden',
     message: 'Approval denied.',
   };
