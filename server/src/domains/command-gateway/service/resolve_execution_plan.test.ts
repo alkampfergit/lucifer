@@ -25,7 +25,7 @@ const emptyApprovals = approvalStore(undefined);
 describe('resolveExecutionPlan', () => {
   it('returns alias-args-bypass when a command shadows an alias with arguments', () => {
     const aliases: AliasesConfig = {
-      'deploy': { path: '/tmp/deploy.sh', type: 'bash' },
+      'deploy': { path: '/opt/bin/deploy.sh', type: 'bash' },
     };
     const plan = resolveExecutionPlan({
       command: 'deploy --force',
@@ -65,7 +65,7 @@ describe('resolveExecutionPlan', () => {
 
   it('enriches aliasAudit with path/type when the command is an exact alias invocation', () => {
     const aliases: AliasesConfig = {
-      'deploy': { path: '/tmp/deploy.sh', type: 'bash' },
+      'deploy': { path: '/opt/bin/deploy.sh', type: 'bash' },
     };
     const plan = resolveExecutionPlan({
       command: 'deploy',
@@ -106,7 +106,7 @@ describe('resolveExecutionPlan', () => {
 
   it('alias-args bypass is checked before rule match (ADR-009 ordering)', () => {
     const aliases: AliasesConfig = {
-      'ls': { path: '/tmp/ls.sh', type: 'bash' },
+      'ls': { path: '/opt/bin/ls.sh', type: 'bash' },
     };
     // Rule store would always_approve, but alias-args bypass must win first.
     const plan = resolveExecutionPlan({
