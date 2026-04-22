@@ -14,6 +14,11 @@ Target content for 1.0 (tracked in [`docs/quality/PRE-1.0-CHECKPOINT.md`](docs/q
 - Stabilise the public HTTP surface on `command-gateway` and `request-proxy`.
 - Lock the layered dependency direction (Types → Config → Repository → Service → Runtime → UI/API) as a hard CI invariant.
 
+## [0.10.1] — 2026-09-22
+
+### Changed
+- `server/src/domains/command-gateway/api/register_execute_routes.ts` (188 → 181 lines): extracted the rule-resolution + dispatch block into a helper `service/resolve_execution_plan.ts` that returns a discriminated `ExecutionPlan` union (`alias-args-bypass` / `rule-deny` / `always-approve` / `cached-approval` / `manual-approve`). The route handler switches on `plan.kind` and keeps every audit append, HTTP status/code, and the ADR-009 alias-bypass-before-rule-match ordering unchanged. Closes #30 by completing the a/b/c/d decomposition started in PR #45 (parts (a), (c), (d)); this PR is part (b). Focused unit tests cover the planner's branch ordering and each plan kind.
+
 ## [0.9.0] — 2026-07-31
 
 ### Added
