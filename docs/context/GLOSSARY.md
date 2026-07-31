@@ -16,7 +16,9 @@
 | `Lucifer config` | Operator-managed server/runtime configuration loaded from `lucifer.json` | `LuciferConfig` |
 | `auto-approve mode` | Development mode that bypasses human approval | `--auto-approve`, `createAutoApproveChannel()` |
 | `pairing` | Interactive CLI workflow that binds a Telegram chat to the server config | `runTelegramPairing()` |
-| `admin secret` | Bearer token that enables and protects the web approval surface | `LUCIFER_ADMIN_SECRET` |
+| `admin secret` | Bearer token that enables and protects the web approval surface | `adminSecretHash` / `adminSecretSalt` in `lucifer.json` |
+| `command alias` | An operator-configured short name in `lucifer.json` that resolves to an on-disk executable, spawned without a shell and with `cwd` forced to the executable's own directory. May carry fixed `args` and/or opt in to caller-supplied arguments via `allowArgs` | `CommandAlias`, `resolveAlias()` |
+| `tools path` | Directories prepended to a raw (non-alias) command's `PATH`, so it can resolve executables outside the daemon's own `PATH`. Affects lookup only, not working directory | `toolsPath` in `LuciferConfig` |
 | `container app` | Azure-managed containerized application target for the deployed service | `AZURE_CONTAINER_APP_NAME` variable |
 | `Azure credentials` | Service principal JSON used by GitHub Actions to authenticate Azure deployment steps | `AZURE_CREDENTIALS` secret |
 | `harness engineering` | The practice of encoding agent guidance and checks in the repository | `AGENTS.md`, `docs/`, `.claude/skills/` |

@@ -14,7 +14,7 @@
 
 | Domain / Area | Grade | Test Coverage | Doc Status | Known Issues | Last Reviewed |
 |---|---|---|---|---|---|
-| `command-gateway` | B | Service, repository, and execute-route coverage present | Updated | Admin approval routes lack the same test depth as execute flow; in-memory pending/completed state is process-local | 2026-04-11 |
+| `command-gateway` | B | Service, repository, and execute-route coverage present; alias resolution (`resolveAlias`, `findAliasArgsBypass`), config loading, and execution env-building (`toolsPath`) have direct unit tests for the new `args`/`allowArgs`/`toolsPath` surface | Updated | Admin approval routes lack the same test depth as execute flow; in-memory pending/completed state is process-local; alias argument tokenization (`allowArgs`) is naive whitespace-splitting with no quoted-string support | 2026-07-31 |
 | `platform-api` | B | Health service and app bootstrap coverage present | Updated | Very small surface today; server composition complexity lives mostly outside this domain | 2026-04-11 |
 | `request-proxy` | B | `proxy_auth`, `proxy_server`, `proxy_approval_cache`, `proxy_config` unit tests present | Updated | `authorizeProxyRequest` complexity hotspot (cc=15, 13 return sites) — decision-chain refactor pending, tracked as Finding C2 in `PRE-1.0-CHECKPOINT.md`; potential redundant rate-limiter wiring vs `command-gateway` (Finding S3). Landed #21. | 2026-04-20 |
 | CLI / operator workflows | B | Pairing workflow and config writer/loader covered | Updated | `log` and `stats` flows rely on integration by convention rather than dedicated command-level tests | 2026-04-11 |

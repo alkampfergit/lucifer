@@ -108,6 +108,9 @@ They live in `.claude/skills/` as the single source of truth.
 | `sonar` | Fetch SonarCloud issues and split them by severity | [.claude/skills/sonar/SKILL.md](.claude/skills/sonar/SKILL.md) |
 | `github-pr-fixer` | **Manual slash-only** (`/github-pr-fixer`). Never auto-invoked or chained from another skill. Watches the current PR, fixes failing checks, and loops push/recheck up to five rounds | [.claude/skills/github-pr-fixer/SKILL.md](.claude/skills/github-pr-fixer/SKILL.md) |
 | `gh-security-and-quality` | Triage and fix GitHub security and quality findings (Dependabot, code-scanning, secret / malware) via `gh` + `npm` | [.claude/skills/gh-security-and-quality/SKILL.md](.claude/skills/gh-security-and-quality/SKILL.md) |
+| `gh-cli-guide` | Reference guide for canonical `gh` CLI command patterns (issues, PRs, checks, code scanning, labels, REST API) | [.claude/skills/gh-cli-guide/SKILL.md](.claude/skills/gh-cli-guide/SKILL.md) |
+| `gstack-gh` | Drive a single GitHub issue end-to-end (branch → plan → build → test → PR) via `gh`, with all interaction through issue comments | [.claude/skills/gstack-gh/SKILL.md](.claude/skills/gstack-gh/SKILL.md) |
+| `gstack-full` | Poll GitHub for issues carrying a label and drive each through `gstack-gh`'s end-to-end flow | [.claude/skills/gstack-full/SKILL.md](.claude/skills/gstack-full/SKILL.md) |
 
 ## Tool-Specific Bootstrap Files
 
@@ -134,4 +137,4 @@ Key routing rules:
 - Architecture review → invoke plan-eng-review
 
 ---
-*Last verified: 2026-04-15. If this file feels stale, run the `doc-gardening` skill.*
+*Last verified: 2026-07-31. If this file feels stale, run the `doc-gardening` skill.*
