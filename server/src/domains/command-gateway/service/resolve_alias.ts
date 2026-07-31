@@ -1,5 +1,5 @@
 import { dirname, resolve as resolvePath } from 'node:path';
-import type { AliasesConfig, AliasType } from '../types/command_types.js';
+import type { AliasesConfig, AliasType, CommandAlias } from '../types/command_types.js';
 
 /**
  * A command that has been resolved to an on-disk alias.
@@ -17,30 +17,16 @@ export interface ResolvedAlias {
   cwd: string;
 }
 
-/**
- * Look up the given command in the aliases config. Exact match on the trimmed
- * command string. Returns null when no alias matches (or no aliases are
- * configured), which signals the caller to fall back to normal shell
- * execution. `Object.hasOwn` guards against matching prototype properties
- * like `constructor` or `toString`.
- *
- * An alias's `args`, when configured, are fixed at config time by the
- * operator and appended to the spawned argv verbatim. They are never derived
- * from caller input, so match semantics (exact command string, no
- * caller-supplied arguments) are unchanged.
- */
-export function resolveAlias(
-  command: string,
-  aliases: AliasesConfig | undefined,
-): ResolvedAlias | null {
-  if (!aliases) return null;
-  const key = command.trim();
-  if (!Object.hasOwn(aliases, key)) return null;
-  const alias = aliases[key];
+// The leading run of identifier-like characters. Anything that a shell would
+// treat as a word terminator (whitespace, `;`, `|`, `&`, `<`, `>`, `$`,
+// backtick, quote, paren, backslash, newline) is not matched, so a caller
+// cannot smuggle shell metacharacters into the first word.
+const ALIAS_NAME_PREFIX = /^[A-Za-z0-9_.-]+/;
 
+function buildResolved(alias: CommandAlias, callerArgs: string[]): ResolvedAlias {
   const absolutePath = resolvePath(alias.path);
   const cwd = dirname(absolutePath);
-  const fixedArgs = alias.args ?? [];
+  const allArgs = [...(alias.args ?? []), ...callerArgs];
 
   if (alias.type === 'bash') {
     // `--` ends bash option parsing so a script path can never be
@@ -50,7 +36,7 @@ export function resolveAlias(
       path: absolutePath,
       type: 'bash',
       spawnCommand: 'bash',
-      spawnArgs: ['--', absolutePath, ...fixedArgs],
+      spawnArgs: ['--', absolutePath, ...allArgs],
       cwd,
     };
   }
@@ -59,21 +45,63 @@ export function resolveAlias(
     path: absolutePath,
     type: 'elf',
     spawnCommand: absolutePath,
-    spawnArgs: fixedArgs,
+    spawnArgs: allArgs,
     cwd,
   };
 }
 
-// The leading run of identifier-like characters. Anything that a shell would
-// treat as a word terminator (whitespace, `;`, `|`, `&`, `<`, `>`, `$`,
-// backtick, quote, paren, backslash, newline) is not matched, so a caller
-// cannot smuggle shell metacharacters into the first word.
-const ALIAS_NAME_PREFIX = /^[A-Za-z0-9_.-]+/;
+/**
+ * True when `trimmed` is `name` immediately followed by whitespace — i.e. a
+ * caller invoking `name` with a space-separated argument list, not a longer
+ * word that happens to start with `name` (e.g. "deployment-status" vs.
+ * "deploy status") and not shell-metacharacter smuggling (e.g. "deploy;rm").
+ */
+function hasArgsBoundary(trimmed: string, name: string): boolean {
+  return trimmed.length > name.length && /\s/.test(trimmed[name.length]);
+}
+
+/**
+ * Look up the given command in the aliases config. Returns null when no
+ * alias matches (or no aliases are configured), which signals the caller to
+ * fall back to normal shell execution. `Object.hasOwn` guards against
+ * matching prototype properties like `constructor` or `toString`.
+ *
+ * Two match modes:
+ * - **Exact** (always available): the full trimmed command equals an alias
+ *   name. Any configured `args` are fixed by the operator and appended
+ *   verbatim; caller input contributes nothing beyond selecting the alias.
+ * - **With caller arguments** (only when the alias has `allowArgs: true`):
+ *   the command is `<name> <rest>`, where `<rest>` is whitespace-tokenized
+ *   and appended after any fixed `args`. Still spawned with `shell: false`,
+ *   so tokens are inert argv elements regardless of content.
+ */
+export function resolveAlias(
+  command: string,
+  aliases: AliasesConfig | undefined,
+): ResolvedAlias | null {
+  if (!aliases) return null;
+  const trimmed = command.trim();
+
+  if (Object.hasOwn(aliases, trimmed)) {
+    return buildResolved(aliases[trimmed], []);
+  }
+
+  const match = ALIAS_NAME_PREFIX.exec(trimmed);
+  const firstWord = match?.[0];
+  if (!firstWord || !Object.hasOwn(aliases, firstWord)) return null;
+  const alias = aliases[firstWord];
+  if (!alias.allowArgs || !hasArgsBoundary(trimmed, firstWord)) return null;
+
+  const rest = trimmed.slice(firstWord.length).trim();
+  const callerArgs = rest.length > 0 ? rest.split(/\s+/) : [];
+  return buildResolved(alias, callerArgs);
+}
 
 /**
  * Detect whether a caller's command targets a configured alias but contains
- * additional arguments or shell metacharacters beyond the alias name. Used by
- * the route layer to refuse such requests outright.
+ * additional arguments or shell metacharacters beyond the alias name, in a
+ * shape `resolveAlias` will not accept. Used by the route layer to refuse
+ * such requests outright.
  *
  * Without this check, a caller could bypass the alias's shell-free execution
  * guarantee by sending `"<aliasName> --arg"` or `"<aliasName>; rm -rf /"`:
@@ -82,7 +110,9 @@ const ALIAS_NAME_PREFIX = /^[A-Za-z0-9_.-]+/;
  * still grant approval. This function exposes the offending alias name so the
  * route can audit and return a precise error code.
  *
- * Returns the alias name when a bypass is detected, or null otherwise.
+ * Returns the alias name when a bypass is detected, or null otherwise —
+ * including when the alias has `allowArgs: true` and the command is a
+ * legitimate `<name> <args>` invocation, which `resolveAlias` handles.
  */
 export function findAliasArgsBypass(
   command: string,
@@ -95,5 +125,7 @@ export function findAliasArgsBypass(
   if (!firstWord) return null;
   if (!Object.hasOwn(aliases, firstWord)) return null;
   if (trimmed === firstWord) return null; // exact invocation, not a bypass
+  const alias = aliases[firstWord];
+  if (alias.allowArgs && hasArgsBoundary(trimmed, firstWord)) return null; // legitimate args invocation
   return firstWord;
 }

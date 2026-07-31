@@ -86,7 +86,8 @@ curl -X POST http://localhost:3001/api/v1/execute \
 
 Sending `{"command":"deploy --dry-run"}` is rejected with
 `ALIAS_ARGS_NOT_SUPPORTED` — appending arguments to an alias name is treated
-as a bypass attempt, not a way to pass parameters to the tool.
+as a bypass attempt, not a way to pass parameters to the tool, **unless**
+the alias explicitly opts in with `allowArgs: true` (below).
 
 ### Giving an alias fixed arguments
 
@@ -112,6 +113,47 @@ arguments onto `path` as a single string (e.g.
 fails with `ENOENT` because Lucifer looks for a file with that exact literal
 name, space included.
 
+### Letting a caller pass arguments to a tool
+
+Some tools need a caller-controllable argument (e.g. `--unread`, `--limit
+10`) rather than a fixed value baked in at config time. Set `allowArgs:
+true` on the alias:
+
+```json
+{
+  "aliases": {
+    "GetUnreadEmail": {
+      "path": "A:\\Develop\\github\\agent-tooling\\tools\\Smtp.exe",
+      "type": "elf",
+      "args": ["summary"],
+      "allowArgs": true
+    }
+  }
+}
+```
+
+```bash
+curl -X POST http://localhost:3001/api/v1/execute \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: YOUR_API_KEY" \
+  -d '{"command":"GetUnreadEmail --unread --limit 10"}'
+```
+
+The text after the alias name is split on whitespace and appended after any
+fixed `args`, so this runs `Smtp.exe summary --unread --limit 10`. It is
+still spawned with no shell involved (`shell: false`), so the arguments are
+passed to the executable literally — they can never be interpreted as shell
+syntax. There's no quoted-string support yet, so `--subject "hello
+world"` becomes three separate tokens (`--subject`, `hello`, `world`), not
+one two-token pair — quote-aware tools should expect that.
+
+Note this is different from `toolsPath` below: an `allowArgs` alias always
+runs with its own directory as `cwd`, which is why it's the right fit for
+a tool that resolves config/state relative to its own location (like
+`Smtp.exe` in this example) — a raw command via `toolsPath` runs with the
+daemon's `cwd` instead, and a tool relying on its own directory would
+silently produce no useful output there.
+
 ### Letting raw commands find tools outside PATH
 
 If you want to run a **raw** command (not an alias) by name — e.g.
@@ -129,7 +171,10 @@ Every command's `PATH` gets these directories prepended, so `mytool` (or
 `mytool.exe`) resolves the same way it would from a shell with that
 directory on `PATH`. This only affects the raw/shell execution path —
 aliases always spawn their configured `path` directly and never consult
-`PATH`.
+`PATH`. **`toolsPath` only helps the shell find the executable — it does
+not change the working directory.** If the tool needs to run from its own
+directory (most tools that read relative config/state do), use an
+`allowArgs` alias instead, as above.
 
 ## Shared approval behavior
 

@@ -111,14 +111,32 @@ script's parent directory as the working directory.
 
 Optional array of strings appended to the spawned argv, in order. `args` is
 set once by the operator in `lucifer.json` — it is never derived from the
-caller's `command` string, so an alias with `args` still only matches the
-exact alias name (see Match semantics below). This is how you give an
-executable a fixed, baked-in invocation (e.g. "always run `smtp summary
---unread`") without allowing the caller to control what arguments are
-passed. Free-form caller-supplied arguments to aliases are still rejected
-(`ALIAS_ARGS_NOT_SUPPORTED`) — see ADR-009 in
-[docs/context/DECISIONS.md](../context/DECISIONS.md), which defers that as a
-separate, not-yet-made decision.
+caller's `command` string. This is how you give an executable a fixed,
+baked-in invocation (e.g. "always run `smtp summary`") without allowing the
+caller to control what arguments are passed.
+
+### `allowArgs` (caller-supplied arguments, opt-in)
+
+Optional boolean, default `false`. When `true`, a caller may invoke the
+alias as `<name> <args>` — e.g. `{"command":"unread-summary --unread
+--limit 10"}` — and the text after the alias name is whitespace-tokenized
+and appended after any fixed `args`. Resolution to ADR-009's deferred
+"first-token match with argument passthrough" alternative (see
+[docs/context/DECISIONS.md](../context/DECISIONS.md), ADR-012).
+
+Still spawned with `shell: false`, so caller-supplied tokens are inert argv
+elements passed directly to the executable — they are never interpreted by
+a shell, regardless of content (`;`, `|`, backticks, etc. have no special
+meaning in an argv element). Tokenization is naive whitespace-splitting: no
+quoted-string support in v1, so `--subject "hello world"` becomes three
+tokens (`--subject`, `hello`, `world`), not two. `command-rules.json`
+continues to prefix-match the full raw command string, so a `manual_approve`
+rule on the alias name gates every invocation, arguments included, and the
+approver sees the exact arguments before approving.
+
+When `allowArgs` is `false` (the default), free-form caller-supplied
+arguments are rejected outright with `ALIAS_ARGS_NOT_SUPPORTED` — unchanged
+from the original ADR-009 behavior.
 
 ### Path resolution
 

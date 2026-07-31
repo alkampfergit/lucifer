@@ -92,6 +92,14 @@ export interface CommandAlias {
   type: AliasType;
   /** Fixed arguments passed to the executable, in order. Configured by the operator, never caller-controlled. */
   args?: string[];
+  /**
+   * When true, a caller may append arguments after the alias name (e.g.
+   * "GetUnreadEmail --unread"); the remainder is whitespace-tokenized and
+   * appended after any fixed `args`. Still spawned with `shell: false`, so
+   * caller-supplied tokens are inert argv elements, never shell input.
+   * Defaults to false: the alias only matches its exact name, unchanged.
+   */
+  allowArgs?: boolean;
 }
 
 export interface AliasesConfig {

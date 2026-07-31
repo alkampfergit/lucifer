@@ -14,6 +14,7 @@ function isAliasesConfig(value: unknown): boolean {
     if (typeof e.path !== 'string' || e.path.length === 0) return false;
     if (e.type !== 'bash' && e.type !== 'elf') return false;
     if (e.args !== undefined && (!Array.isArray(e.args) || !e.args.every((a) => typeof a === 'string'))) return false;
+    if (e.allowArgs !== undefined && typeof e.allowArgs !== 'boolean') return false;
   }
   return true;
 }

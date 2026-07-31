@@ -177,6 +177,23 @@ describe('loadGatewayConfig', () => {
     expect(() => loadGatewayConfig(filePath)).toThrow('failed validation');
   });
 
+  it('loads an alias with allowArgs: true', () => {
+    const dir = createTempDir();
+    const filePath = writeConfig(dir, {
+      aliases: { smtp: { path: '/opt/bin/smtp', type: 'elf', allowArgs: true } },
+    });
+    const config = loadGatewayConfig(filePath);
+    expect(config.aliases?.smtp.allowArgs).toBe(true);
+  });
+
+  it('rejects an alias whose allowArgs is not a boolean', () => {
+    const dir = createTempDir();
+    const filePath = writeConfig(dir, {
+      aliases: { bad: { path: '/opt/bin/smtp', type: 'elf', allowArgs: 'yes' } },
+    });
+    expect(() => loadGatewayConfig(filePath)).toThrow('failed validation');
+  });
+
   it('normalizes relative toolsPath entries against the config file directory', () => {
     const dir = createTempDir();
     const filePath = writeConfig(dir, { toolsPath: ['./bin', '../shared/tools'] });
