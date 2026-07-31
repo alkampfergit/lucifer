@@ -14,7 +14,7 @@ Target content for 1.0 (tracked in [`docs/quality/PRE-1.0-CHECKPOINT.md`](docs/q
 - Stabilise the public HTTP surface on `command-gateway` and `request-proxy`.
 - Lock the layered dependency direction (Types → Config → Repository → Service → Runtime → UI/API) as a hard CI invariant.
 
-## [0.8.15] — 2026-07-31
+## [0.9.0] — 2026-07-31
 
 ### Added
 - `lucifer.json` aliases gained two operator-configured knobs, closing the gap between exact-name-only aliases and raw shell commands: `args` (fixed argv appended to the spawned executable, e.g. `"args": ["summary"]`) and `allowArgs` (opt-in; when `true`, a caller may invoke `<name> <args>` and the text after the alias name is whitespace-tokenized and appended after any fixed `args`). Both keep the alias's existing shell-free `spawn(path, args, { shell: false })` execution and its `cwd` forced to the alias's own directory — the property that makes aliases work correctly for tools that resolve state/config relative to their own location, which a raw command cannot guarantee. `allowArgs` resolves ADR-009's deferred "first-token match with argument passthrough" alternative; see ADR-012 for the full design and the anti-bypass analysis (`findAliasArgsBypass` still refuses e.g. `smtp;rm -rf /`, allowed or not).
