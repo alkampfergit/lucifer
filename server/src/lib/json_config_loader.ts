@@ -17,7 +17,7 @@ export function loadJsonConfig<T>(filePath: string, validate: (data: unknown) =>
     }
   }
 
-  const withoutBom = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+  const withoutBom = raw.codePointAt(0) === 0xfeff ? raw.slice(1) : raw;
 
   let parsed: unknown;
   try {
