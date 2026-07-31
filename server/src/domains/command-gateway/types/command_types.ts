@@ -90,6 +90,16 @@ export type AliasType = 'bash' | 'elf';
 export interface CommandAlias {
   path: string;
   type: AliasType;
+  /** Fixed arguments passed to the executable, in order. Configured by the operator, never caller-controlled. */
+  args?: string[];
+  /**
+   * When true, a caller may append arguments after the alias name (e.g.
+   * "GetUnreadEmail --unread"); the remainder is whitespace-tokenized and
+   * appended after any fixed `args`. Still spawned with `shell: false`, so
+   * caller-supplied tokens are inert argv elements, never shell input.
+   * Defaults to false: the alias only matches its exact name, unchanged.
+   */
+  allowArgs?: boolean;
 }
 
 export interface AliasesConfig {
@@ -115,6 +125,8 @@ export interface LuciferConfig {
   dataDir: string;
   logFile?: string;
   aliases?: AliasesConfig;
+  /** Extra directories prepended to the executed command's PATH, in order, so raw (non-alias) commands can resolve tools outside the daemon's own PATH without a full path in every rule/command. */
+  toolsPath?: string[];
 }
 
 export type AuditEntryType =

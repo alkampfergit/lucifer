@@ -14,13 +14,22 @@ Target content for 1.0 (tracked in [`docs/quality/PRE-1.0-CHECKPOINT.md`](docs/q
 - Stabilise the public HTTP surface on `command-gateway` and `request-proxy`.
 - Lock the layered dependency direction (Types → Config → Repository → Service → Runtime → UI/API) as a hard CI invariant.
 
-### Fixed
-- The web approval UI at `/admin/approvals` served a 58-byte `Approval page not found` stub in every installed copy of the package. `tsc` never copied `approval_page.html` into `dist`, and `package.json` publishes only `dist/server/`, so the released package shipped the route without its page. The two source-relative fallbacks in `register_approval_routes.ts` pointed at unpublished paths (one with incorrect path arithmetic) and the third depended on the working directory being the repository root — which is why it worked from a checkout and failed for every real install. Reproduced against `lucifer-gate@0.8.11`.
-- `scripts/copy-assets.mjs` now mirrors non-TypeScript runtime assets into `dist/server` as part of `build:server`, and exits non-zero if it finds none.
-- `registerApprovalRoutes` resolves the page from one location (next to the module, valid under both `tsx` and `dist`) and throws at startup when it is absent instead of degrading to a stub. Per ADR-011.
+## [0.9.0] — 2026-07-31
 
-### Changed
-- `docs/specs/approval-channels.md`: corrected the web-admin enablement condition, which still documented the removed `LUCIFER_ADMIN_SECRET` env var instead of the `adminSecretHash` / `adminSecretSalt` pair in `lucifer.json`.
+### Added
+- `lucifer.json` aliases gained two operator-configured knobs, closing the gap between exact-name-only aliases and raw shell commands: `args` (fixed argv appended to the spawned executable, e.g. `"args": ["summary"]`) and `allowArgs` (opt-in; when `true`, a caller may invoke `<name> <args>` and the text after the alias name is whitespace-tokenized and appended after any fixed `args`). Both keep the alias's existing shell-free `spawn(path, args, { shell: false })` execution and its `cwd` forced to the alias's own directory — the property that makes aliases work correctly for tools that resolve state/config relative to their own location, which a raw command cannot guarantee. `allowArgs` resolves ADR-009's deferred "first-token match with argument passthrough" alternative; see ADR-012 for the full design and the anti-bypass analysis (`findAliasArgsBypass` still refuses e.g. `smtp;rm -rf /`, allowed or not).
+- `lucifer.json` gained `toolsPath`, an array of directories prepended to every executed command's `PATH`. Scoped to raw (non-alias) commands — it lets an operator run e.g. `mytool --flag` via a `command-rules.json` prefix rule without a full path in every rule, without changing rule matching, approval flow, or alias execution (which never consults `PATH`). Documented as strictly PATH-lookup-only: it does not change the executed command's working directory, unlike an alias.
+
+### Fixed
+- `loadJsonConfig` swallowed the real `JSON.parse` error into a generic `"Invalid JSON in config file: <path>"` message, and failed outright on a file with a leading UTF-8 BOM (common for files saved via PowerShell/OneDrive on Windows) with no indication why. Now strips a leading BOM before parsing and includes the underlying parser message in the thrown error.
+- SonarCloud `typescript:S7758`: `json_config_loader.ts`'s BOM check used `String#charCodeAt()`; switched to `String#codePointAt()` (equivalent here — U+FEFF is within the BMP).
+
+### Documentation
+- README: added a "Running from a local checkout with `node`" section documenting `node dist/server/cli.js --config <path>` as the no-`npx`/no-install equivalent of the published `lucifer-gate` CLI.
+- `docs/specs/command-execution.md`, `docs/CONFIGURATION.md`, `docs/wiki/common-setup.md`: documented `args`, `allowArgs`, and `toolsPath`, including the `cwd` distinction between an `allowArgs` alias and a `toolsPath`-resolved raw command.
+- ADR-012 added to `docs/context/DECISIONS.md`, resolving ADR-009's deferred argument-passthrough decision and recording why a second parallel "tools" config concept was rejected in favor of extending aliases.
+
+## [0.8.13] — 2026-07-31
 
 ### Security
 - Closed all 5 runtime-scope Dependabot alerts; `npm audit --omit=dev` now reports 0 vulnerabilities. The 27 development-scope alerts are deliberately left for a separate change — they enter through the dev toolchain and never ship, since `files` is `dist/server/` only.
@@ -28,6 +37,17 @@ Target content for 1.0 (tracked in [`docs/quality/PRE-1.0-CHECKPOINT.md`](docs/q
   - `qs` → 6.15.3 via express, closing CVE-2026-8723 (medium, `qs.stringify` DoS). Reached inside the existing range; no override needed.
   - `body-parser` → 2.3.0 via a new `express`-scoped override, closing CVE-2026-12590 (low, invalid `limit` silently disables size enforcement). The 2.x branch is patched at 2.3.0, not the `1.20.6` Dependabot lists first.
   - `ip-address` → 10.1.1 via a new `express-rate-limit`-scoped override, closing CVE-2026-42338 (moderate, XSS in `Address6` HTML-emitting methods). `express-rate-limit@8.3.2` pins `ip-address` at an exact `10.1.0`, so an override is the only route; pinned to the exact first-patched version rather than `^10.1.1` to stay closest to what the dependency pinned, and retirable once `express-rate-limit` bumps.
+  - The pre-existing `telegram-test-api` override block is untouched; both new overrides are scoped to the offending direct dependency rather than applied globally.
+
+## [0.8.12] — 2026-07-31
+
+### Fixed
+- The web approval UI at `/admin/approvals` served a 58-byte `Approval page not found` stub in every installed copy of the package. `tsc` never copied `approval_page.html` into `dist`, and `package.json` publishes only `dist/server/`, so the released package shipped the route without its page. The two source-relative fallbacks in `register_approval_routes.ts` pointed at unpublished paths (one with incorrect path arithmetic) and the third depended on the working directory being the repository root — which is why it worked from a checkout and failed for every real install. Reproduced against `lucifer-gate@0.8.11`.
+- `scripts/copy-assets.mjs` now mirrors non-TypeScript runtime assets into `dist/server` as part of `build:server`, and exits non-zero if it finds none.
+- `registerApprovalRoutes` resolves the page from one location (next to the module, valid under both `tsx` and `dist`) and throws at startup when it is absent instead of degrading to a stub. Per ADR-011.
+
+### Changed
+- `docs/specs/approval-channels.md`: corrected the web-admin enablement condition, which still documented the removed `LUCIFER_ADMIN_SECRET` env var instead of the `adminSecretHash` / `adminSecretSalt` pair in `lucifer.json`.
   - The pre-existing `telegram-test-api` override block is untouched; both new overrides are scoped to the offending direct dependency rather than applied globally.
 
 ## [0.8.11] — 2026-04-22

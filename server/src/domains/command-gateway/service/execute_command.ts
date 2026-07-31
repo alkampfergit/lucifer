@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { delimiter as pathDelimiter } from 'node:path';
 import type { AliasesConfig, ExecutionResult } from '../types/command_types.js';
 import { resolveAlias, type ResolvedAlias } from './resolve_alias.js';
 import { createChildLogger } from '../../../lib/logger.js';
@@ -16,6 +17,8 @@ export interface ExecuteOptions {
   maxConcurrent: number;
   abortSignal?: AbortSignal;
   aliases?: AliasesConfig;
+  /** Extra directories prepended to the child's PATH, in order. Operator-configured only; never derived from caller input. */
+  toolsPath?: string[];
 }
 
 export async function executeCommand(options: ExecuteOptions): Promise<ExecutionResult> {
@@ -45,14 +48,27 @@ export async function executeCommand(options: ExecuteOptions): Promise<Execution
   }
 }
 
+/**
+ * Build the child's environment, prepending operator-configured `toolsPath`
+ * entries onto `PATH` so raw (non-alias) commands can resolve tools outside
+ * the daemon's own PATH without a full path in every rule/command. Returns
+ * `undefined` (inherit `process.env` unchanged) when no `toolsPath` is set.
+ */
+function buildChildEnv(toolsPath: string[] | undefined): NodeJS.ProcessEnv | undefined {
+  if (!toolsPath || toolsPath.length === 0) return undefined;
+  const existingPath = process.env.PATH ?? '';
+  return { ...process.env, PATH: [...toolsPath, existingPath].filter(Boolean).join(pathDelimiter) };
+}
+
 function spawnChild(options: ExecuteOptions, resolved: ResolvedAlias | null): ChildProcessWithoutNullStreams {
+  const env = buildChildEnv(options.toolsPath);
   // This is a command gateway that intentionally executes user-supplied
   // commands. Access is gated by API-key auth and configurable command
   // rules (allow/deny lists). The spawn call below is by design.
   if (resolved) {
-    return spawn(resolved.spawnCommand, resolved.spawnArgs, { cwd: resolved.cwd, detached: true });
+    return spawn(resolved.spawnCommand, resolved.spawnArgs, { cwd: resolved.cwd, detached: true, env });
   }
-  return spawn(options.command, { shell: true, cwd: options.cwd ?? process.cwd(), detached: true }); // NOSONAR -- intentional: this gateway executes user-supplied commands gated by API-key auth and command rules
+  return spawn(options.command, { shell: true, cwd: options.cwd ?? process.cwd(), detached: true, env }); // NOSONAR -- intentional: this gateway executes user-supplied commands gated by API-key auth and command rules
 }
 
 function killChildTree(child: ChildProcess): void {

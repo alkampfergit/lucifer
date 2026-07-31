@@ -93,8 +93,20 @@ not write back to config files at runtime.
 Optional `aliases` map in `lucifer.json` points a name at an on-disk script
 or executable. When the incoming command matches an alias name exactly,
 Lucifer runs the referenced file directly (no shell) with the script's
-parent directory as the working directory. Full contract:
+parent directory as the working directory. An alias may also set a fixed,
+operator-configured `args` array. Full contract:
 [specs/command-execution.md](specs/command-execution.md#aliases).
+
+## Extra tool search paths
+
+Optional `toolsPath` array in `lucifer.json` lists directories prepended to
+the `PATH` environment variable of every executed command (both raw shell
+commands and, harmlessly, aliases, which already use an absolute path).
+Use it so raw commands can resolve executables that live outside the
+daemon's own `PATH` without spelling out a full path in `command-rules.json`
+every time. Relative entries are resolved against the config file's
+directory, same as alias `path` values. Full contract:
+[specs/command-execution.md](specs/command-execution.md#tools-path).
 
 ## Transparent HTTP proxy
 

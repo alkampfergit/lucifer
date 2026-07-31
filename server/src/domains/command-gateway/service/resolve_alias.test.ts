@@ -83,6 +83,88 @@ describe('resolveAlias', () => {
     expect(resolveAlias('constructor', aliases)).toBeNull();
     expect(resolveAlias('toString', aliases)).toBeNull();
   });
+
+  it('appends configured fixed args after the script path for a bash alias', () => {
+    const aliases: AliasesConfig = {
+      build: { path: fixtureBuildSh, type: 'bash', args: ['--release', '--verbose'] },
+    };
+    const resolved = resolveAlias('build', aliases);
+    expect(resolved?.spawnArgs).toEqual(['--', fixtureBuildSh, '--release', '--verbose']);
+  });
+
+  it('passes configured fixed args directly for an elf alias', () => {
+    const aliases: AliasesConfig = {
+      hello: { path: '/opt/bin/hello', type: 'elf', args: ['summary'] },
+    };
+    const resolved = resolveAlias('hello', aliases);
+    expect(resolved?.spawnArgs).toEqual(['summary']);
+  });
+
+  it('defaults to no args when args is not configured', () => {
+    const aliases: AliasesConfig = {
+      hello: { path: '/opt/bin/hello', type: 'elf' },
+    };
+    const resolved = resolveAlias('hello', aliases);
+    expect(resolved?.spawnArgs).toEqual([]);
+  });
+
+  it('still requires an exact command match when args are configured but allowArgs is not set', () => {
+    const aliases: AliasesConfig = {
+      hello: { path: '/opt/bin/hello', type: 'elf', args: ['summary'] },
+    };
+    expect(resolveAlias('hello extra', aliases)).toBeNull();
+  });
+
+  describe('allowArgs', () => {
+    it('tokenizes and appends caller-supplied arguments after any fixed args', () => {
+      const aliases: AliasesConfig = {
+        smtp: { path: '/opt/bin/smtp', type: 'elf', args: ['summary'], allowArgs: true },
+      };
+      const resolved = resolveAlias('smtp --unread --limit 10', aliases);
+      expect(resolved?.spawnArgs).toEqual(['summary', '--unread', '--limit', '10']);
+      expect(resolved?.cwd).toBe(dirname(resolvePath('/opt/bin/smtp')));
+    });
+
+    it('still resolves the exact-name invocation with no caller args', () => {
+      const aliases: AliasesConfig = {
+        smtp: { path: '/opt/bin/smtp', type: 'elf', args: ['summary'], allowArgs: true },
+      };
+      const resolved = resolveAlias('smtp', aliases);
+      expect(resolved?.spawnArgs).toEqual(['summary']);
+    });
+
+    it('collapses repeated whitespace between caller arguments', () => {
+      const aliases: AliasesConfig = {
+        smtp: { path: '/opt/bin/smtp', type: 'elf', allowArgs: true },
+      };
+      const resolved = resolveAlias('smtp   --unread   now', aliases);
+      expect(resolved?.spawnArgs).toEqual(['--unread', 'now']);
+    });
+
+    it('does not match a longer word starting with the alias name', () => {
+      const aliases: AliasesConfig = {
+        smtp: { path: '/opt/bin/smtp', type: 'elf', allowArgs: true },
+      };
+      expect(resolveAlias('smtptool --unread', aliases)).toBeNull();
+    });
+
+    it('does not treat shell-metacharacter smuggling as an args invocation', () => {
+      const aliases: AliasesConfig = {
+        smtp: { path: '/opt/bin/smtp', type: 'elf', allowArgs: true },
+      };
+      // No whitespace immediately after the alias name: not a valid
+      // "<name> <args>" invocation, so it does not resolve at all.
+      expect(resolveAlias('smtp;rm -rf /', aliases)).toBeNull();
+    });
+
+    it('places caller arguments after the script path for a bash alias', () => {
+      const aliases: AliasesConfig = {
+        build: { path: fixtureBuildSh, type: 'bash', allowArgs: true },
+      };
+      const resolved = resolveAlias('build --release', aliases);
+      expect(resolved?.spawnArgs).toEqual(['--', fixtureBuildSh, '--release']);
+    });
+  });
 });
 
 describe('findAliasArgsBypass', () => {
@@ -125,5 +207,20 @@ describe('findAliasArgsBypass', () => {
 
   it('does not match prototype properties', () => {
     expect(findAliasArgsBypass('constructor --arg', aliases)).toBeNull();
+  });
+
+  describe('with allowArgs: true', () => {
+    const allowArgsAliases: AliasesConfig = {
+      smtp: { path: '/opt/bin/smtp', type: 'elf', allowArgs: true },
+    };
+
+    it('does not flag a legitimate "<alias> <args>" invocation', () => {
+      expect(findAliasArgsBypass('smtp --unread', allowArgsAliases)).toBeNull();
+    });
+
+    it('still flags shell-metacharacter smuggling with no whitespace boundary', () => {
+      expect(findAliasArgsBypass('smtp;rm -rf /', allowArgsAliases)).toBe('smtp');
+      expect(findAliasArgsBypass('smtp$(whoami)', allowArgsAliases)).toBe('smtp');
+    });
   });
 });

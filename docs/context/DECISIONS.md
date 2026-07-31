@@ -437,3 +437,84 @@ reached a published release because the route test asserted only status 200,
   approval surface still looks healthy to every automated check.
 - **`resolveJsonModule`-style import of the asset**. Rejected: TypeScript has no
   equivalent for HTML, and a bundler is disproportionate for one file.
+
+---
+
+## ADR-012: Alias caller-argument passthrough via opt-in `allowArgs`
+
+**Date**: 2026-07-31
+**Status**: Accepted
+**Deciders**: alkampfergit
+
+### Context
+
+ADR-009 explicitly deferred "first-token match with argument passthrough" as
+requiring a separate decision. An operator hit the gap directly: a tool
+(`Smtp.exe`) needs a caller-controllable argument (e.g. `--unread`), and
+neither existing option fit — a plain alias rejects any argument outright
+(`ALIAS_ARGS_NOT_SUPPORTED`), and a `toolsPath`-resolved raw shell command
+finds the executable but runs it with the daemon's own `cwd`, not the
+executable's directory, so tools that resolve state/config relative to their
+own location silently produce no output.
+
+Aliases already solve the `cwd` problem correctly (the script's parent
+directory, always) — the only missing piece was letting the caller add
+arguments without losing that guarantee or reopening the shell-injection
+surface ADR-009's exact-match rule closed.
+
+### Decision
+
+Add an optional `allowArgs: boolean` (default `false`) to `CommandAlias`.
+
+- **Opt-in per alias**: existing aliases and configs are unaffected unless an
+  operator explicitly sets `allowArgs: true`.
+- **Match semantics (v1)**: when `allowArgs` is true, `resolveAlias` accepts
+  `<name> <rest>` in addition to the existing exact-name match, requiring a
+  whitespace boundary immediately after `<name>` (not just any string with
+  that prefix). `<rest>` is tokenized by naive whitespace-splitting — no
+  quoted-string support — and appended to `spawnArgs` after any fixed `args`.
+- **Execution**: unchanged from ADR-009 — `spawn(path, args, { shell: false
+  })`, `cwd` forced to the alias's own directory. Caller-supplied tokens are
+  argv elements, never shell input, so shell metacharacters in a token carry
+  no special meaning regardless of `allowArgs`.
+- **Anti-bypass check preserved**: `findAliasArgsBypass` only treats a
+  command as a legitimate args invocation when the alias has `allowArgs:
+  true` *and* the whitespace-boundary condition holds; e.g. `smtp;rm -rf /`
+  (no boundary) is still flagged as a bypass and rejected, exactly as for an
+  alias without `allowArgs`.
+- **Rule matching unchanged**: `command-rules.json` continues to prefix-match
+  the full raw command string, so a `manual_approve` rule on the alias name
+  still gates every invocation, arguments included, and an approver sees the
+  literal arguments before approving.
+
+### Consequences
+
+- (+) Closes the gap ADR-009 deferred, using the same shell-free execution
+  guarantee — no new attack surface versus a fixed-args-only alias.
+- (+) `toolsPath` (added alongside this) remains scoped to what it's actually
+  good for: raw commands that don't care about their own directory. Tools
+  that need their own `cwd` and caller arguments use `allowArgs` instead of a
+  parallel "tools" config concept.
+- (-) Naive whitespace tokenization has no quoted-string support in v1;
+  `--subject "hello world"` becomes three tokens, not two. Documented as a
+  known gap, not solved here.
+- (-) Approval caching by "prefix" (first two tokens, per the wiki's shared
+  approval behavior) means a human approving `smtp --unread` by prefix also
+  approves any other invocation sharing those first two tokens. Operators
+  wanting per-argument approval granularity should use "exact" caching.
+
+### Alternatives Considered
+
+- **A separate `tools` config list of `{ name, path }`, independent of
+  `aliases`**. Rejected: it would duplicate the exact `path` + `cwd =
+  dirname(path)` + shell-free-spawn logic aliases already implement
+  correctly, for no behavioral difference — two systems doing the same
+  thing invites drift.
+- **Shell-style quoted-argument parsing in v1**. Deferred: adds a real
+  parsing surface (escaping, nested quotes) for a v1 feature meant to close
+  a specific, narrow gap. Naive whitespace-splitting is simpler to audit and
+  sufficient for the motivating case.
+- **Always-on argument passthrough for every alias (no `allowArgs` flag)**.
+  Rejected: silently changes the security posture of every existing alias
+  config on upgrade. Opt-in keeps ADR-009's exact-match guarantee as the
+  default.

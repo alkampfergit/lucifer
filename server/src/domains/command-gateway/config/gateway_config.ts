@@ -13,6 +13,8 @@ function isAliasesConfig(value: unknown): boolean {
     const e = entry as Record<string, unknown>;
     if (typeof e.path !== 'string' || e.path.length === 0) return false;
     if (e.type !== 'bash' && e.type !== 'elf') return false;
+    if (e.args !== undefined && (!Array.isArray(e.args) || !e.args.every((a) => typeof a === 'string'))) return false;
+    if (e.allowArgs !== undefined && typeof e.allowArgs !== 'boolean') return false;
   }
   return true;
 }
@@ -27,6 +29,10 @@ const optionalStringKeys = [
   'dataDir', 'telegramChatId', 'adminSecretHash', 'adminSecretSalt', 'logFile',
 ] as const;
 
+function isToolsPath(value: unknown): boolean {
+  return Array.isArray(value) && value.every((p) => typeof p === 'string' && p.length > 0);
+}
+
 function isLuciferConfig(data: unknown): data is LuciferConfig {
   if (typeof data !== 'object' || data === null) return false;
   const d = data as Record<string, unknown>;
@@ -37,6 +43,7 @@ function isLuciferConfig(data: unknown): data is LuciferConfig {
 
   if (d.onApprovalTimeout !== undefined && d.onApprovalTimeout !== 'deny' && d.onApprovalTimeout !== 'approve-with-warning') return false;
   if (d.aliases !== undefined && !isAliasesConfig(d.aliases)) return false;
+  if (d.toolsPath !== undefined && !isToolsPath(d.toolsPath)) return false;
   return true;
 }
 
@@ -65,6 +72,14 @@ function normalizeAliasPaths(aliases: AliasesConfig, configDir: string): Aliases
   return out;
 }
 
+/**
+ * Resolve each `toolsPath` entry against the config file's directory, same
+ * rationale as `normalizeAliasPaths`. Absolute entries are returned unchanged.
+ */
+function normalizeToolsPath(toolsPath: string[], configDir: string): string[] {
+  return toolsPath.map((p) => resolve(configDir, p));
+}
+
 export function loadGatewayConfig(configPath?: string): LuciferConfig {
   if (!configPath) {
     return { ...defaults };
@@ -80,10 +95,13 @@ export function loadGatewayConfig(configPath?: string): LuciferConfig {
     port: loaded.port ?? defaults.port,
     dataDir: loaded.dataDir ?? defaults.dataDir,
   };
-  // Only set `aliases` when present so the config shape for
-  // alias-less projects stays identical to pre-feature behavior.
+  // Only set `aliases`/`toolsPath` when present so the config shape for
+  // projects that don't use them stays identical to pre-feature behavior.
   if (loaded.aliases) {
     result.aliases = normalizeAliasPaths(loaded.aliases, configDir);
+  }
+  if (loaded.toolsPath) {
+    result.toolsPath = normalizeToolsPath(loaded.toolsPath, configDir);
   }
   return result;
 }
