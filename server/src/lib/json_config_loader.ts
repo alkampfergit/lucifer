@@ -17,11 +17,14 @@ export function loadJsonConfig<T>(filePath: string, validate: (data: unknown) =>
     }
   }
 
+  const withoutBom = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error(`Invalid JSON in config file: ${filePath}`);
+    parsed = JSON.parse(withoutBom);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new Error(`Invalid JSON in config file: ${filePath} (${reason})`);
   }
 
   if (!validate(parsed)) {

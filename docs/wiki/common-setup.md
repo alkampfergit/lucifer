@@ -61,6 +61,33 @@ curl -X POST http://localhost:3001/api/v1/execute \
 For a `manual_approve` rule, the request remains pending until an approver
 decides. Approval executes the command; denial returns `403`.
 
+## 5. Invoke a configured alias (tool)
+
+Aliases map a short name to a specific executable, so callers never see or
+control the underlying path. Given this `aliases` block in `lucifer.json`:
+
+```json
+{
+  "aliases": {
+    "deploy": { "path": "/opt/ops/deploy.sh", "type": "bash" }
+  }
+}
+```
+
+call it by sending the alias name as the `command`, exactly as configured —
+no arguments, flags, or shell metacharacters:
+
+```bash
+curl -X POST http://localhost:3001/api/v1/execute \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: YOUR_API_KEY" \
+  -d '{"command":"deploy"}'
+```
+
+Sending `{"command":"deploy --dry-run"}` is rejected with
+`ALIAS_ARGS_NOT_SUPPORTED` — appending arguments to an alias name is treated
+as a bypass attempt, not a way to pass parameters to the tool.
+
 ## Shared approval behavior
 
 - **Once** executes the current request without caching approval.

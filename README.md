@@ -23,6 +23,21 @@ curl -X POST http://localhost:3001/api/v1/execute \
   -d '{"command":"echo hello"}'
 ```
 
+### Running from a local checkout with `node` (no `npx`/install)
+
+If you're working from a clone of this repo rather than the published package,
+build once and invoke the CLI entry point directly with `node`, pointing it at
+your config file:
+
+```bash
+npm run build
+node dist/server/cli.js --config ./config/lucifer.json --auto-approve
+```
+
+This is the same CLI as `lucifer-gate` (see `bin` in `package.json`) — every
+flag documented below (`--init`, `pair`, `--config`, `--auto-approve`, `log`,
+`stats`) works identically.
+
 ## How it works
 
 1. Caller sends `POST /api/v1/execute` with API key + command.
