@@ -22,6 +22,14 @@ Target content for 1.0 (tracked in [`docs/quality/PRE-1.0-CHECKPOINT.md`](docs/q
 ### Changed
 - `docs/specs/approval-channels.md`: corrected the web-admin enablement condition, which still documented the removed `LUCIFER_ADMIN_SECRET` env var instead of the `adminSecretHash` / `adminSecretSalt` pair in `lucifer.json`.
 
+### Security
+- Closed all 5 runtime-scope Dependabot alerts; `npm audit --omit=dev` now reports 0 vulnerabilities. The 27 development-scope alerts are deliberately left for a separate change — they enter through the dev toolchain and never ship, since `files` is `dist/server/` only.
+  - `http-proxy-middleware` `^3.0.5` → `^3.0.7` (direct dependency): closes CVE-2026-55603 (high, CRLF injection in `fixRequestBody`) and CVE-2026-55602 (medium, `router` host+path matching bypass). Both are patched within the 3.x line — 3.0.7 and 3.0.6 respectively — so no major bump to 4.x was needed despite Dependabot surfacing `4.1.1` / `4.1.0` as the first patched version.
+  - `qs` → 6.15.3 via express, closing CVE-2026-8723 (medium, `qs.stringify` DoS). Reached inside the existing range; no override needed.
+  - `body-parser` → 2.3.0 via a new `express`-scoped override, closing CVE-2026-12590 (low, invalid `limit` silently disables size enforcement). The 2.x branch is patched at 2.3.0, not the `1.20.6` Dependabot lists first.
+  - `ip-address` → 10.1.1 via a new `express-rate-limit`-scoped override, closing CVE-2026-42338 (moderate, XSS in `Address6` HTML-emitting methods). `express-rate-limit@8.3.2` pins `ip-address` at an exact `10.1.0`, so an override is the only route; pinned to the exact first-patched version rather than `^10.1.1` to stay closest to what the dependency pinned, and retirable once `express-rate-limit` bumps.
+  - The pre-existing `telegram-test-api` override block is untouched; both new overrides are scoped to the offending direct dependency rather than applied globally.
+
 ## [0.8.11] — 2026-04-22
 
 ### Changed
