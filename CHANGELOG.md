@@ -14,6 +14,14 @@ Target content for 1.0 (tracked in [`docs/quality/PRE-1.0-CHECKPOINT.md`](docs/q
 - Stabilise the public HTTP surface on `command-gateway` and `request-proxy`.
 - Lock the layered dependency direction (Types → Config → Repository → Service → Runtime → UI/API) as a hard CI invariant.
 
+### Fixed
+- The web approval UI at `/admin/approvals` served a 58-byte `Approval page not found` stub in every installed copy of the package. `tsc` never copied `approval_page.html` into `dist`, and `package.json` publishes only `dist/server/`, so the released package shipped the route without its page. The two source-relative fallbacks in `register_approval_routes.ts` pointed at unpublished paths (one with incorrect path arithmetic) and the third depended on the working directory being the repository root — which is why it worked from a checkout and failed for every real install. Reproduced against `lucifer-gate@0.8.11`.
+- `scripts/copy-assets.mjs` now mirrors non-TypeScript runtime assets into `dist/server` as part of `build:server`, and exits non-zero if it finds none.
+- `registerApprovalRoutes` resolves the page from one location (next to the module, valid under both `tsx` and `dist`) and throws at startup when it is absent instead of degrading to a stub. Per ADR-011.
+
+### Changed
+- `docs/specs/approval-channels.md`: corrected the web-admin enablement condition, which still documented the removed `LUCIFER_ADMIN_SECRET` env var instead of the `adminSecretHash` / `adminSecretSalt` pair in `lucifer.json`.
+
 ## [0.8.11] — 2026-04-22
 
 ### Changed

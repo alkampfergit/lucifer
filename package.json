@@ -30,7 +30,8 @@
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "dev": "tsx watch server/src/index.ts",
-    "build:server": "tsc -p tsconfig.server.json",
+    "build:server": "tsc -p tsconfig.server.json && npm run build:assets",
+    "build:assets": "node scripts/copy-assets.mjs",
     "build": "npm run clean && npm run check:structure && npm run build:server",
     "start": "node dist/server/index.js",
     "lint": "eslint .",

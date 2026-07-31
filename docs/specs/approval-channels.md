@@ -14,11 +14,14 @@ Resolve `manual_approve` command requests through a common approval contract.
 
 ### Web Admin
 
-- Enabled when `LUCIFER_ADMIN_SECRET` is set.
+- Enabled when `adminSecretHash` and `adminSecretSalt` are both present in `lucifer.json` (written by `--init`).
 - Serves `/admin/approvals`.
 - Uses bearer auth for admin APIs.
 - Streams pending requests over SSE.
 - Stores approvals in SQLite.
+- The page is served from `approval_page.html`, which the build copies next to the
+  compiled module. Startup fails if that asset is missing — an unreachable UI on
+  the only configured channel means no request can ever be approved.
 
 ### Auto-Approve
 
