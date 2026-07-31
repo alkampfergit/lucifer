@@ -376,3 +376,64 @@ Three design axes needed decisions:
 - **Let configured headers *merge* with caller-supplied headers rather than
   overwrite**. Rejected: caller-supplied `Authorization` overriding the
   configured credential would defeat the feature's primary purpose.
+
+---
+
+## ADR-011: Runtime assets are copied by the build, and missing ones fail startup
+
+**Date**: 2026-07-31
+**Status**: Accepted
+**Deciders**: alkampfergit
+
+### Context
+
+`tsc` emits only `.js` from `.ts`, so `approval_page.html` — the web approval
+UI — was never copied into `dist`. Because `package.json` publishes only
+`dist/server/`, the released package contained the admin route but not the page
+it serves. `registerApprovalRoutes` hid this: it probed three candidate paths and
+fell back to a 58-byte `<h1>Approval page not found</h1>` stub. Two of those
+candidates pointed into `server/src`, which is never published, and one depended
+on the process working directory happening to be the repository root.
+
+The result was a server that logged `Web approval UI enabled at /admin/approvals`
+and returned HTTP 200, while being impossible to approve anything through. It
+reached a published release because the route test asserted only status 200,
+`text/html`, and a non-empty body — all of which the stub satisfies.
+
+### Decision
+
+1. The build copies non-TypeScript runtime assets into the output tree via
+   `scripts/copy-assets.mjs`, wired into `build:server`. The script exits
+   non-zero if it finds no assets, so the extension list cannot silently drift
+   away from the tree.
+2. Runtime assets are resolved from a single location: next to the importing
+   module. That one path holds for both `tsx` development runs and the compiled
+   `dist` tree, so cwd- and source-relative fallbacks are removed.
+3. A missing asset throws at startup rather than degrading. Tests assert on real
+   page markers, never just status and content type.
+
+### Consequences
+
+- (+) A packaging regression fails the build or the boot, not a human opening a
+  page hours later.
+- (+) One resolution path instead of three, none of which depended on cwd.
+- (+) The failure message names the missing file and the fix (`npm run build`).
+- (-) Adding a new runtime asset type means updating `assetExtensions`; the
+  zero-asset guard makes that omission loud rather than silent.
+- (-) The gateway now refuses to start on a broken build even when Telegram
+  could have served approvals on its own. Accepted: a half-working approval
+  surface is worse than a clear failure.
+
+### Alternatives Considered
+
+- **Bundle the HTML into the TypeScript source as a string literal**. Rejected:
+  a 13 KB page with its own CSS and JS becomes unreadable and undiffable, and
+  loses editor tooling.
+- **Add `server/src/**/*.html` to `package.json` `files`**. Rejected: it ships
+  source paths that the compiled code cannot resolve without keeping the broken
+  source-relative fallbacks alive.
+- **Keep the placeholder but make it explain the problem**. Rejected: the
+  channel reports itself as enabled, so a running server with an unusable
+  approval surface still looks healthy to every automated check.
+- **`resolveJsonModule`-style import of the asset**. Rejected: TypeScript has no
+  equivalent for HTML, and a bundler is disproportionate for one file.

@@ -153,16 +153,19 @@ export function registerApprovalRoutes(deps: ApprovalRouteDeps): void {
     message: { code: 'RATE_LIMITED', message: 'Too many requests. Try again later.', retryable: true },
   });
 
-  // Load HTML page at startup -- try compiled location first, then source
-  const possiblePaths = [
-    path.join(__dirname, 'approval_page.html'),
-    path.resolve(__dirname, '../../../../server/src/domains/command-gateway/api/approval_page.html'),
-    path.resolve(process.cwd(), 'server/src/domains/command-gateway/api/approval_page.html'),
-  ];
-  const htmlPath = possiblePaths.find(p => fs.existsSync(p));
-  const approvalPageHtml = htmlPath
-    ? fs.readFileSync(htmlPath, 'utf8')
-    : '<html><body><h1>Approval page not found</h1></body></html>';
+  // The build mirrors runtime assets into `dist`, so the page always sits next
+  // to this module -- both under `tsx` in development and in the compiled tree.
+  // When the web UI is the only approval channel a missing page means nobody can
+  // approve anything, so refuse to start instead of serving a stub that looks
+  // like a working server.
+  const htmlPath = path.join(__dirname, 'approval_page.html');
+  if (!fs.existsSync(htmlPath)) {
+    throw new Error(
+      `Approval page asset missing at ${htmlPath}. ` +
+      'The build did not copy approval_page.html into the output tree; run "npm run build".',
+    );
+  }
+  const approvalPageHtml = fs.readFileSync(htmlPath, 'utf8');
 
   // Serve the admin HTML page (no auth - page handles login client-side)
   router.get('/admin/approvals', (_req: Request, res: Response) => {

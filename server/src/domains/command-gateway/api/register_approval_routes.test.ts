@@ -201,7 +201,12 @@ describe('register_approval_routes', () => {
 
       expect(res.status).toBe(200);
       expect(res.headers['content-type']).toMatch(/text\/html/);
-      expect(res.text.length).toBeGreaterThan(0);
+      // Assert on real page markers: a status/content-type/non-empty check alone
+      // is also satisfied by an error stub, which is how a build that shipped
+      // without approval_page.html once passed this suite.
+      expect(res.text).toContain('<title>Lucifer Approvals</title>');
+      expect(res.text).toContain('id="login-view"');
+      expect(res.text).toContain('id="app-view"');
     });
   });
 
