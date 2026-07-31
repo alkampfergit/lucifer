@@ -23,6 +23,11 @@ export interface ResolvedAlias {
  * configured), which signals the caller to fall back to normal shell
  * execution. `Object.hasOwn` guards against matching prototype properties
  * like `constructor` or `toString`.
+ *
+ * An alias's `args`, when configured, are fixed at config time by the
+ * operator and appended to the spawned argv verbatim. They are never derived
+ * from caller input, so match semantics (exact command string, no
+ * caller-supplied arguments) are unchanged.
  */
 export function resolveAlias(
   command: string,
@@ -35,6 +40,7 @@ export function resolveAlias(
 
   const absolutePath = resolvePath(alias.path);
   const cwd = dirname(absolutePath);
+  const fixedArgs = alias.args ?? [];
 
   if (alias.type === 'bash') {
     // `--` ends bash option parsing so a script path can never be
@@ -44,7 +50,7 @@ export function resolveAlias(
       path: absolutePath,
       type: 'bash',
       spawnCommand: 'bash',
-      spawnArgs: ['--', absolutePath],
+      spawnArgs: ['--', absolutePath, ...fixedArgs],
       cwd,
     };
   }
@@ -53,7 +59,7 @@ export function resolveAlias(
     path: absolutePath,
     type: 'elf',
     spawnCommand: absolutePath,
-    spawnArgs: [],
+    spawnArgs: fixedArgs,
     cwd,
   };
 }

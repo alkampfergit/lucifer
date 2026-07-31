@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { loadGatewayConfig, getTelegramToken, getAdminSecret } from './gateway_config.js';
 
@@ -158,6 +158,50 @@ describe('loadGatewayConfig', () => {
     });
     const config = loadGatewayConfig(filePath);
     expect(config.aliases?.deploy.path).toBe(join(dir, 'scripts', 'deploy.sh'));
+  });
+
+  it('loads an alias with fixed args', () => {
+    const dir = createTempDir();
+    const filePath = writeConfig(dir, {
+      aliases: { summary: { path: '/opt/bin/smtp', type: 'elf', args: ['summary', '--unread'] } },
+    });
+    const config = loadGatewayConfig(filePath);
+    expect(config.aliases?.summary.args).toEqual(['summary', '--unread']);
+  });
+
+  it('rejects an alias whose args is not an array of strings', () => {
+    const dir = createTempDir();
+    const filePath = writeConfig(dir, {
+      aliases: { bad: { path: '/opt/bin/smtp', type: 'elf', args: ['ok', 42] } },
+    });
+    expect(() => loadGatewayConfig(filePath)).toThrow('failed validation');
+  });
+
+  it('normalizes relative toolsPath entries against the config file directory', () => {
+    const dir = createTempDir();
+    const filePath = writeConfig(dir, { toolsPath: ['./bin', '../shared/tools'] });
+    const config = loadGatewayConfig(filePath);
+    expect(config.toolsPath).toEqual([join(dir, 'bin'), join(dir, '..', 'shared', 'tools')]);
+  });
+
+  it('preserves an already-absolute toolsPath entry unchanged', () => {
+    const dir = createTempDir();
+    const absoluteToolsDir = resolve(tmpdir(), 'lucifer-toolspath-absolute-fixture');
+    const filePath = writeConfig(dir, { toolsPath: [absoluteToolsDir] });
+    const config = loadGatewayConfig(filePath);
+    expect(config.toolsPath).toEqual([absoluteToolsDir]);
+  });
+
+  it('rejects a toolsPath that is not an array of strings', () => {
+    const dir = createTempDir();
+    const filePath = writeConfig(dir, { toolsPath: ['ok', 42] });
+    expect(() => loadGatewayConfig(filePath)).toThrow('failed validation');
+  });
+
+  it('rejects a toolsPath containing an empty string', () => {
+    const dir = createTempDir();
+    const filePath = writeConfig(dir, { toolsPath: [''] });
+    expect(() => loadGatewayConfig(filePath)).toThrow('failed validation');
   });
 });
 

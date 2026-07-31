@@ -90,6 +90,8 @@ export type AliasType = 'bash' | 'elf';
 export interface CommandAlias {
   path: string;
   type: AliasType;
+  /** Fixed arguments passed to the executable, in order. Configured by the operator, never caller-controlled. */
+  args?: string[];
 }
 
 export interface AliasesConfig {
@@ -115,6 +117,8 @@ export interface LuciferConfig {
   dataDir: string;
   logFile?: string;
   aliases?: AliasesConfig;
+  /** Extra directories prepended to the executed command's PATH, in order, so raw (non-alias) commands can resolve tools outside the daemon's own PATH without a full path in every rule/command. */
+  toolsPath?: string[];
 }
 
 export type AuditEntryType =

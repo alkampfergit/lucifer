@@ -94,17 +94,31 @@ script's parent directory as the working directory.
 {
   "aliases": {
     "deploy":  { "path": "/opt/ops/deploy.sh",   "type": "bash" },
-    "healthz": { "path": "/opt/ops/bin/healthz", "type": "elf" }
+    "healthz": { "path": "/opt/ops/bin/healthz", "type": "elf" },
+    "unread-summary": { "path": "/opt/ops/bin/smtp", "type": "elf", "args": ["summary", "--unread"] }
   }
 }
 ```
 
 ### `type` values
 
-- `bash` — launched via `bash -- <path>`. The `--` prevents a path that
-  happens to start with `-` from being interpreted as a bash option.
-- `elf` — launched directly (must be executable and on a filesystem without
-  `noexec`).
+- `bash` — launched via `bash -- <path> [args...]`. The `--` prevents a path
+  that happens to start with `-` from being interpreted as a bash option.
+- `elf` — launched directly with `[args...]` (must be executable and on a
+  filesystem without `noexec`).
+
+### `args` (fixed, operator-configured only)
+
+Optional array of strings appended to the spawned argv, in order. `args` is
+set once by the operator in `lucifer.json` — it is never derived from the
+caller's `command` string, so an alias with `args` still only matches the
+exact alias name (see Match semantics below). This is how you give an
+executable a fixed, baked-in invocation (e.g. "always run `smtp summary
+--unread`") without allowing the caller to control what arguments are
+passed. Free-form caller-supplied arguments to aliases are still rejected
+(`ALIAS_ARGS_NOT_SUPPORTED`) — see ADR-009 in
+[docs/context/DECISIONS.md](../context/DECISIONS.md), which defers that as a
+separate, not-yet-made decision.
 
 ### Path resolution
 
@@ -128,6 +142,29 @@ the latter falls through to the normal shell path.
 
 Callers supplying a `cwd` have it ignored for alias invocations — the
 working directory is always the alias script's parent directory.
+
+## Tools path
+
+`lucifer.json` may include a `toolsPath` array of directories:
+
+```json
+{
+  "toolsPath": ["/opt/agent-tools", "./bin"]
+}
+```
+
+Every executed command's child process gets these directories prepended to
+its `PATH` environment variable, in the given order, ahead of the daemon's
+own `PATH`. This is for **raw (non-alias) commands** — it lets an operator
+run `mytool --flag` via `command-rules.json` without spelling out
+`/opt/agent-tools/mytool --flag` in every rule and every request. It has no
+effect on alias execution, which already spawns an absolute `path` directly
+and never consults `PATH`.
+
+Relative entries are resolved against the config file's directory, same as
+alias `path` values. `toolsPath` is purely additive to the search path — it
+does not change command-rule matching, approval flow, or the shell-free
+execution guarantee for aliases.
 
 ## Notes
 

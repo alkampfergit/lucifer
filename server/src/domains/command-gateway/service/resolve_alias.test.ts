@@ -83,6 +83,37 @@ describe('resolveAlias', () => {
     expect(resolveAlias('constructor', aliases)).toBeNull();
     expect(resolveAlias('toString', aliases)).toBeNull();
   });
+
+  it('appends configured fixed args after the script path for a bash alias', () => {
+    const aliases: AliasesConfig = {
+      build: { path: fixtureBuildSh, type: 'bash', args: ['--release', '--verbose'] },
+    };
+    const resolved = resolveAlias('build', aliases);
+    expect(resolved?.spawnArgs).toEqual(['--', fixtureBuildSh, '--release', '--verbose']);
+  });
+
+  it('passes configured fixed args directly for an elf alias', () => {
+    const aliases: AliasesConfig = {
+      hello: { path: '/opt/bin/hello', type: 'elf', args: ['summary'] },
+    };
+    const resolved = resolveAlias('hello', aliases);
+    expect(resolved?.spawnArgs).toEqual(['summary']);
+  });
+
+  it('defaults to no args when args is not configured', () => {
+    const aliases: AliasesConfig = {
+      hello: { path: '/opt/bin/hello', type: 'elf' },
+    };
+    const resolved = resolveAlias('hello', aliases);
+    expect(resolved?.spawnArgs).toEqual([]);
+  });
+
+  it('still requires an exact command match when args are configured (fixed args are not caller input)', () => {
+    const aliases: AliasesConfig = {
+      hello: { path: '/opt/bin/hello', type: 'elf', args: ['summary'] },
+    };
+    expect(resolveAlias('hello extra', aliases)).toBeNull();
+  });
 });
 
 describe('findAliasArgsBypass', () => {

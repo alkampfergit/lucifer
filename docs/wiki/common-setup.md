@@ -88,6 +88,49 @@ Sending `{"command":"deploy --dry-run"}` is rejected with
 `ALIAS_ARGS_NOT_SUPPORTED` — appending arguments to an alias name is treated
 as a bypass attempt, not a way to pass parameters to the tool.
 
+### Giving an alias fixed arguments
+
+If a tool needs specific arguments every time it runs, bake them into the
+alias with `args` — a fixed array set by the operator, not something the
+caller can change:
+
+```json
+{
+  "aliases": {
+    "unread-summary": {
+      "path": "/opt/ops/bin/smtp",
+      "type": "elf",
+      "args": ["summary", "--unread"]
+    }
+  }
+}
+```
+
+`args` must be the executable's own `path`, on its own — do not append
+arguments onto `path` as a single string (e.g.
+`"path": "/opt/ops/bin/smtp summary"`); that is not a valid file path and
+fails with `ENOENT` because Lucifer looks for a file with that exact literal
+name, space included.
+
+### Letting raw commands find tools outside PATH
+
+If you want to run a **raw** command (not an alias) by name — e.g.
+`{"command":"mytool --flag"}` gated by a `command-rules.json` prefix rule —
+without spelling out its full path everywhere, add its directory to
+`toolsPath` in `lucifer.json`:
+
+```json
+{
+  "toolsPath": ["A:\\Develop\\github\\agent-tooling\\tools"]
+}
+```
+
+Every command's `PATH` gets these directories prepended, so `mytool` (or
+`mytool.exe`) resolves the same way it would from a shell with that
+directory on `PATH`. This only affects the raw/shell execution path —
+aliases always spawn their configured `path` directly and never consult
+`PATH`.
+
 ## Shared approval behavior
 
 - **Once** executes the current request without caching approval.

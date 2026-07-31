@@ -158,6 +158,46 @@ describe('executeCommand', () => {
     expect(result.error).toMatch(/Failed to execute/);
   });
 
+  it('prepends toolsPath directories onto the child PATH for a raw command', async () => {
+    const dir = join(tmpdir(), `lucifer-toolspath-${Date.now()}-${randomUUID()}`);
+    mkdirSync(dir, { recursive: true });
+    // Shell PATH lookup rules differ by platform (PATHEXT on Windows vs.
+    // executable bit + shebang on POSIX), so the fixture and command name
+    // must match the platform running the test.
+    const isWindows = process.platform === 'win32';
+    const scriptName = isWindows ? 'mytool.cmd' : 'mytool.sh';
+    const scriptPath = join(dir, scriptName);
+    writeFileSync(scriptPath, isWindows ? '@echo found-mytool\n' : '#!/bin/bash\necho found-mytool\n');
+    if (!isWindows) chmodSync(scriptPath, 0o755);
+
+    try {
+      const result = await executeCommand({
+        command: scriptName,
+        requestId: 'toolspath-1',
+        timeoutMs: 5000,
+        maxOutputBytes: 1024,
+        maxConcurrent: 5,
+        toolsPath: [dir],
+      });
+      expect(result.status).toBe('completed');
+      expect(result.stdout?.trim()).toBe('found-mytool');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('still resolves normally without toolsPath configured', async () => {
+    const result = await executeCommand({
+      command: 'echo no-toolspath',
+      requestId: 'toolspath-2',
+      timeoutMs: 5000,
+      maxOutputBytes: 1024,
+      maxConcurrent: 5,
+    });
+    expect(result.status).toBe('completed');
+    expect(result.stdout?.trim()).toBe('no-toolspath');
+  });
+
   it('returns a non-zero exit when a bash alias points to a missing script', async () => {
     // bash itself runs; the missing script produces a non-zero exit code and
     // stderr. This exercises the bash-launcher branch's error surface rather

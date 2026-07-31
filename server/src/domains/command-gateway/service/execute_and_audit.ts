@@ -33,6 +33,7 @@ export async function executeAndAudit(args: ExecuteAndAuditArgs): Promise<void> 
     maxConcurrent: config.maxConcurrentExecutions,
     abortSignal,
     aliases: config.aliases,
+    toolsPath: config.toolsPath,
   });
   auditLog.append({
     ts: new Date().toISOString(),
