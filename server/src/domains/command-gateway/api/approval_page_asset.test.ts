@@ -106,8 +106,12 @@ describe('copy-assets build step', () => {
       expect(fs.existsSync(copied)).toBe(true);
       const html = fs.readFileSync(copied, 'utf8');
       expect(html).toContain('<title>Lucifer Approvals</title>');
+      expect(html).toContain('aria-label="Server pages"');
+      expect(html).toContain('href="/admin/approvals"');
       expect(html).toContain('id="history-list"');
       expect(html).toContain('/api/v1/admin/approvals/history');
+      expect(html).toContain('setInterval(loadHistory, 60_000)');
+      expect(html).toMatch(/request_decided[\s\S]*loadHistory\(\)/);
     } finally {
       fs.rmSync(outRoot, { recursive: true, force: true });
     }

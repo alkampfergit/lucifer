@@ -8,7 +8,12 @@
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace; background: #0d1117; color: #c9d1d9; min-height: 100vh; }
   .header { background: #161b22; border-bottom: 1px solid #30363d; padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; }
+  .header-left { display: flex; align-items: center; gap: 24px; }
   .header h1 { font-size: 18px; font-weight: 600; }
+  .page-nav { display: flex; align-items: center; gap: 4px; }
+  .page-link { border-radius: 6px; color: #8b949e; font-size: 13px; padding: 6px 10px; text-decoration: none; }
+  .page-link:hover { background: #21262d; color: #c9d1d9; }
+  .page-link.active { background: #21262d; color: #f0f6fc; }
   .status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #8b949e; }
   .status-dot { width: 8px; height: 8px; border-radius: 50%; }
   .status-dot.connected { background: #3fb950; }
@@ -76,7 +81,12 @@
 
 <div id="app-view" style="display:none">
   <div class="header">
-    <h1>Lucifer Approvals</h1>
+    <div class="header-left">
+      <h1>Lucifer Approvals</h1>
+      <nav class="page-nav" aria-label="Server pages">
+        <a class="page-link active" href="/admin/approvals" aria-current="page">Approvals</a>
+      </nav>
+    </div>
     <div class="status">
       <div class="status-dot connecting" id="status-dot"></div>
       <span id="status-text">Connecting...</span>
@@ -103,6 +113,7 @@
 let secret = '';
 let evtSource = null;
 let reconnectTimer = null;
+let historyRefreshTimer = null;
 const pending = new Map();
 
 function doLogin() {
@@ -127,7 +138,13 @@ function showApp() {
   document.getElementById('login-view').style.display = 'none';
   document.getElementById('app-view').style.display = 'block';
   loadHistory();
+  startHistoryRefresh();
   connectSSE();
+}
+
+function startHistoryRefresh() {
+  if (historyRefreshTimer) clearInterval(historyRefreshTimer);
+  historyRefreshTimer = setInterval(loadHistory, 60_000);
 }
 
 async function loadHistory() {
@@ -195,6 +212,7 @@ async function connectSSE() {
 
     evtSource.addEventListener('request_decided', (e) => {
       const data = JSON.parse(e.data);
+      loadHistory();
       const card = document.getElementById('card-' + data.requestId);
       if (card) {
         card.classList.add(data.decision === 'approved' ? 'approved' : 'denied');

@@ -44,6 +44,8 @@
 | J4-S2 | As an Approver, I approve a command via the web admin so that it executes | Admin POST to approve endpoint transitions the request to executing → completed | `covered` — `web_approval_channel.test.ts` |
 | J4-S3 | As an Approver, I deny a command via the web admin so that it is rejected | Admin POST to deny endpoint transitions the request to denied | `covered` — `web_approval_channel.test.ts` |
 | J4-S4 | As an Approver, I reopen the web admin and see recent command calls so that completed requests are not lost from view | After authentication, the page lists the 20 most recent authenticated command submissions from the persistent audit log, newest first | `covered` — `audit_log.test.ts`, `register_approval_routes.test.ts`, `approval_page_asset.test.ts` |
+| J4-S5 | As an Approver, I use the admin page menu to navigate available browser pages | The menu lists server-delivered browser pages only, marks the current approvals page as active, and can accommodate future pages without exposing API or SSE endpoints | `covered` — `approval_page_asset.test.ts` |
+| J4-S6 | As an Approver, I see recent calls update without reopening the admin page | The history refreshes once per minute and when an approval request is received or decided through the web admin | `covered` — `approval_page_asset.test.ts`, `register_approval_routes.test.ts` |
 
 ## J5: Multi-Channel Approval
 
@@ -60,6 +62,6 @@
 
 | Status | Count |
 |---|---|
-| `covered` | 16 |
+| `covered` | 18 |
 | `partial` | 0 |
 | `uncovered` | 0 |
