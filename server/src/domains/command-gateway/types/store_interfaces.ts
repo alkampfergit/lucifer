@@ -41,5 +41,6 @@ export interface PendingRequestStore {
 export interface AuditLog {
   append(entry: AuditEntry): void;
   query(limit?: number, offset?: number): AuditEntry[];
+  queryRecentRequests(limit?: number): AuditEntry[];
   queryByRequestId(requestId: string): AuditEntry[];
 }

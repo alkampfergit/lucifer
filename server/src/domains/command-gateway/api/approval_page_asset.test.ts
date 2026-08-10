@@ -104,7 +104,10 @@ describe('copy-assets build step', () => {
       );
 
       expect(fs.existsSync(copied)).toBe(true);
-      expect(fs.readFileSync(copied, 'utf8')).toContain('<title>Lucifer Approvals</title>');
+      const html = fs.readFileSync(copied, 'utf8');
+      expect(html).toContain('<title>Lucifer Approvals</title>');
+      expect(html).toContain('id="history-list"');
+      expect(html).toContain('/api/v1/admin/approvals/history');
     } finally {
       fs.rmSync(outRoot, { recursive: true, force: true });
     }

@@ -178,6 +178,12 @@ export function registerApprovalRoutes(deps: ApprovalRouteDeps): void {
     res.json({ pending: webChannel.getPendingRequests() });
   });
 
+  // List durable command-call history independently of transient pending requests.
+  router.get('/api/v1/admin/approvals/history', adminRateLimiter, (req: Request, res: Response) => {
+    if (!checkAdminAuth(adminSecretHash, adminSecretSalt, req, res)) return;
+    res.json({ history: auditLog.queryRecentRequests(20) });
+  });
+
   // Exchange bearer token for one-time SSE ticket
   router.post('/api/v1/admin/approvals/stream-ticket', adminRateLimiter, (req: Request, res: Response) => {
     if (!checkAdminAuth(adminSecretHash, adminSecretSalt, req, res)) return;

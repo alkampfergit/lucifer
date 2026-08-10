@@ -94,6 +94,22 @@ describe('AuditLog', () => {
     });
   });
 
+  describe('queryRecentRequests', () => {
+    it('returns only request entries newest first and respects the limit', () => {
+      const log = createAuditLog(db);
+      for (let i = 1; i <= 5; i++) {
+        log.append(makeEntry({ requestId: `req-${i}` }));
+        log.append(makeEntry({ requestId: `req-${i}`, type: 'rule_match' }));
+      }
+
+      const results = log.queryRecentRequests(3);
+
+      expect(results).toHaveLength(3);
+      expect(results.map(entry => entry.requestId)).toEqual(['req-5', 'req-4', 'req-3']);
+      expect(results.every(entry => entry.type === 'request')).toBe(true);
+    });
+  });
+
   describe('queryByRequestId', () => {
     it('returns only entries matching the given requestId', () => {
       const log = createAuditLog(db);

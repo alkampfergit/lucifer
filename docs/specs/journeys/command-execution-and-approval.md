@@ -43,6 +43,7 @@
 | J4-S1 | As an Approver, I open `/admin/approvals` and see pending requests streamed via SSE | Page loads, authenticates via admin secret, and displays pending command requests in real time | `covered` — `register_approval_routes.test.ts` (SSE real-time events: new_request + request_decided) |
 | J4-S2 | As an Approver, I approve a command via the web admin so that it executes | Admin POST to approve endpoint transitions the request to executing → completed | `covered` — `web_approval_channel.test.ts` |
 | J4-S3 | As an Approver, I deny a command via the web admin so that it is rejected | Admin POST to deny endpoint transitions the request to denied | `covered` — `web_approval_channel.test.ts` |
+| J4-S4 | As an Approver, I reopen the web admin and see recent command calls so that completed requests are not lost from view | After authentication, the page lists the 20 most recent authenticated command submissions from the persistent audit log, newest first | `covered` — `audit_log.test.ts`, `register_approval_routes.test.ts`, `approval_page_asset.test.ts` |
 
 ## J5: Multi-Channel Approval
 
@@ -59,6 +60,6 @@
 
 | Status | Count |
 |---|---|
-| `covered` | 15 |
+| `covered` | 16 |
 | `partial` | 0 |
 | `uncovered` | 0 |

@@ -33,7 +33,7 @@ This root file is the navigation layer. Keep detailed journeys in
 | Section | Brief Description | Journeys | Stories | Coverage |
 |---|---|---|---|---|
 | [Onboarding & Setup](journeys/onboarding-and-setup.md) | First-run operator flows: initialize config, pair Telegram, start the server, and complete onboarding end-to-end. | `J1` | 6 | `6 covered`, `0 partial`, `0 uncovered` |
-| [Command Execution & Approval](journeys/command-execution-and-approval.md) | Agent command submission plus Telegram, web admin, and multi-channel approval decision paths. | `J2`-`J5` | 15 | `15 covered`, `0 partial`, `0 uncovered` |
+| [Command Execution & Approval](journeys/command-execution-and-approval.md) | Agent command submission plus Telegram, web admin, and multi-channel approval decision paths. | `J2`-`J5` | 16 | `16 covered`, `0 partial`, `0 uncovered` |
 | [Security & Cached Approvals](journeys/security-and-cached-approvals.md) | Authorization, risk controls, rate limiting, and reuse of prior approvals. | `J6`-`J7` | 7 | `7 covered`, `0 partial`, `0 uncovered` |
 | [Operations & Configuration](journeys/operations-and-configuration.md) | Operator observability, development-mode auto-approve, and JSON-based runtime configuration. | `J8`-`J10` | 7 | `7 covered`, `0 partial`, `0 uncovered` |
 | [Transparent Proxy Access](journeys/transparent-proxy-access.md) | Authentication and Telegram approval for the transparent HTTP proxy listeners. | `J11`-`J13` | 10 | `10 covered`, `0 partial`, `0 uncovered` |
@@ -42,10 +42,10 @@ This root file is the navigation layer. Keep detailed journeys in
 
 | Status | Count | Percentage |
 |---|---|---|
-| `covered` | 45 | 100% |
+| `covered` | 46 | 100% |
 | `partial` | 0 | 0% |
 | `uncovered` | 0 | 0% |
-| **Total** | **45** | |
+| **Total** | **46** | |
 
 ## Debt Items
 

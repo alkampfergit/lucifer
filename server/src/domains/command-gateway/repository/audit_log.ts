@@ -4,6 +4,7 @@ import type { AuditEntry } from '../types/command_types.js';
 export interface AuditLog {
   append(entry: AuditEntry): void;
   query(limit?: number, offset?: number): AuditEntry[];
+  queryRecentRequests(limit?: number): AuditEntry[];
   queryByRequestId(requestId: string): AuditEntry[];
 }
 
@@ -18,6 +19,13 @@ export function createAuditLog(db: Database.Database): AuditLog {
             rule_action as ruleAction, duration, approved_by as approvedBy,
             exit_code as exitCode, duration_ms as durationMs, error
      FROM audit_log ORDER BY id DESC LIMIT ? OFFSET ?`,
+  );
+
+  const selectRecentRequests = db.prepare<[number], AuditEntry>(
+    `SELECT ts, type, request_id as requestId, command, api_key_name as apiKeyName, ip,
+            rule_action as ruleAction, duration, approved_by as approvedBy,
+            exit_code as exitCode, duration_ms as durationMs, error
+     FROM audit_log WHERE type = 'request' ORDER BY id DESC LIMIT ?`,
   );
 
   const selectByRequest = db.prepare<[string], AuditEntry>(
@@ -47,6 +55,10 @@ export function createAuditLog(db: Database.Database): AuditLog {
 
     query(limit = 100, offset = 0): AuditEntry[] {
       return selectRecent.all(limit, offset);
+    },
+
+    queryRecentRequests(limit = 20): AuditEntry[] {
+      return selectRecentRequests.all(limit);
     },
 
     queryByRequestId(requestId: string): AuditEntry[] {

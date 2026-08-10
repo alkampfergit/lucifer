@@ -242,6 +242,44 @@ describe('register_approval_routes', () => {
     });
   });
 
+  describe('GET /api/v1/admin/approvals/history', () => {
+    it('returns the latest 20 persisted command calls newest first', async () => {
+      for (let i = 1; i <= 21; i++) {
+        auditLog.append({
+          ts: `2026-08-10T10:${String(i).padStart(2, '0')}:00.000Z`,
+          type: 'request',
+          requestId: `history-${i}`,
+          command: `echo ${i}`,
+          apiKeyName: 'history-key',
+          ip: '127.0.0.1',
+        });
+        auditLog.append({
+          ts: `2026-08-10T10:${String(i).padStart(2, '0')}:01.000Z`,
+          type: 'approved',
+          requestId: `history-${i}`,
+          command: `echo ${i}`,
+        });
+      }
+
+      const res = await request(app)
+        .get('/api/v1/admin/approvals/history')
+        .set('Authorization', `Bearer ${ADMIN_SECRET}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.history).toHaveLength(20);
+      expect(res.body.history[0]).toMatchObject({ requestId: 'history-21', command: 'echo 21' });
+      expect(res.body.history[19]).toMatchObject({ requestId: 'history-2', command: 'echo 2' });
+      expect(res.body.history.every((entry: { type: string }) => entry.type === 'request')).toBe(true);
+    });
+
+    it('rejects requests without the admin bearer token', async () => {
+      const res = await request(app).get('/api/v1/admin/approvals/history');
+
+      expect(res.status).toBe(401);
+      expect(res.body.code).toBe('UNAUTHORIZED');
+    });
+  });
+
   // ------------------------------------------------------------------
   // 4. Auth lockout after 5 failures
   // ------------------------------------------------------------------
