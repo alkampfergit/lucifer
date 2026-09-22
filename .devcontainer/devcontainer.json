@@ -41,5 +41,6 @@
             "version": "latest"
         }
     },
-    "postCreateCommand": "bash .devcontainer/postcreate.sh"
+    "postCreateCommand": "bash .devcontainer/postcreate.sh",
+    "postStartCommand": "bash .devcontainer/start-do-work-cron.sh"
 }
