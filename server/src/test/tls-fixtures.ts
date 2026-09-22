@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
 export interface CertificateFixture {
@@ -11,15 +11,38 @@ export interface CertificateFixture {
 }
 
 /**
+ * Known install locations, probed in order. Resolving an absolute path instead
+ * of letting the OS search `PATH` keeps a writable directory on `PATH` from
+ * deciding which binary the test suite runs.
+ */
+const OPENSSL_CANDIDATES = [
+  '/usr/bin/openssl',
+  '/bin/openssl',
+  '/usr/local/bin/openssl',
+  '/opt/homebrew/bin/openssl',
+  String.raw`C:\Program Files\OpenSSL-Win64\bin\openssl.exe`,
+  String.raw`C:\Program Files\Git\usr\bin\openssl.exe`,
+]
+
+function findOpenssl(): string | undefined {
+  return OPENSSL_CANDIDATES.find((candidate) => existsSync(candidate))
+}
+
+/**
  * TLS fixtures are generated at test time rather than committed: a private key
  * in the repository trips secret scanning and would eventually expire.
  */
 export function hasOpenssl(): boolean {
-  return spawnSync('openssl', ['version'], { encoding: 'utf8' }).status === 0
+  const openssl = findOpenssl()
+  return openssl !== undefined && spawnSync(openssl, ['version'], { encoding: 'utf8' }).status === 0
 }
 
 function runOpenssl(args: string[]): void {
-  const result = spawnSync('openssl', args, { encoding: 'utf8' })
+  const openssl = findOpenssl()
+  if (!openssl) {
+    throw new Error(`openssl not found in any of: ${OPENSSL_CANDIDATES.join(', ')}`)
+  }
+  const result = spawnSync(openssl, args, { encoding: 'utf8' })
   if (result.status !== 0) {
     throw new Error(`openssl ${args[0]} failed: ${result.stderr || result.stdout}`)
   }

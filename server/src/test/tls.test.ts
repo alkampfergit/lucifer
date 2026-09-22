@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import https from 'node:https'
 import type { AddressInfo } from 'node:net'
@@ -48,10 +48,18 @@ async function boot(configPath: string): Promise<BootedServer & { scheme: string
   return { port: (server.address() as AddressInfo).port, close, scheme: listenerScheme(tlsOptions) }
 }
 
-function getHealthOverTls(port: number): Promise<{ status: number; body: string; protocol: string }> {
+/**
+ * Trusts the fixture certificate explicitly rather than turning verification
+ * off: the fixture carries `IP:127.0.0.1` in its SAN, so the handshake below
+ * exercises the same validation a real client performs.
+ */
+function getHealthOverTls(
+  port: number,
+  fixture: CertificateFixture,
+): Promise<{ status: number; body: string; protocol: string }> {
   return new Promise((resolve, reject) => {
     const req = https.get(
-      { host: '127.0.0.1', port, path: '/api/health', rejectUnauthorized: false },
+      { host: '127.0.0.1', port, path: '/api/health', ca: readFileSync(fixture.certFile) },
       (res) => {
         // Read the negotiated protocol now: the socket is detached by the
         // time the response stream ends.
@@ -101,7 +109,7 @@ describe.skipIf(!hasOpenssl())('gateway listener with a tls block', () => {
 
     expect(booted.scheme).toBe('https')
 
-    const response = await getHealthOverTls(booted.port)
+    const response = await getHealthOverTls(booted.port, fixture)
     expect(response.status).toBe(200)
     expect(JSON.parse(response.body)).toMatchObject({ status: 'ok' })
     expect(['TLSv1.2', 'TLSv1.3']).toContain(response.protocol)
@@ -113,7 +121,7 @@ describe.skipIf(!hasOpenssl())('gateway listener with a tls block', () => {
 
     const booted = await boot(writeConfig('pfx', { source: 'pfx', pfxFile: fixture.pfxFile }))
 
-    const response = await getHealthOverTls(booted.port)
+    const response = await getHealthOverTls(booted.port, fixture)
     expect(response.status).toBe(200)
     expect(JSON.parse(response.body)).toMatchObject({ status: 'ok' })
   })
@@ -129,7 +137,7 @@ describe.skipIf(!hasOpenssl())('gateway listener with a tls block', () => {
       }),
     )
 
-    const response = await getHealthOverTls(booted.port)
+    const response = await getHealthOverTls(booted.port, fixture)
     expect(response.protocol).toBe('TLSv1.3')
   })
 

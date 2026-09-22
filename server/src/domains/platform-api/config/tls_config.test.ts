@@ -116,6 +116,28 @@ describe('loadTlsConfig', () => {
     })
   })
 
+  it('accepts a dns name selector and trims it', () => {
+    const dir = createConfigDir('store-dns')
+    const configPath = writeConfig(dir, {
+      tls: { source: 'windows-store', store: { dnsName: ' pippo.codewrecks.com ' } },
+    })
+
+    expect(loadTlsConfig(configPath)).toEqual({
+      source: 'windows-store',
+      minVersion: 'TLSv1.2',
+      store: { location: 'LocalMachine', name: 'My', dnsName: 'pippo.codewrecks.com' },
+    })
+  })
+
+  it('accepts a wildcard dns name', () => {
+    const dir = createConfigDir('store-dns-wildcard')
+    const configPath = writeConfig(dir, {
+      tls: { source: 'windows-store', store: { dnsName: '*.codewrecks.com' } },
+    })
+
+    expect(loadTlsConfig(configPath)).toMatchObject({ store: { dnsName: '*.codewrecks.com' } })
+  })
+
   it.each([
     ['an unknown source', { source: 'acme' }, /"source" must be one of/],
     ['a missing keyFile', { source: 'pem', certFile: 'server.crt' }, /"keyFile" is required/],
@@ -125,6 +147,12 @@ describe('loadTlsConfig', () => {
     ['a missing store', { source: 'windows-store' }, /"store" is required/],
     ['a store with neither selector', { source: 'windows-store', store: { name: 'My' } }, /exactly one of/],
     ['a store with both selectors', { source: 'windows-store', store: { thumbprint: 'A'.repeat(40), subject: 'CN=x' } }, /exactly one of/],
+    ['a store with a thumbprint and a dns name', { source: 'windows-store', store: { thumbprint: 'A'.repeat(40), dnsName: 'a.example.com' } }, /exactly one of/],
+    ['a blank dns name', { source: 'windows-store', store: { dnsName: '   ' } }, /"store.dnsName" must be a non-empty string/],
+    ['a non-string dns name', { source: 'windows-store', store: { dnsName: 42 } }, /"store.dnsName" must be a non-empty string/],
+    ['a dns name that is not a host name', { source: 'windows-store', store: { dnsName: 'CN=pippo, O=codewrecks' } }, /must be a host name/],
+    ['a dns name with an empty label', { source: 'windows-store', store: { dnsName: 'pippo..com' } }, /must be a host name/],
+    ['an over-long dns name', { source: 'windows-store', store: { dnsName: `${'a'.repeat(60)}.`.repeat(5) } }, /must be a host name/],
     ['a malformed thumbprint', { source: 'windows-store', store: { thumbprint: 'not-hex' } }, /hex certificate thumbprint/],
     ['an unknown store location', { source: 'windows-store', store: { location: 'Machine', thumbprint: 'A'.repeat(40) } }, /"store.location" must be/],
     ['a non-object tls block', 'yes', /expected an object/],

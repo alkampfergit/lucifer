@@ -27,6 +27,15 @@ const FIELDS_BY_SOURCE: Record<TlsSource, readonly string[]> = {
 const THUMBPRINT_PATTERN = /^(?:[0-9A-F]{40}|[0-9A-F]{64})$/
 const STORE_NAME_PATTERN = /^[A-Za-z0-9]+$/
 
+/** One DNS label: alphanumeric with inner hyphens, at most 63 characters. */
+const DNS_LABEL_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/
+/** Maximum length of a DNS name, RFC 1035. */
+const MAX_DNS_NAME_LENGTH = 253
+
+/** Ways to pick one certificate out of the store, in the order they are documented. */
+const STORE_SELECTOR_KEYS = ['thumbprint', 'dnsName', 'subject'] as const
+type StoreSelectorKey = (typeof STORE_SELECTOR_KEYS)[number]
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -78,6 +87,63 @@ function rejectForeignFields(tls: Record<string, unknown>, source: TlsSource, ct
   }
 }
 
+/**
+ * Accepts a host name such as `pippo.codewrecks.com`, optionally with a
+ * leading `*.` wildcard label, matching what an operator reads off the
+ * certificate in certmgr. Validated per label so the pattern stays linear.
+ */
+function isDnsName(value: string): boolean {
+  if (value.length > MAX_DNS_NAME_LENGTH) return false
+  const labels = value.split('.')
+  const named = labels[0] === '*' ? labels.slice(1) : labels
+  return named.length > 0 && named.every((label) => DNS_LABEL_PATTERN.test(label))
+}
+
+function normaliseThumbprint(value: string, ctx: string): string {
+  // Certificate manager copies thumbprints with spaces; normalise so the
+  // operator can paste them unchanged.
+  const thumbprint = value.replaceAll(/[\s:]/g, '').toUpperCase()
+  if (!THUMBPRINT_PATTERN.test(thumbprint)) {
+    throw new Error(
+      `${ctx}: "store.thumbprint" must be a hex certificate thumbprint (40 or 64 characters).`,
+    )
+  }
+  return thumbprint
+}
+
+/**
+ * Pick the single selector criterion. Requiring exactly one keeps the match
+ * rule readable: two criteria would leave the operator guessing whether they
+ * are ANDed or whether one silently wins.
+ */
+function parseSelectorCriterion(
+  store: Record<string, unknown>,
+  ctx: string,
+): Pick<WindowsStoreSelector, StoreSelectorKey> {
+  const provided = STORE_SELECTOR_KEYS.filter((key) => store[key] !== undefined)
+  if (provided.length !== 1) {
+    const options = STORE_SELECTOR_KEYS.map((key) => `"store.${key}"`).join(', ')
+    throw new Error(`${ctx}: set exactly one of ${options}.`)
+  }
+
+  const key = provided[0]
+  const value = store[key]
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`${ctx}: "store.${key}" must be a non-empty string.`)
+  }
+
+  if (key === 'thumbprint') return { thumbprint: normaliseThumbprint(value, ctx) }
+  if (key === 'subject') return { subject: value }
+
+  const dnsName = value.trim()
+  if (!isDnsName(dnsName)) {
+    throw new Error(
+      `${ctx}: "store.dnsName" must be a host name such as "pippo.codewrecks.com".`,
+    )
+  }
+  return { dnsName }
+}
+
 function parseStoreSelector(value: unknown, ctx: string): WindowsStoreSelector {
   if (value === undefined) {
     throw new Error(`${ctx}: "store" is required when "source" is "windows-store".`)
@@ -96,31 +162,7 @@ function parseStoreSelector(value: unknown, ctx: string): WindowsStoreSelector {
     throw new Error(`${ctx}: "store.name" must be an alphanumeric store name (e.g. "My", "Root").`)
   }
 
-  const hasThumbprint = value.thumbprint !== undefined
-  const hasSubject = value.subject !== undefined
-  if (hasThumbprint === hasSubject) {
-    throw new Error(`${ctx}: set exactly one of "store.thumbprint" or "store.subject".`)
-  }
-
-  if (hasThumbprint) {
-    if (typeof value.thumbprint !== 'string') {
-      throw new Error(`${ctx}: "store.thumbprint" must be a string.`)
-    }
-    // Certificate manager copies thumbprints with spaces; normalise so the
-    // operator can paste them unchanged.
-    const thumbprint = value.thumbprint.replaceAll(/[\s:]/g, '').toUpperCase()
-    if (!THUMBPRINT_PATTERN.test(thumbprint)) {
-      throw new Error(
-        `${ctx}: "store.thumbprint" must be a hex certificate thumbprint (40 or 64 characters).`,
-      )
-    }
-    return { location, name, thumbprint }
-  }
-
-  if (typeof value.subject !== 'string' || value.subject.length === 0) {
-    throw new Error(`${ctx}: "store.subject" must be a non-empty string.`)
-  }
-  return { location, name, subject: value.subject }
+  return { location, name, ...parseSelectorCriterion(value, ctx) }
 }
 
 function parseTlsConfig(value: unknown, configDir: string, ctx: string): TlsConfig {

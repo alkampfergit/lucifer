@@ -32,9 +32,9 @@ entries, and `toolsPath`.
 
     // source: "windows-store"
     "store": {
-      "location":   "LocalMachine",  // "LocalMachine" (default) | "CurrentUser"
-      "name":       "My",            // store name, default "My"
-      "thumbprint": "A1B2C3..."      // or "subject": "CN=..." — exactly one
+      "location": "LocalMachine",         // "LocalMachine" (default) | "CurrentUser"
+      "name":     "My",                   // store name, default "My"
+      "dnsName":  "pippo.codewrecks.com"  // or "thumbprint" / "subject" — exactly one
     }
   }
 }
@@ -66,18 +66,26 @@ key, and any chain certificates. Unlock it with `LUCIFER_TLS_PASSPHRASE`.
 ### `windows-store`
 
 Windows only. Node has no binding to the Windows certificate store, so
-Lucifer shells out to PowerShell, locates the certificate under
-`Cert:\<location>\<name>`, and exports it as a PKCS#12 blob protected by a
-single-use password generated per start. The bundle is returned base64 on
-stdout and never written to disk. Selector values are passed as environment
-variables, not interpolated into the script, so a crafted `subject` cannot
-inject PowerShell.
+Lucifer shells out to PowerShell (by absolute path under `%SystemRoot%`, never
+via `PATH`), locates the certificate under `Cert:\<location>\<name>`, and
+exports it as a PKCS#12 blob protected by a single-use password generated per
+start. The bundle is returned base64 on stdout and never written to disk.
+Selector values are passed as environment variables, not interpolated into the
+script, so a crafted `subject` cannot inject PowerShell.
 
-- `thumbprint` matches exactly (spaces and colons are stripped, case is
-  ignored, so a value pasted from certmgr works unchanged).
-- `subject` matches as a substring of the certificate's subject DN.
-- Matching more than one certificate is an error — narrow it with a
-  thumbprint.
+Set exactly one of:
+
+| Selector | Matches |
+|---|---|
+| `dnsName` | A host name the certificate was issued for, e.g. `pippo.codewrecks.com`. Compared against the certificate's DNS names (its subject alternative names, falling back to the simple subject name when it has none) — the names certmgr shows under *Issued To*. Case-insensitive; a wildcard certificate is named as it appears, `*.codewrecks.com`. Surrounding whitespace is trimmed. |
+| `thumbprint` | The thumbprint, exactly. Spaces and colons are stripped and case is ignored, so a value pasted from certmgr works unchanged. |
+| `subject` | A substring of the certificate's full subject DN, e.g. `O=Codewrecks`. |
+
+Matching nothing is an error. When a `dnsName` or `subject` matches more than
+one certificate — the usual case after a renewal leaves the superseded
+certificate in the store — the match is narrowed to certificates that have a
+private key and are inside their validity window. If that still leaves more
+than one, startup fails and asks for a `thumbprint`.
 
 Requirements and limits:
 

@@ -226,7 +226,7 @@ HTTPS. Omit it and the listener stays plain HTTP, as before.
 |---|---|---|
 | `pem` | `certFile`, `keyFile`, optional `caFile` | Certificate and key as separate PEM files. |
 | `pfx` | `pfxFile` | PKCS#12 bundle (`.pfx` / `.p12`). Unlock with `LUCIFER_TLS_PASSPHRASE`. |
-| `windows-store` | `store.thumbprint` **or** `store.subject`, optional `store.location` / `store.name` | Windows only. The private key must be exportable; `LocalMachine` usually needs elevation. |
+| `windows-store` | exactly one of `store.dnsName` / `store.thumbprint` / `store.subject`, optional `store.location` / `store.name` | Windows only. `dnsName` names the certificate by host name (`"pippo.codewrecks.com"`). The private key must be exportable; `LocalMachine` usually needs elevation. |
 
 Optional `minVersion` is `TLSv1.2` (default) or `TLSv1.3`. Certificate paths
 are resolved relative to the config file's directory. Certificates are read
