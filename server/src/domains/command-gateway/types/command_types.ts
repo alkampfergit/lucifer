@@ -106,6 +106,29 @@ export interface AliasesConfig {
   [name: string]: CommandAlias;
 }
 
+/**
+ * Session assertion sealed inside the `lucifer_admin` cookie. Deliberately
+ * carries no admin secret: it asserts "this browser authenticated as admin at
+ * `iat` and may keep doing so until `exp`", and nothing more.
+ */
+export interface AdminSessionAssertion {
+  /** Payload schema version. Bumped when the claim set changes shape. */
+  v: 1;
+  sub: 'admin';
+  /** Issued-at, seconds since epoch. */
+  iat: number;
+  /** Absolute expiry, seconds since epoch. Never extended on use. */
+  exp: number;
+  /** Per-session CSRF token, mirrored into a readable cookie for double-submit. */
+  csrf: string;
+}
+
+/** Opt-out switch for cookie-backed admin sessions on the web approval UI. */
+export interface AdminCookieSessionConfig {
+  /** Defaults to `true`; set `false` to force bearer-only admin auth. */
+  enabled: boolean;
+}
+
 export interface LuciferConfig {
   port: number;
   telegramChatId?: string;
@@ -125,6 +148,8 @@ export interface LuciferConfig {
   dataDir: string;
   logFile?: string;
   aliases?: AliasesConfig;
+  /** Cookie-backed admin sessions for `/admin/approvals`. Enabled unless explicitly disabled. */
+  adminCookieSession?: AdminCookieSessionConfig;
   /** Extra directories prepended to the executed command's PATH, in order, so raw (non-alias) commands can resolve tools outside the daemon's own PATH without a full path in every rule/command. */
   toolsPath?: string[];
 }

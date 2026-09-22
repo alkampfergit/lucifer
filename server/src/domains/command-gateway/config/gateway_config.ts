@@ -29,6 +29,12 @@ const optionalStringKeys = [
   'dataDir', 'telegramChatId', 'adminSecretHash', 'adminSecretSalt', 'logFile',
 ] as const;
 
+function isAdminCookieSessionConfig(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  return typeof v.enabled === 'boolean';
+}
+
 function isToolsPath(value: unknown): boolean {
   return Array.isArray(value) && value.every((p) => typeof p === 'string' && p.length > 0);
 }
@@ -44,6 +50,7 @@ function isLuciferConfig(data: unknown): data is LuciferConfig {
   if (d.onApprovalTimeout !== undefined && d.onApprovalTimeout !== 'deny' && d.onApprovalTimeout !== 'approve-with-warning') return false;
   if (d.aliases !== undefined && !isAliasesConfig(d.aliases)) return false;
   if (d.toolsPath !== undefined && !isToolsPath(d.toolsPath)) return false;
+  if (d.adminCookieSession !== undefined && !isAdminCookieSessionConfig(d.adminCookieSession)) return false;
   return true;
 }
 
