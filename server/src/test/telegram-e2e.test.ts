@@ -14,6 +14,7 @@ import {
   TEST_CHAT_ID,
   type TelegramE2EContext,
 } from './telegram-e2e-setup.js';
+import { TSX_ENTRY } from './tsx_entry.js';
 
 // telegram-test-api is CJS with `exports.default = TelegramServer`
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -242,11 +243,10 @@ describe('Telegram E2E: approval flow', () => {
 // completes. This is the full production onboarding path.
 
 const CLI_PATH = resolve(__dirname, '../cli.ts');
-const TSX = join(process.cwd(), 'node_modules', '.bin', 'tsx');
 
 function runCli(...args: string[]): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(TSX, [CLI_PATH, ...args], {
+    const child = spawn(process.execPath, [TSX_ENTRY, CLI_PATH, ...args], {
       env: { ...process.env, LUCIFER_TELEGRAM_TOKEN: 'skip' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });

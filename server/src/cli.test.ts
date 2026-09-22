@@ -4,16 +4,9 @@ import { existsSync, readFileSync, mkdirSync, rmSync, writeFileSync } from 'node
 import { join, resolve } from 'node:path';
 import request from 'supertest';
 import { createApp } from './create_app.js';
+import { TSX_ENTRY } from './test/tsx_entry.js';
 
 const CLI_PATH = resolve(__dirname, 'cli.ts');
-/**
- * tsx's JS entrypoint, run through the current `node` binary rather than the
- * `node_modules/.bin/tsx` shim. The shim is a shell script with no extension
- * on Windows — the executable there is `tsx.cmd` — so spawning it by that
- * path fails with ENOENT. Going straight to the entrypoint avoids both the
- * platform-specific shim name and needing `shell: true` to run a `.cmd`.
- */
-const TSX_ENTRY = join(process.cwd(), 'node_modules', 'tsx', 'dist', 'cli.mjs');
 
 /**
  * Run the CLI and collect output. The CLI process may not exit on its own
