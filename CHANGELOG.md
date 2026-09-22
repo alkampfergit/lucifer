@@ -14,6 +14,18 @@ Target content for 1.0 (tracked in [`docs/quality/PRE-1.0-CHECKPOINT.md`](docs/q
 - Stabilise the public HTTP surface on `command-gateway` and `request-proxy`.
 - Lock the layered dependency direction (Types → Config → Repository → Service → Runtime → UI/API) as a hard CI invariant.
 
+## [0.10.2] — 2026-09-22
+
+### Security
+- `npm audit` now reports **0 vulnerabilities** across the whole tree (was 15: 2 low, 4 moderate, 9 high). This supersedes PR #48's original `ip-address` 10.1.0 → 10.2.0 bump and, unlike 0.8.13, covers development scope as well as runtime.
+  - Retired the `express-rate-limit` → `ip-address` `10.1.1` override added in 0.8.13. It was explicitly marked "retirable once `express-rate-limit` bumps", and by pinning an exact version it had become the thing *blocking* the fix: `npm audit fix` could not move `ip-address` off a version covered by GHSA-mwp4-54f8-5fhr / GHSA-4xrf-jv44-h6hh / GHSA-22jq-vg5j-6vgg (all high, `<=10.3.0`, SSRF and trust-boundary bypass). `express-rate-limit` 8.3.2 → 8.7.0 declares `ip-address: ^10.2.0`, so dropping the override resolves it at 10.7.2 with no override needed.
+  - `tsx` 4.21.0 → 4.23.15 (inside the existing `^4.21.0` range) to move `esbuild` 0.27.7 → 0.28.2, closing GHSA-g7r4-m6w7-qqqr (arbitrary file read via the dev server on Windows; vulnerable range `0.27.3 - 0.28.0`). `npm audit fix` on its own resolved this by *downgrading* `esbuild` to 0.27.2, because `tsx@4.21.0` pins `esbuild ~0.27.0`; bumping `tsx` is the forward fix.
+  - Remaining advisories closed by `npm audit fix` within existing ranges: `axios` 1.15.0 → 1.20.0 (high), `form-data` 4.0.5 → 4.0.6 (high), `brace-expansion` 1.1.13 → 1.1.21 and 5.0.5 → 5.0.12 (high), `js-yaml` 4.1.1 → 4.3.2 (high), `nanoid` 3.3.11 → 3.3.19 (high), `postcss` 8.5.8 → 8.5.28 (high), `vite` 8.0.5 → 8.3.0 (high), `@vitest/mocker` / `vitest` 4.1.2 → 4.1.11 (moderate), `qs` 6.15.3 → 6.16.0 (moderate), `@humanfs/node` 0.16.7 → 0.16.8 (moderate), `body-parser` (under `telegram-test-api`) 1.20.4 → 1.20.8 (low).
+  - The `telegram-test-api` and `express` → `body-parser` override blocks are untouched.
+
+### Changed
+- `vite` 8.3.0 no longer depends on `esbuild`, and `rolldown` 1.0.0-rc.12 → 1.2.9 dropped its `@rolldown/binding-wasm32-wasi` optional dependency. That removes `@emnapi/core`, `@emnapi/runtime`, `@emnapi/wasi-threads`, `@napi-rs/wasm-runtime`, `@tybys/wasm-util`, and `tslib` from the lockfile. These are genuine upstream removals, not the Windows-side platform pruning warned about in 0.8.13 — the lockfile was still regenerated with `npm install --package-lock-only --os=linux --cpu=x64`, `win32` entries are intact, and `npm ci` accepts it.
+
 ## [0.10.1] — 2026-09-22
 
 ### Changed
