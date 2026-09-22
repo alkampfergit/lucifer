@@ -2,6 +2,7 @@
 import request from 'supertest'
 import { describe, expect, it, vi, afterEach } from 'vitest'
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { scryptSync } from 'node:crypto'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createApp } from './create_app.js'
@@ -167,5 +168,52 @@ describe('createApp boot scenarios', () => {
 
     const configPath = join(tempDir, 'lucifer.json')
     expect(() => createApp({ configPath })).toThrow('LUCIFER_TELEGRAM_TOKEN')
+  })
+
+  /** A tree whose only approval channel is the web UI, so the session key is resolved. */
+  function writeWebUiConfig(label: string, extraConfig: Record<string, unknown> = {}): string {
+    const tempDir = makeTempDir(label)
+    mkdirSync(join(tempDir, 'data'), { recursive: true })
+
+    const salt = 'adminsalt12345678'
+    writeFileSync(join(tempDir, 'lucifer.json'), JSON.stringify({
+      port: 0,
+      dataDir: './data',
+      adminSecretSalt: salt,
+      adminSecretHash: scryptSync('admin-secret', salt, 64).toString('hex'),
+      ...extraConfig,
+    }))
+    writeFileSync(join(tempDir, 'api-keys.json'), JSON.stringify({ keys: [] }))
+    writeFileSync(join(tempDir, 'command-rules.json'), JSON.stringify({ rules: [], defaultAction: 'always_deny' }))
+
+    return join(tempDir, 'lucifer.json')
+  }
+
+  it('throws on a malformed LUCIFER_ADMIN_COOKIE_KEY instead of quietly dropping to bearer-only', () => {
+    // The operator asked for a specific key. Falling back would leave cookie
+    // sessions off with nothing but a log line to say why.
+    vi.stubEnv('LUCIFER_ADMIN_COOKIE_KEY', 'not-a-64-hex-key')
+    const configPath = writeWebUiConfig('bad-cookie-key')
+
+    expect(() => createApp({ configPath })).toThrow('LUCIFER_ADMIN_COOKIE_KEY')
+  })
+
+  it('boots with a well-formed LUCIFER_ADMIN_COOKIE_KEY', () => {
+    vi.stubEnv('LUCIFER_ADMIN_COOKIE_KEY', 'a'.repeat(64))
+    const configPath = writeWebUiConfig('good-cookie-key')
+
+    expect(() => createApp({ configPath })).not.toThrow()
+  })
+
+  it('leaves trust proxy disabled by default, so X-Forwarded-Proto cannot be spoofed into req.secure', () => {
+    const { app } = createApp({ configPath: writeWebUiConfig('no-trust-proxy') })
+
+    expect(app.get('trust proxy')).toBe(false)
+  })
+
+  it('applies a configured trustProxy to Express', () => {
+    const { app } = createApp({ configPath: writeWebUiConfig('trust-proxy', { trustProxy: 1 }) })
+
+    expect(app.get('trust proxy')).toBe(1)
   })
 })

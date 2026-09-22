@@ -244,6 +244,35 @@ describe('loadGatewayConfig', () => {
     const filePath = writeConfig(dir, { adminCookieSession: {} });
     expect(() => loadGatewayConfig(filePath)).toThrow('failed validation');
   });
+
+  it('leaves trustProxy undefined when the config omits it, so forwarding headers stay untrusted', () => {
+    const dir = createTempDir();
+    const filePath = writeConfig(dir, {});
+    expect(loadGatewayConfig(filePath).trustProxy).toBeUndefined();
+  });
+
+  it.each([
+    ['a hop count', 1],
+    ['a boolean', true],
+    ['a named range', 'loopback'],
+    ['an explicit address list', ['10.0.0.1', '10.0.0.2']],
+  ])('reads a trustProxy given as %s', (_label, value) => {
+    const dir = createTempDir();
+    const filePath = writeConfig(dir, { trustProxy: value });
+    expect(loadGatewayConfig(filePath).trustProxy).toEqual(value);
+  });
+
+  it.each([
+    ['a negative hop count', -1],
+    ['a fractional hop count', 1.5],
+    ['an object', { hops: 1 }],
+    ['a list containing a non-string', ['10.0.0.1', 2]],
+    ['a list containing an empty string', ['']],
+  ])('rejects a trustProxy given as %s', (_label, value) => {
+    const dir = createTempDir();
+    const filePath = writeConfig(dir, { trustProxy: value });
+    expect(() => loadGatewayConfig(filePath)).toThrow('failed validation');
+  });
 });
 
 describe('getTelegramToken', () => {

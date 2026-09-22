@@ -552,7 +552,7 @@ at the deployment level (`"adminCookieSession": { "enabled": false }` in
   /session` refuses cookie auth (`403 BEARER_REQUIRED`) precisely so the
   lifetime cannot be slid forward one renewal at a time.
 - **Cookie flags**: `HttpOnly; SameSite=Strict; Path=/`, with `Secure` added
-  only when the request arrived over https. The companion
+  only when Express reports the request as secure (`req.secure`). The companion
   `lucifer_admin_csrf` cookie carries the same flags minus `HttpOnly`.
 - **CSRF**: cookie-authenticated state-changing routes require the
   `lucifer_admin_csrf` value in an `X-Lucifer-CSRF` header, compared
@@ -566,7 +566,9 @@ at the deployment level (`"adminCookieSession": { "enabled": false }` in
   optional `@napi-rs/keyring` → a new `server_secrets` table in `lucifer.db`.
   The keyring is an `optionalDependency` loaded through `createRequire` in a
   try/catch, so a missing native module or an absent Secret Service degrades
-  silently to the database.
+  silently to the database. A malformed `LUCIFER_ADMIN_COOKIE_KEY` is the one
+  fatal case: the operator named a key, so booting bearer-only would hide a
+  configuration mistake behind a feature that merely looks switched off.
 
 ### Consequences
 
@@ -580,9 +582,10 @@ at the deployment level (`"adminCookieSession": { "enabled": false }` in
   the database fallback keeps it usable there.
 - (-) The database fallback puts the key in the same file as the data it
   protects, so `lucifer.db` becomes the trust boundary for admin sessions.
-  Mitigated by `chmod 0600` on the database file and by documenting the env-var
-  and keychain alternatives; it is not keychain-grade, and that is the price of
-  running headless.
+  Mitigated by `chmod 0600` on the database file *and its `-wal`/`-shm`
+  sidecars* (in WAL mode every secret write lands in the sidecar first) and by
+  documenting the env-var and keychain alternatives; it is not keychain-grade,
+  and that is the price of running headless.
 - (-) Cookie auth reintroduces a CSRF surface that bearer-only auth was immune
   to. Mitigated by `SameSite=Strict` plus the session-bound header above.
 - (-) Rotating or losing the key invalidates every outstanding session. That is
@@ -610,3 +613,29 @@ at the deployment level (`"adminCookieSession": { "enabled": false }` in
 - **Plain double-submit CSRF (token mirrored from a readable cookie).**
   Rejected: it does not survive cookie injection or session fixation. Binding
   the token to the sealed assertion costs nothing extra and does.
+
+### Amendments
+
+**2026-09-22 (PR #59 review).** Five hardening changes, none altering the
+decision above:
+
+- **Claim bounds on `open`, not just the GCM tag.** `iat`/`exp` must be safe
+  integers, `iat` may not lead the clock by more than 60s, and `exp - iat` may
+  not exceed the configured TTL. Authenticity alone let a sealed payload claim
+  an arbitrarily distant expiry, which would have voided the "compromise yields
+  only an *expiring* session" property this ADR rests on.
+- **`Secure` derives from `req.secure` alone.** Reading `X-Forwarded-Proto`
+  directly trusted every peer: a direct HTTP client could ask for a `Secure`
+  cookie its browser can never return, and an appending proxy could downgrade a
+  real HTTPS request. Operators behind a TLS terminator now set `trustProxy` in
+  `lucifer.json`, which Express applies to `req.secure` for them.
+- **Linux keychain entries are pinned to the Secret Service.**
+  `@napi-rs/keyring`'s default Linux selection silently falls back to the kernel
+  keyutils store, which is RAM-backed. A D-Bus-less host would have "succeeded"
+  there and lost every session on reboot instead of reaching the durable
+  database fallback.
+- **WAL sidecars are locked down too**, and before the secret can be written.
+- **The page probes only when the readable CSRF companion cookie exists.**
+  Probing blind spent a real login attempt per visit, so five reloads before
+  signing in — or any visit at all with the feature disabled — tripped the
+  per-IP lockout and answered the correct secret with `429`.

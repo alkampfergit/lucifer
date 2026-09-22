@@ -19,18 +19,42 @@ const ASSERTION_VERSION = 1;
 const IV_BYTES = 12;
 const CSRF_BYTES = 32;
 
+/**
+ * Slack allowed on `iat` before an assertion counts as issued in the future.
+ * Covers an NTP correction or a small clock step across a restart, without
+ * being wide enough to matter against a forger.
+ */
+const MAX_CLOCK_SKEW_SECONDS = 60;
+
 function b64url(buf: Buffer): string {
   return buf.toString('base64url');
 }
 
-function isAssertion(value: unknown, nowSeconds: number): value is AdminSessionAssertion {
+/**
+ * Validate a decrypted payload as a session assertion.
+ *
+ * Authenticity alone is not enough: the lifetime claims are checked against the
+ * sealer's own TTL rather than merely trusted. Without the cap, anything able to
+ * seal a payload — a leaked key, a sealer bug — could mint a session with an
+ * arbitrarily distant `exp`, which contradicts the "compromise yields only an
+ * expiring session" guarantee this design rests on. A genuine cookie always
+ * satisfies these bounds, so the cap costs honest callers nothing.
+ */
+function isAssertion(value: unknown, nowSeconds: number, ttlSeconds: number): value is AdminSessionAssertion {
   if (typeof value !== 'object' || value === null) return false;
   const a = value as Record<string, unknown>;
   if (a.v !== ASSERTION_VERSION) return false;
   if (a.sub !== 'admin') return false;
-  if (typeof a.iat !== 'number' || typeof a.exp !== 'number') return false;
+  // Safe integers only: NaN, Infinity and fractional seconds are not timestamps
+  // this sealer ever produces, and `Infinity` would sail past every bound below.
+  if (!Number.isSafeInteger(a.iat) || !Number.isSafeInteger(a.exp)) return false;
   if (typeof a.csrf !== 'string' || a.csrf.length === 0) return false;
-  return a.exp > nowSeconds;
+
+  const iat = a.iat as number;
+  const exp = a.exp as number;
+  if (iat > nowSeconds + MAX_CLOCK_SKEW_SECONDS) return false;
+  if (exp <= nowSeconds) return false;
+  return exp - iat <= ttlSeconds;
 }
 
 export interface SealedAdminSession {
@@ -62,9 +86,11 @@ export interface AdminSessionSealer {
  *
  * Defends against: tampering and forgery (GCM auth tag), replay past `exp`,
  * and cross-site request forgery (via the sealed `csrf` claim, checked by the
- * caller). Does NOT defend against: theft of the cookie itself from a browser,
- * or disclosure of the sealing key — either one is a full session compromise
- * until `exp`.
+ * caller). `open` additionally bounds the lifetime claims by `ttlSeconds`, so
+ * even a sealed payload cannot claim a session longer than the configured one.
+ * Does NOT defend against: theft of the cookie itself from a browser, or
+ * disclosure of the sealing key — either one is a session compromise, capped at
+ * `ttlSeconds` from the moment of forgery.
  */
 export function createAdminSessionSealer(
   key: Buffer,
@@ -116,7 +142,7 @@ export function createAdminSessionSealer(
 
         const parsed: unknown = JSON.parse(plaintext);
         const nowSeconds = Math.floor(Date.now() / 1000);
-        return isAssertion(parsed, nowSeconds) ? parsed : undefined;
+        return isAssertion(parsed, nowSeconds, ttlSeconds) ? parsed : undefined;
       } catch {
         // Bad base64, wrong key, tampered ciphertext, or non-JSON payload —
         // all mean the same thing to the caller: this cookie is not a session.

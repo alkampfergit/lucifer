@@ -7,6 +7,22 @@ const log = createChildLogger('database');
 
 let db: Database.Database | null = null;
 
+/**
+ * Make one database file owner-only.
+ *
+ * Best-effort: not every filesystem (notably Windows and some bind mounts)
+ * honours POSIX modes, and the WAL sidecars do not exist until SQLite creates
+ * them. A missing file is therefore not worth a warning.
+ */
+function restrictToOwner(filePath: string): void {
+  try {
+    chmodSync(filePath, 0o600);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+    log.warn({ err, filePath }, 'Could not restrict database file permissions to owner-only');
+  }
+}
+
 export function getDatabase(dataDir: string): Database.Database {
   if (db) return db;
 
@@ -15,7 +31,18 @@ export function getDatabase(dataDir: string): Database.Database {
 
   log.info({ dbPath }, 'Opening SQLite database');
   db = new Database(dbPath, { fileMustExist: false });
+
+  // `server_secrets` can hold the admin session sealing key, so the database
+  // becomes the trust boundary for it. Tighten the main file *before* enabling
+  // WAL: switching journal mode creates `-wal`/`-shm` under the ambient umask,
+  // and every secret write lands in the WAL first. A `-wal` left at 0644 would
+  // expose the key to any local user no matter what the main file says.
+  restrictToOwner(dbPath);
+
   db.pragma('journal_mode = WAL');
+  restrictToOwner(`${dbPath}-wal`);
+  restrictToOwner(`${dbPath}-shm`);
+
   db.pragma('busy_timeout = 5000');
 
   db.exec(`
@@ -57,16 +84,6 @@ export function getDatabase(dataDir: string): Database.Database {
       created_at TEXT NOT NULL
     );
   `);
-
-  // `server_secrets` can hold the admin session sealing key, so the database
-  // file becomes the trust boundary for it. Owner-only permissions are the
-  // cheapest meaningful defence; best-effort because not every filesystem
-  // (notably Windows and some bind mounts) honours POSIX modes.
-  try {
-    chmodSync(dbPath, 0o600);
-  } catch (err) {
-    log.warn({ err, dbPath }, 'Could not restrict database file permissions to owner-only');
-  }
 
   log.info('Database schema initialized');
   return db;

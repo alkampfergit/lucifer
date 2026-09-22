@@ -150,6 +150,15 @@ export interface LuciferConfig {
   aliases?: AliasesConfig;
   /** Cookie-backed admin sessions for `/admin/approvals`. Enabled unless explicitly disabled. */
   adminCookieSession?: AdminCookieSessionConfig;
+  /**
+   * Express `trust proxy` setting, forwarded verbatim to `app.set('trust proxy', …)`.
+   *
+   * Left unset, forwarding headers are ignored entirely, so a direct client
+   * cannot spoof `X-Forwarded-Proto` into `req.secure`. Set it only when a
+   * reverse proxy you control terminates TLS in front of Lucifer — e.g. `1`
+   * for a single hop, `"loopback"`, or an explicit subnet/address list.
+   */
+  trustProxy?: boolean | number | string | string[];
   /** Extra directories prepended to the executed command's PATH, in order, so raw (non-alias) commands can resolve tools outside the daemon's own PATH without a full path in every rule/command. */
   toolsPath?: string[];
 }

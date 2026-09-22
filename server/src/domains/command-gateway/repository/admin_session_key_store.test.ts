@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
-import { resolveAdminSessionKey, type KeyringModule } from './admin_session_key_store.js';
+import {
+  AdminSessionKeyConfigError,
+  keychainEntryOptions,
+  resolveAdminSessionKey,
+  type KeyringEntryOptions,
+  type KeyringModule,
+} from './admin_session_key_store.js';
 
 function createTestDatabase(): Database.Database {
   const db = new Database(':memory:');
@@ -17,11 +23,19 @@ function createTestDatabase(): Database.Database {
 /** A keychain that is simply not installed on this machine. */
 const noKeyring = () => undefined;
 
+/** Entry options handed to the fake keychain, newest last. */
+const seenEntryOptions: Array<KeyringEntryOptions | undefined> = [];
+
 /** An in-memory stand-in for the OS keychain, so the branch is deterministic. */
 function fakeKeyring(store: Map<string, string>, behaviour: 'ok' | 'throws' = 'ok'): () => KeyringModule {
   return () => ({
     Entry: class {
-      constructor(private readonly service: string, private readonly account: string) {
+      constructor(
+        private readonly service: string,
+        private readonly account: string,
+        options?: KeyringEntryOptions,
+      ) {
+        seenEntryOptions.push(options);
         if (behaviour === 'throws') throw new Error('Secret Service unavailable (no D-Bus)');
       }
       private get id() { return `${this.service}:${this.account}`; }
@@ -44,6 +58,7 @@ describe('admin_session_key_store', () => {
 
   beforeEach(() => {
     db = createTestDatabase();
+    seenEntryOptions.length = 0;
     delete process.env.LUCIFER_ADMIN_COOKIE_KEY;
   });
 
@@ -86,6 +101,15 @@ describe('admin_session_key_store', () => {
       expect(() => resolveAdminSessionKey(db, { loadKeyringModule: noKeyring }))
         .toThrow(/LUCIFER_ADMIN_COOKIE_KEY must be 64 hex characters/);
     });
+
+    it('resolveAdminSessionKey_envKeyMalformed_throwsATypedErrorCallersCanTreatAsFatal', () => {
+      process.env.LUCIFER_ADMIN_COOKIE_KEY = 'nope';
+
+      // The composition root reads this type to tell an operator's configuration
+      // mistake apart from the fallbacks it is supposed to swallow.
+      expect(() => resolveAdminSessionKey(db, { loadKeyringModule: noKeyring }))
+        .toThrow(AdminSessionKeyConfigError);
+    });
   });
 
   describe('OS keychain branch', () => {
@@ -125,6 +149,29 @@ describe('admin_session_key_store', () => {
 
       expect(result.source).toBe('database');
       expect(readStoredKey(db)).toBe(result.key.toString('hex'));
+    });
+
+    // The library's default Linux selection falls back from Secret Service to the
+    // kernel keyring, which is wiped on reboot. Taking that branch would look like
+    // success while silently invalidating every session at the next restart, so the
+    // entry is pinned and its absence is allowed to throw into the database fallback.
+    it('resolveAdminSessionKey_onLinux_pinsTheEntryToSecretServiceRatherThanTheKernelKeyring', () => {
+      resolveAdminSessionKey(db, { loadKeyringModule: fakeKeyring(new Map()), platform: 'linux' });
+
+      expect(seenEntryOptions).toEqual([{ linux: { store: 'secret-service' } }]);
+    });
+
+    it.each(['darwin', 'win32'] as const)(
+      'resolveAdminSessionKey_on_%s_passesNoLinuxOnlyOptions',
+      (platform) => {
+        resolveAdminSessionKey(db, { loadKeyringModule: fakeKeyring(new Map()), platform });
+
+        expect(seenEntryOptions).toEqual([undefined]);
+      },
+    );
+
+    it('keychainEntryOptions_defaultsToTheCurrentPlatform', () => {
+      expect(keychainEntryOptions()).toEqual(keychainEntryOptions(process.platform));
     });
   });
 

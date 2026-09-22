@@ -137,6 +137,11 @@ function readCookie(name) {
   return '';
 }
 
+/** Forget the local session marker. The HttpOnly cookie is the server's to clear. */
+function clearCookieMarker() {
+  document.cookie = CSRF_COOKIE + '=; Path=/; Max-Age=0; SameSite=Strict';
+}
+
 /** Bearer header when we hold the secret; otherwise the session cookie carries auth. */
 function authHeaders(extra) {
   const headers = Object.assign({}, extra || {});
@@ -195,11 +200,26 @@ async function doLogin() {
   }
 }
 
-/** Probe on load: a valid session cookie means we can skip the login form. */
+/**
+ * Probe on load: a valid session cookie means we can skip the login form.
+ *
+ * Gated on the readable CSRF companion, which is set and cleared alongside the
+ * HttpOnly session cookie and so is a faithful local marker. Probing blind would
+ * spend a real login attempt on every visit made without a session — five
+ * reloads before signing in, or any visit at all when cookie sessions are
+ * disabled, would trip the per-IP lockout and answer the correct secret with 429.
+ */
 async function tryCookieSession() {
+  if (!readCookie(CSRF_COOKIE)) return false;
   try {
     const res = await apiFetch('/api/v1/admin/approvals/pending');
-    if (!res.ok) return false;
+    if (!res.ok) {
+      // The session cookie is gone or no longer opens (expired, key rotated)
+      // while the marker lingers. Drop the marker so reloading stops probing,
+      // otherwise the loop would walk straight into the lockout anyway.
+      if (res.status !== 429) clearCookieMarker();
+      return false;
+    }
     await res.json();
     hasCookieSession = true;
     return true;

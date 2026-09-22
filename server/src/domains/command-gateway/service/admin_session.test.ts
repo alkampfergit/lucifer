@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { randomBytes } from 'node:crypto';
+import { createCipheriv, randomBytes } from 'node:crypto';
 import {
   ADMIN_SESSION_KEY_BYTES,
   ADMIN_SESSION_TTL_SECONDS,
@@ -8,6 +8,26 @@ import {
 
 function makeKey(): Buffer {
   return randomBytes(ADMIN_SESSION_KEY_BYTES);
+}
+
+/**
+ * Seal an arbitrary plaintext in the cookie's wire format.
+ *
+ * Models an attacker in possession of the sealing key: the GCM tag verifies, so
+ * only the claim validation in `open` can reject what comes out. Deliberately
+ * re-implements the format rather than calling `seal`, which would only ever
+ * emit well-formed assertions.
+ */
+function forgeRawCookie(key: Buffer, plaintext: string): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  const parts = [iv, ciphertext, cipher.getAuthTag()].map((b) => b.toString('base64url'));
+  return `v1.${parts.join('.')}`;
+}
+
+function forgeCookie(key: Buffer, claims: Record<string, unknown>): string {
+  return forgeRawCookie(key, JSON.stringify(claims));
 }
 
 describe('admin_session', () => {
@@ -101,6 +121,76 @@ describe('admin_session', () => {
     ])('open_malformedValue_%s_returnsUndefined', (_label, value) => {
       const sealer = createAdminSessionSealer(makeKey());
       expect(sealer.open(value as string | undefined)).toBeUndefined();
+    });
+  });
+
+  // Everything here models an attacker who already holds the sealing key, so the
+  // GCM tag verifies and only the claim bounds stand between them and a session.
+  describe('open with the sealing key compromised', () => {
+    const now = () => Math.floor(Date.now() / 1000);
+
+    it('open_forgedAssertionWithinTheConfiguredTtl_isStillAccepted', () => {
+      const key = makeKey();
+      const forged = forgeCookie(key, { v: 1, sub: 'admin', iat: now(), exp: now() + 60, csrf: 'x' });
+
+      // The baseline: a leaked key does yield a session. The tests below bound it.
+      expect(createAdminSessionSealer(key).open(forged)).toBeDefined();
+    });
+
+    it('open_forgedAssertionWithDistantExpiry_isRejectedInsteadOfLastingForever', () => {
+      const key = makeKey();
+      const century = ADMIN_SESSION_TTL_SECONDS * 1200;
+      const forged = forgeCookie(key, { v: 1, sub: 'admin', iat: now(), exp: now() + century, csrf: 'x' });
+
+      expect(createAdminSessionSealer(key).open(forged)).toBeUndefined();
+    });
+
+    it('open_forgedAssertionBackdatedToStretchTheWindow_isRejected', () => {
+      const key = makeKey();
+      // `exp` is inside a 30-day window measured from an ancient `iat`, so a
+      // naive `exp - iat <= ttl` check without the freshness bound would pass.
+      const iat = now() - ADMIN_SESSION_TTL_SECONDS * 10;
+      const forged = forgeCookie(key, { v: 1, sub: 'admin', iat, exp: iat + ADMIN_SESSION_TTL_SECONDS * 10, csrf: 'x' });
+
+      expect(createAdminSessionSealer(key).open(forged)).toBeUndefined();
+    });
+
+    it('open_forgedAssertionIssuedInTheFuture_isRejected', () => {
+      const key = makeKey();
+      const iat = now() + 3600;
+      const forged = forgeCookie(key, { v: 1, sub: 'admin', iat, exp: iat + 60, csrf: 'x' });
+
+      expect(createAdminSessionSealer(key).open(forged)).toBeUndefined();
+    });
+
+    it('open_forgedAssertionIssuedWithinClockSkew_isAccepted', () => {
+      const key = makeKey();
+      // A modest clock step across a restart must not sign every admin out.
+      const iat = now() + 30;
+      const forged = forgeCookie(key, { v: 1, sub: 'admin', iat, exp: iat + 60, csrf: 'x' });
+
+      expect(createAdminSessionSealer(key).open(forged)).toBeDefined();
+    });
+
+    // Hand-written JSON: `1e999` parses to Infinity and would sail past every
+    // numeric bound, and JSON.stringify cannot express it for us.
+    it.each([
+      ['exp overflows to Infinity', '{"v":1,"sub":"admin","iat":0,"exp":1e999,"csrf":"x"}'],
+      ['exp is beyond the safe integer range', '{"v":1,"sub":"admin","iat":0,"exp":1e30,"csrf":"x"}'],
+      ['exp is fractional', '{"v":1,"sub":"admin","iat":0,"exp":1.5,"csrf":"x"}'],
+      ['exp is a numeric string', '{"v":1,"sub":"admin","iat":0,"exp":"99999999999","csrf":"x"}'],
+      ['csrf is empty', '{"v":1,"sub":"admin","iat":0,"exp":1e999,"csrf":""}'],
+    ])('open_forgedAssertionWithNonTimestampClaims_%s_isRejected', (_label, json) => {
+      const key = makeKey();
+
+      expect(createAdminSessionSealer(key).open(forgeRawCookie(key, json))).toBeUndefined();
+    });
+
+    it('open_forgedAssertionWithAnotherSubject_isRejected', () => {
+      const key = makeKey();
+      const forged = forgeCookie(key, { v: 1, sub: 'root', iat: now(), exp: now() + 60, csrf: 'x' });
+
+      expect(createAdminSessionSealer(key).open(forged)).toBeUndefined();
     });
   });
 

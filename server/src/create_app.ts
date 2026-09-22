@@ -7,7 +7,7 @@ import { createRuntimeMetadataRepository } from './domains/platform-api/reposito
 import { createHealthReportService } from './domains/platform-api/service/create_health_report.js'
 import { loadGatewayConfig } from './domains/command-gateway/config/gateway_config.js'
 import { getDatabase, closeDatabase } from './domains/command-gateway/repository/database.js'
-import { resolveAdminSessionKey } from './domains/command-gateway/repository/admin_session_key_store.js'
+import { resolveAdminSessionKey, AdminSessionKeyConfigError } from './domains/command-gateway/repository/admin_session_key_store.js'
 import { createApprovalStore } from './domains/command-gateway/repository/approval_store.js'
 import { createAuditLog } from './domains/command-gateway/repository/audit_log.js'
 import { createApiKeyStore } from './domains/command-gateway/repository/api_key_store.js'
@@ -53,6 +53,11 @@ interface GatewayDeps {
  * Build the cookie sealer for the admin UI, unless the operator turned the
  * feature off. A key that cannot be resolved is not fatal: the web channel
  * still works, callers just have to re-enter the admin secret each time.
+ *
+ * The one exception is a malformed `LUCIFER_ADMIN_COOKIE_KEY`. That is the
+ * operator saying "use *this* key", so degrading to bearer-only would hide a
+ * configuration mistake behind a feature that merely looks switched off — the
+ * documented contract is a startup error, and this is where it is honoured.
  */
 function initAdminSessionSealer(
   db: ReturnType<typeof getDatabase>,
@@ -68,6 +73,7 @@ function initAdminSessionSealer(
     log.info({ source }, 'Admin cookie sessions enabled')
     return createAdminSessionSealer(key)
   } catch (err) {
+    if (err instanceof AdminSessionKeyConfigError) throw err
     log.error({ err }, 'Could not resolve the admin session key; admin auth stays bearer-only')
     return undefined
   }
@@ -284,6 +290,14 @@ export function createApp(options: CreateAppOptions = {}) {
 
   const gatewayConfig = loadGatewayConfig(options.configPath)
   const paths = resolveConfigPaths(options.configPath)
+
+  // Off unless the operator names their proxy. Express defaults `trust proxy`
+  // to false, and that default is what keeps `req.secure` (and therefore the
+  // `Secure` flag on admin session cookies) unspoofable by a direct client.
+  if (gatewayConfig.trustProxy !== undefined) {
+    app.set('trust proxy', gatewayConfig.trustProxy)
+    log.info({ trustProxy: gatewayConfig.trustProxy }, 'Trusting forwarding headers from configured proxies')
+  }
 
   // Resolve dataDir relative to config directory
   gatewayConfig.dataDir = path.resolve(paths.configDir, gatewayConfig.dataDir)
