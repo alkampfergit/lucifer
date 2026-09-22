@@ -8,8 +8,8 @@ export type { AliasAudit };
 /**
  * Decision shape the route handler acts on. Each kind is terminal: the caller
  * inspects `kind` and performs the matching audit + HTTP response. Keeping
- * this as a pure decision function means the (b) rule-resolution +
- * risk-analysis phase of the execute pipeline (see #30) is unit-testable in
+ * the decision separate from its side effects means the (b) rule-resolution
+ * + risk-analysis phase of the execute pipeline (see #30) is unit-testable in
  * isolation.
  *
  * Per-variant `ruleAction` is the specific literal produced by the check
@@ -31,11 +31,12 @@ export interface ResolveExecutionPlanDeps {
 }
 
 /**
- * Pure decision function — no audit writes, no HTTP response, no filesystem
- * or network I/O. It does read from the injected rule/approval stores
- * (which may perform their own lookup, e.g. SQLite `findApproval`), but
- * the function itself is side-effect-free relative to the execute
- * pipeline: it produces a decision and returns.
+ * Read-only decision function. It queries the injected rule and approval
+ * stores — `matchRule` and, on the manual-approve path, `findApproval`, both
+ * of which hit SQLite in the production implementations — but it writes
+ * nothing: no audit appends, no HTTP response, no filesystem or network
+ * access. It computes a decision and returns it; the caller owns every
+ * side effect.
  *
  * Order of checks (invariant; ADR-009):
  *  1. Alias-args bypass detection — reject commands that look like alias
