@@ -52,12 +52,18 @@ const CERT_STORE_OPEN_EXISTING_FLAG = 0x4000
 const CERT_STORE_READONLY_FLAG = 0x8000
 const CERT_KEY_PROV_INFO_PROP_ID = 2
 const CERT_STORE_ADD_ALWAYS = 4
-const REPORT_NO_PRIVATE_KEY = 0x0001
 const REPORT_NOT_ABLE_TO_EXPORT_PRIVATE_KEY = 0x0002
 const EXPORT_PRIVATE_KEYS = 0x0004
 
-const PFX_EXPORT_FLAGS =
-  EXPORT_PRIVATE_KEYS | REPORT_NO_PRIVATE_KEY | REPORT_NOT_ABLE_TO_EXPORT_PRIVATE_KEY
+/**
+ * `REPORT_NO_PRIVATE_KEY` (0x0001) is deliberately not set. It fails the
+ * export when *any* staged certificate has no private key, and the staged
+ * store holds the leaf plus its public-only intermediates — so every real
+ * chained certificate would trip it. The leaf's key is checked explicitly
+ * before the export, and `REPORT_NOT_ABLE_TO_EXPORT_PRIVATE_KEY` still turns
+ * a non-exportable leaf key into an error rather than a silent omission.
+ */
+const PFX_EXPORT_FLAGS = EXPORT_PRIVATE_KEYS | REPORT_NOT_ABLE_TO_EXPORT_PRIVATE_KEY
 
 /**
  * Both DLLs are loaded by absolute path under `%SystemRoot%` rather than by

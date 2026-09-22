@@ -73,6 +73,69 @@ jobs:
           "LUCIFER_TEST_WINDOWS_STORE_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
           "LUCIFER_TEST_WINDOWS_STORE_CERT_PEM=$pemPath" >> $env:GITHUB_ENV
 
+      # A second, *chained* certificate: root -> intermediate -> leaf, with the
+      # issuers left in the containers as public-only copies. A self-signed leaf
+      # alone cannot catch two things this one does: that the export stages
+      # certificates without a private key, and that the intermediate is
+      # actually sent to the client.
+      - name: Plant a chained TLS test certificate in the Windows certificate store
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $chainDnsName = 'lucifer-ci-chained.test'
+          $expiry = (Get-Date).AddDays(1)
+
+          # Issuers are created in My because signing needs their private key,
+          # then copied public-only into the containers the chain walk reads
+          # and deleted from My along with their keys.
+          $root = New-SelfSignedCertificate `
+            -Subject 'CN=Lucifer CI Test Root' `
+            -CertStoreLocation 'Cert:\CurrentUser\My' `
+            -KeyUsage CertSign,CRLSign -KeyExportPolicy Exportable `
+            -KeyAlgorithm RSA -KeyLength 2048 -NotAfter $expiry `
+            -TextExtension @('2.5.29.19={text}CA=true&pathlength=1')
+
+          $intermediate = New-SelfSignedCertificate `
+            -Subject 'CN=Lucifer CI Test Intermediate' `
+            -Signer $root `
+            -CertStoreLocation 'Cert:\CurrentUser\My' `
+            -KeyUsage CertSign,CRLSign -KeyExportPolicy Exportable `
+            -KeyAlgorithm RSA -KeyLength 2048 -NotAfter $expiry `
+            -TextExtension @('2.5.29.19={text}CA=true&pathlength=0')
+
+          New-SelfSignedCertificate `
+            -DnsName $chainDnsName `
+            -Signer $intermediate `
+            -CertStoreLocation 'Cert:\CurrentUser\My' `
+            -Type SSLServerAuthentication `
+            -KeyExportPolicy Exportable `
+            -KeyAlgorithm RSA -KeyLength 2048 -NotAfter $expiry `
+            -FriendlyName 'Lucifer CI chained TLS test' | Out-Null
+
+          function Move-ToContainer($certificate, $containerName) {
+            $publicOnly = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($certificate.RawData)
+            $container = [System.Security.Cryptography.X509Certificates.X509Store]::new($containerName, 'CurrentUser')
+            $container.Open('ReadWrite')
+            $container.Add($publicOnly)
+            $container.Close()
+            Remove-Item -Path "Cert:\CurrentUser\My\$($certificate.Thumbprint)" -Force
+          }
+
+          Move-ToContainer $intermediate 'CA'
+          Move-ToContainer $root 'Root'
+
+          # Only the root is handed to the test client, so the handshake can
+          # only succeed if the listener sent the intermediate itself.
+          $rootPemPath = Join-Path $env:RUNNER_TEMP 'lucifer-ci-chain-root.pem'
+          $rootBody = [Convert]::ToBase64String($root.RawData, 'InsertLineBreaks')
+          [System.IO.File]::WriteAllText(
+            $rootPemPath,
+            "-----BEGIN CERTIFICATE-----`r`n" + $rootBody + "`r`n-----END CERTIFICATE-----`r`n")
+
+          "LUCIFER_TEST_WINDOWS_STORE_CHAIN_DNS_NAME=$chainDnsName" >> $env:GITHUB_ENV
+          "LUCIFER_TEST_WINDOWS_STORE_CHAIN_ROOT_PEM=$rootPemPath" >> $env:GITHUB_ENV
+
       - name: Lint
         run: npm run lint
 

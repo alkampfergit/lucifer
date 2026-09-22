@@ -281,6 +281,49 @@ describe.skipIf(!hasOpenssl())('exportCertificateFromWindowsStore against a real
     expect(fake.exported[0]).toHaveLength(1)
   })
 
+  it('ships a self-issued rollover certificate instead of mistaking it for the root', () => {
+    // Name comparison alone cannot separate the rollover from the root: they
+    // share a subject DN and neither carries a key identifier. Only the
+    // signature check keeps the rollover in the chain and the root out of it.
+    const fake = fakeCryptoApi({
+      [storeKey('LocalMachine', 'My')]: [{ der: fixture.rolloverLeafDer, hasPrivateKey: true }],
+      [storeKey('LocalMachine', 'CA')]: [{ der: fixture.rolloverDer, hasPrivateKey: false }],
+      [storeKey('LocalMachine', 'Root')]: [{ der: fixture.rootDer, hasPrivateKey: false }],
+      [storeKey('CurrentUser', 'CA')]: [],
+      [storeKey('CurrentUser', 'Root')]: [],
+    })
+
+    exportCertificateFromWindowsStore(
+      selector({ dnsName: fixture.rolloverLeafDnsName }),
+      { ...WINDOWS, cryptoApi: fake.api },
+    )
+
+    const bundle = fake.exported[0].map((certificate) => certificate.der)
+    expect(bundle).toEqual([fixture.rolloverLeafDer, fixture.rolloverDer])
+    expect(bundle).not.toContainEqual(fixture.rootDer)
+  })
+
+  it('ignores a same-named certificate that did not sign the leaf', () => {
+    // The root shares the rollover's subject DN, so a name-only issuer search
+    // can pick it; it never signed this leaf and must not end up in the chain.
+    const warnings: string[] = []
+    const fake = fakeCryptoApi({
+      [storeKey('LocalMachine', 'My')]: [{ der: fixture.rolloverLeafDer, hasPrivateKey: true }],
+      [storeKey('LocalMachine', 'CA')]: [],
+      [storeKey('LocalMachine', 'Root')]: [{ der: fixture.rootDer, hasPrivateKey: false }],
+      [storeKey('CurrentUser', 'CA')]: [],
+      [storeKey('CurrentUser', 'Root')]: [],
+    })
+
+    exportCertificateFromWindowsStore(
+      selector({ dnsName: fixture.rolloverLeafDnsName }),
+      { ...WINDOWS, cryptoApi: fake.api, warn: (message) => warnings.push(message) },
+    )
+
+    expect(fake.exported[0].map((certificate) => certificate.der)).toEqual([fixture.rolloverLeafDer])
+    expect(warnings.some((message) => message.includes('Could not read the issuing chain'))).toBe(true)
+  })
+
   it('frees every handle it opened, including the chain containers', () => {
     const fake = fakeCryptoApi(populatedStores())
 

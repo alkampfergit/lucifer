@@ -87,16 +87,31 @@ generated per start. Nothing touches disk, and no selector value is ever
 interpolated into a script or a command line.
 
 Because the matching runs on parsed certificates rather than on a shell's
-string comparison, it is covered by unit tests on every platform, and the
-Windows CI job additionally boots the real listener from a certificate planted
-in `Cert:\CurrentUser\My`.
+string comparison, it is covered by unit tests on every platform. The Windows
+CI job additionally boots the real listener from two certificates planted in
+`Cert:\CurrentUser\My`: a self-signed one, and a leaf under a planted
+`root → intermediate → leaf` chain whose issuers are left in the containers as
+public-only copies. The second handshake is validated by a client that trusts
+only the root, so it passes only if the intermediate really was exported and
+sent.
 
 Intermediates are looked for in `CA` and `Root` under both `LocalMachine` and
-`CurrentUser`. The self-signed root is deliberately left out of the bundle: a
-client has to trust it locally anyway and gains nothing from being sent a copy.
-If the chain cannot be built the leaf is served on its own and a warning is
-logged, rather than the whole startup failing. A self-signed leaf skips the
-chain search entirely.
+`CurrentUser`. A candidate is accepted as the issuer only when its signature
+over the certificate verifies, not merely when the names line up — a CA key
+rollover reissues the same subject DN under a new key, and a name-only match
+would put the wrong certificate in the chain or mistake a self-issued rollover
+for the root.
+
+The staged bundle therefore holds certificates that have no private key, which
+is why the export does not set `REPORT_NO_PRIVATE_KEY`. The leaf's own key is
+checked before the export, and `REPORT_NOT_ABLE_TO_EXPORT_PRIVATE_KEY` still
+turns a key the provider refuses to release into a startup error.
+
+The self-signed root is deliberately left out of the bundle: a client has to
+trust it locally anyway and gains nothing from being sent a copy. If the chain
+cannot be built the leaf is served on its own and a warning is logged, rather
+than the whole startup failing. A self-signed leaf skips the chain search
+entirely.
 
 Set exactly one of:
 

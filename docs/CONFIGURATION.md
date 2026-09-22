@@ -46,9 +46,22 @@ matching contract.
 | `LUCIFER_ADMIN_SECRET` | No | Bearer token for the web approval UI (`/admin/approvals`). See [specs/approval-channels.md](specs/approval-channels.md). |
 | `LUCIFER_ADMIN_COOKIE_KEY` | No | 64 hex characters (32 bytes) used to seal admin session cookies. Set it to manage the key yourself; otherwise Lucifer generates and stores one. A malformed value is a startup error, not a silent fallback. |
 | `LUCIFER_TLS_PASSPHRASE` | No | Passphrase for a PKCS#12 bundle or an encrypted PEM key referenced by the `tls` block. Never read from `lucifer.json`. See [specs/tls.md](specs/tls.md). |
-| `PORT` | No | Server port (default `3001`). |
+| `PORT` | No | Server port. Set by the CLI's `--port` flag, and takes precedence over `"port"` in `lucifer.json`. See [Listener port](#listener-port). |
 | `LOG_LEVEL` | No | `debug`, `info`, `warn`, `error`. Default `debug` in dev, `info` when `NODE_ENV=production`. |
 | `NODE_ENV` | No | Set to `production` for production defaults (info log level, no pretty-printing). |
+
+## Listener port
+
+The port the gateway binds is resolved once, in this order:
+
+1. `--port` on the CLI, which sets `PORT`.
+2. The `PORT` environment variable.
+3. `"port"` in `lucifer.json`.
+4. `3001`.
+
+The same resolved port is what `proxy-config.json` mappings are checked
+against for collisions, so a mapping can never quietly claim the port the
+gateway itself is about to bind.
 
 ## Logging
 

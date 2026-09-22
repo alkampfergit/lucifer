@@ -155,6 +155,9 @@ describe('loadTlsConfig', () => {
     ['an over-long dns name', { source: 'windows-store', store: { dnsName: `${'a'.repeat(60)}.`.repeat(5) } }, /must be a host name/],
     ['a malformed thumbprint', { source: 'windows-store', store: { thumbprint: 'not-hex' } }, /hex certificate thumbprint/],
     ['an unknown store location', { source: 'windows-store', store: { location: 'Machine', thumbprint: 'A'.repeat(40) } }, /"store.location" must be/],
+    ['an explicit null minVersion', { source: 'pfx', pfxFile: 'server.pfx', minVersion: null }, /"minVersion" must be/],
+    ['an explicit null store location', { source: 'windows-store', store: { location: null, thumbprint: 'A'.repeat(40) } }, /"store.location" must be/],
+    ['an explicit null store name', { source: 'windows-store', store: { name: null, thumbprint: 'A'.repeat(40) } }, /"store.name" must be/],
     ['a non-object tls block', 'yes', /expected an object/],
   ])('rejects %s', (_label, tls, expected) => {
     const dir = createConfigDir(`invalid-${String(_label).replaceAll(/\W/g, '')}`)

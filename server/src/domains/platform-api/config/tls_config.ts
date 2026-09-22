@@ -40,6 +40,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+/**
+ * Apply a default only when the key is absent. Deliberately not `??`: that
+ * also swallows an explicit `null`, so `"minVersion": null` would silently
+ * start a listener on the default rather than telling the operator the value
+ * they wrote is not a valid one.
+ */
+function whenAbsent<T>(value: unknown, fallback: T): unknown {
+  return value === undefined ? fallback : value
+}
+
 function isTlsSource(value: unknown): value is TlsSource {
   return value === 'pem' || value === 'pfx' || value === 'windows-store'
 }
@@ -152,12 +162,12 @@ function parseStoreSelector(value: unknown, ctx: string): WindowsStoreSelector {
     throw new Error(`${ctx}: "store" must be an object.`)
   }
 
-  const location = value.location ?? DEFAULT_WINDOWS_STORE_LOCATION
+  const location = whenAbsent(value.location, DEFAULT_WINDOWS_STORE_LOCATION)
   if (!isWindowsStoreLocation(location)) {
     throw new Error(`${ctx}: "store.location" must be "LocalMachine" or "CurrentUser".`)
   }
 
-  const name = value.name ?? DEFAULT_WINDOWS_STORE_NAME
+  const name = whenAbsent(value.name, DEFAULT_WINDOWS_STORE_NAME)
   if (typeof name !== 'string' || !STORE_NAME_PATTERN.test(name)) {
     throw new Error(`${ctx}: "store.name" must be an alphanumeric store name (e.g. "My", "Root").`)
   }
@@ -175,7 +185,7 @@ function parseTlsConfig(value: unknown, configDir: string, ctx: string): TlsConf
   }
   const source = value.source
 
-  const minVersion = value.minVersion ?? DEFAULT_TLS_MIN_VERSION
+  const minVersion = whenAbsent(value.minVersion, DEFAULT_TLS_MIN_VERSION)
   if (!isTlsMinVersion(minVersion)) {
     throw new Error(`${ctx}: "minVersion" must be "TLSv1.2" or "TLSv1.3".`)
   }

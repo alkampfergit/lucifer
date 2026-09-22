@@ -117,6 +117,37 @@ describe('createApp boot scenarios', () => {
     await stop()
   })
 
+  it('reports the effective listener port, with PORT winning over lucifer.json', () => {
+    const tempDir = makeTempDir('effective-port')
+    mkdirSync(join(tempDir, 'data'), { recursive: true })
+    // PORT is what the CLI's --port flag sets, so it has to beat the file.
+    vi.stubEnv('PORT', '4300')
+
+    const configPath = join(tempDir, 'lucifer.json')
+    writeFileSync(configPath, JSON.stringify({ port: 4000, dataDir: './data' }))
+
+    const { config, gatewayConfig } = createApp({ configPath })
+
+    expect(config.port).toBe(4300)
+    expect(gatewayConfig.port).toBe(4300)
+  })
+
+  it('validates proxy port collisions against the port it will actually bind', () => {
+    const tempDir = makeTempDir('proxy-collision')
+    mkdirSync(join(tempDir, 'data'), { recursive: true })
+    vi.stubEnv('PORT', '4300')
+
+    const configPath = join(tempDir, 'lucifer.json')
+    writeFileSync(configPath, JSON.stringify({ port: 4000, dataDir: './data' }))
+    // Collides with the bound port (4300), not with the file's 4000: checking
+    // against the file would let this mapping take the gateway's own port.
+    writeFileSync(join(tempDir, 'proxy-config.json'), JSON.stringify({
+      proxies: [{ port: 4300, baseUrl: 'https://api.openai.com' }],
+    }))
+
+    expect(() => createApp({ configPath })).toThrow(/collides with the main gateway port/)
+  })
+
   it('throws on malformed lucifer.json (port as string)', () => {
     const tempDir = makeTempDir('malformed')
 
