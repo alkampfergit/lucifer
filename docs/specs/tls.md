@@ -90,7 +90,7 @@ Because the matching runs on parsed certificates rather than on a shell's
 string comparison, it is covered by unit tests on every platform. The Windows
 CI job additionally boots the real listener from two certificates planted in
 `Cert:\CurrentUser\My`: a self-signed one, and a leaf under a planted
-`root → intermediate → leaf` chain whose issuers are left in the containers as
+`root → intermediate → leaf` chain whose issuers are left in `CA` as
 public-only copies. The second handshake is validated by a client that trusts
 only the root, so it passes only if the intermediate really was exported and
 sent.
