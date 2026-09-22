@@ -57,6 +57,6 @@
 
 | Status | Count |
 |---|---|
-| `covered` | 12 |
-| `partial` | 1 |
+| `covered` | 13 |
+| `partial` | 0 |
 | `uncovered` | 0 |
