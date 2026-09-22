@@ -122,8 +122,12 @@ jobs:
             Remove-Item -Path "Cert:\CurrentUser\My\$($certificate.Thumbprint)" -Force
           }
 
+          # Both go to CA, including the root. Adding to CurrentUser\Root raises
+          # a confirmation dialog that a runner has no way to answer, and the
+          # chain walk reads CA and Root alike -- it finds the root there, sees
+          # it is self-signed and stops, which is the behaviour under test.
           Move-ToContainer $intermediate 'CA'
-          Move-ToContainer $root 'Root'
+          Move-ToContainer $root 'CA'
 
           # Only the root is handed to the test client, so the handshake can
           # only succeed if the listener sent the intermediate itself.
