@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { getArgValue } from './cli/args.js';
+import { DEFAULT_CONFIG_PATH } from './lib/config_path.js';
 import { printHelp } from './cli/print_help.js';
 import { initConfig } from './cli/init_config.js';
 import { runLog } from './cli/run_log.js';
@@ -23,7 +24,7 @@ async function main() {
   }
 
   if (args[0] === 'pair') {
-    await runPair(getArgValue(args, '--config') ?? './config/lucifer.json');
+    await runPair(getArgValue(args, '--config') ?? DEFAULT_CONFIG_PATH);
     process.exit(0);
   }
 
@@ -49,7 +50,7 @@ async function main() {
   }
 
   await runServer({
-    configPath: getArgValue(args, '--config') ?? './config/lucifer.json',
+    configPath: getArgValue(args, '--config') ?? DEFAULT_CONFIG_PATH,
     port: getArgValue(args, '--port'),
     autoApprove: args.includes('--auto-approve'),
   });

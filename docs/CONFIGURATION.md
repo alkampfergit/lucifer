@@ -224,13 +224,16 @@ HTTPS. Omit it and the listener stays plain HTTP, as before.
 
 | `source` | Fields | Notes |
 |---|---|---|
-| `pem` | `certFile`, `keyFile`, optional `caFile` | Certificate and key as separate PEM files. |
+| `pem` | `certFile`, `keyFile`, optional `caFile` | Certificate and key as separate PEM files. `caFile` holds the intermediates and is appended to `certFile` so clients receive the full chain. |
 | `pfx` | `pfxFile` | PKCS#12 bundle (`.pfx` / `.p12`). Unlock with `LUCIFER_TLS_PASSPHRASE`. |
-| `windows-store` | exactly one of `store.dnsName` / `store.thumbprint` / `store.subject`, optional `store.location` / `store.name` | Windows only. `dnsName` names the certificate by host name (`"pippo.codewrecks.com"`). The private key must be exportable; `LocalMachine` usually needs elevation. |
+| `windows-store` | exactly one of `store.dnsName` / `store.thumbprint` / `store.subject`, optional `store.location` / `store.name` | Windows only. `dnsName` names the certificate by host name (`"pippo.codewrecks.com"`); `thumbprint` takes the SHA-1 (40 hex) or SHA-256 (64 hex) fingerprint; `subject` is a literal substring of the subject DN. The issuing intermediates are read from the store alongside the certificate. The private key must be exportable; `LocalMachine` usually needs elevation. |
 
 Optional `minVersion` is `TLSv1.2` (default) or `TLSv1.3`. Certificate paths
 are resolved relative to the config file's directory. Certificates are read
 once at startup, so rotation requires a restart, and a bad certificate fails
 startup rather than silently downgrading to HTTP. The port serves HTTPS only
-— there is no companion plain-HTTP port. Full contract:
-[specs/tls.md](specs/tls.md).
+— there is no companion plain-HTTP port.
+
+The block is read from the file named by `--config`. `npm run dev` and
+`npm start` take no such flag and fall back to `./config/lucifer.json` when it
+exists. Full contract: [specs/tls.md](specs/tls.md).

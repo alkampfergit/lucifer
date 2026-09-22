@@ -707,6 +707,25 @@ already owns the listener and the app bootstrap), with three sources: `pem`,
   passed as environment variables, not interpolated into the script text, and
   PowerShell is spawned by its absolute path under `%SystemRoot%` rather than
   resolved through `PATH`.
+- **The issuing intermediates are read out of the store too.** Exporting the
+  leaf on its own emits no chain, and a client that does not already hold the
+  intermediates cannot build a path to the root. `X509Chain` walks the store's
+  CA containers; the self-signed root is left out, because a client has to
+  trust it locally anyway. A chain that cannot be built is a warning, not a
+  startup failure — the leaf is still served.
+- **A `thumbprint` is matched by length.** 40 hex characters are compared with
+  `X509Certificate2.Thumbprint` (SHA-1, the value certmgr shows); 64 are
+  compared with a SHA-256 fingerprint computed from the DER bytes. Accepting a
+  SHA-256 value and then comparing it against a SHA-1 property would have
+  passed validation and matched nothing.
+- **`subject` is matched literally**, with `String.IndexOf` and an ordinal
+  case-insensitive comparison, not with `-like`. `-like` reads `*`, `?` and
+  `[` in an operator-supplied string as pattern syntax, which could select an
+  unrelated certificate and therefore an unrelated private key.
+- **A configured `caFile` is appended to `cert`, not passed to `ca`.** On a
+  server, Node's `ca` option is the trust store used to verify *client*
+  certificates; it is never transmitted. Intermediates only reach a client as
+  part of `cert`.
 - **The certificate is selectable by the host name it was issued for**
   (`"dnsName": "pippo.codewrecks.com"`), alongside `thumbprint` and `subject`.
   That is the name an operator reads off certmgr, and the only one they
@@ -749,6 +768,9 @@ already owns the listener and the app bootstrap), with three sources: `pem`,
   Rejected: `subject` is a free-form operator string, and quoting rules in
   PowerShell are a poor place to be the only line of defence. Environment
   variables remove the question.
+- **Passing `caFile` to Node's `ca` option.** Rejected as simply wrong for a
+  server: it configures client-certificate verification, so the configured
+  chain would have been read, validated, and then never sent.
 - **Reading the certificate store with `win-ca` or another native module.**
   Rejected: `win-ca` exposes CA roots only, with no private key, and adding a
   native dependency for one platform-specific path is a heavier commitment

@@ -23,9 +23,9 @@ entries, and `toolsPath`.
     "minVersion": "TLSv1.2",         // "TLSv1.2" (default) | "TLSv1.3"
 
     // source: "pem"
-    "certFile": "certs/server.crt",  // leaf, plus any chain certificates
+    "certFile": "certs/server.crt",  // leaf certificate
     "keyFile":  "certs/server.key",
-    "caFile":   "certs/chain.pem",   // optional extra CA bundle
+    "caFile":   "certs/chain.pem",   // optional intermediates, appended to certFile
 
     // source: "pfx"
     "pfxFile":  "certs/server.pfx",  // PKCS#12 (.pfx / .p12)
@@ -55,8 +55,14 @@ committed or mounted read-only next to them.
 
 ### `pem`
 
-`certFile` and `keyFile` are required, `caFile` is optional. Both files are
-read once at startup.
+`certFile` and `keyFile` are required, `caFile` is optional. All are read once
+at startup.
+
+`caFile` holds the intermediate certificates between the leaf and the root. Its
+contents are **appended to `certFile`** so they are sent to clients during the
+handshake. It is not passed to Node's `ca` option: on a server that option is
+the trust store used to verify *client* certificates and is never transmitted,
+so a chain configured there would never reach a browser.
 
 ### `pfx`
 
@@ -68,18 +74,24 @@ key, and any chain certificates. Unlock it with `LUCIFER_TLS_PASSPHRASE`.
 Windows only. Node has no binding to the Windows certificate store, so
 Lucifer shells out to PowerShell (by absolute path under `%SystemRoot%`, never
 via `PATH`), locates the certificate under `Cert:\<location>\<name>`, and
-exports it as a PKCS#12 blob protected by a single-use password generated per
-start. The bundle is returned base64 on stdout and never written to disk.
-Selector values are passed as environment variables, not interpolated into the
-script, so a crafted `subject` cannot inject PowerShell.
+reads it — together with the intermediates that issued it, via `X509Chain` —
+and returns the pair as a PKCS#12 blob protected by a single-use password
+generated per start. The bundle comes back base64 on stdout and never touches
+disk. Selector values are passed as environment variables, not interpolated
+into the script, so a crafted `subject` cannot inject PowerShell.
+
+The self-signed root is deliberately left out of the bundle: a client has to
+trust it locally anyway and gains nothing from being sent a copy. If the chain
+cannot be built the leaf is served on its own and PowerShell emits a warning,
+rather than the whole startup failing.
 
 Set exactly one of:
 
 | Selector | Matches |
 |---|---|
 | `dnsName` | A host name the certificate was issued for, e.g. `pippo.codewrecks.com`. Compared against the certificate's DNS names (its subject alternative names, falling back to the simple subject name when it has none) — the names certmgr shows under *Issued To*. Case-insensitive; a wildcard certificate is named as it appears, `*.codewrecks.com`. Surrounding whitespace is trimmed. |
-| `thumbprint` | The thumbprint, exactly. Spaces and colons are stripped and case is ignored, so a value pasted from certmgr works unchanged. |
-| `subject` | A substring of the certificate's full subject DN, e.g. `O=Codewrecks`. |
+| `thumbprint` | The fingerprint, exactly. 40 hex characters are matched against the SHA-1 thumbprint certmgr shows; 64 hex characters are matched against a SHA-256 fingerprint computed from the certificate. Spaces and colons are stripped and case is ignored, so a value pasted from certmgr works unchanged. |
+| `subject` | A **literal** case-insensitive substring of the certificate's full subject DN, e.g. `O=Codewrecks`. `*`, `?` and `[` are matched as themselves, not as wildcards. |
 
 Matching nothing is an error. When a `dnsName` or `subject` matches more than
 one certificate — the usual case after a renewal leaves the superseded
@@ -90,16 +102,20 @@ than one, startup fails and asks for a `thumbprint`.
 Requirements and limits:
 
 - The private key must be marked **exportable**. Non-exportable keys, and
-  CNG/HSM-held keys whose provider refuses export, fail with the underlying
-  PowerShell error.
+  CNG/HSM-held keys whose provider refuses to release the key, fail with the
+  underlying PowerShell error.
 - `LocalMachine` stores normally require an elevated process.
 - On any non-Windows platform, `"source": "windows-store"` fails at startup
   with a message pointing at `pem`/`pfx`, rather than a confusing spawn error.
 
 ## Behaviour
 
-- Certificate material is read (or exported) **once at startup**. Rotating a
-  certificate requires a restart.
+- Certificate material is read **once at startup**. Rotating a certificate
+  requires a restart.
+- The `tls` block is read from the config file named by `--config`. The
+  flagless entrypoints (`npm run dev`, `npm start`) fall back to
+  `./config/lucifer.json` when that file exists, so they serve HTTPS on the
+  same config the CLI would use.
 - A malformed `tls` block, a missing certificate file, or a failed Windows
   store export **fails startup** with an error naming the offending field or
   path. The server never falls back to plain HTTP.
@@ -125,5 +141,6 @@ Deliberately not in this version:
 |---|---|
 | `tls` block validation and path resolution | `server/src/domains/platform-api/config/tls_config.ts` |
 | Certificate material → `https.createServer` options | `server/src/domains/platform-api/service/resolve_tls_options.ts` |
-| Windows certificate store export | `server/src/domains/platform-api/service/windows_certificate_store.ts` |
+| Windows certificate store read | `server/src/domains/platform-api/service/windows_certificate_store.ts` |
 | Listener construction | `server/src/domains/platform-api/service/create_http_server.ts` |
+| Default config path for the flagless entrypoints | `server/src/lib/config_path.ts` |

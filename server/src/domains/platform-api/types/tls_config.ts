@@ -11,7 +11,8 @@ export type WindowsStoreLocation = 'LocalMachine' | 'CurrentUser'
  * Selects one certificate inside the Windows certificate store. Exactly one
  * of `thumbprint` / `dnsName` / `subject` must be set:
  *
- * - `thumbprint` is an exact match on the certificate thumbprint.
+ * - `thumbprint` is an exact match on the certificate fingerprint, either the
+ *   SHA-1 thumbprint certmgr shows (40 hex) or a SHA-256 one (64 hex).
  * - `dnsName` matches a host name the certificate was issued for
  *   (`pippo.codewrecks.com`), taken from its DNS names.
  * - `subject` is a substring match on the certificate's subject DN.
@@ -35,7 +36,7 @@ export interface TlsConfig {
   certFile?: string
   /** source: 'pem' — private key. */
   keyFile?: string
-  /** source: 'pem' — optional additional CA / chain bundle. */
+  /** source: 'pem' — optional intermediate chain, appended to `certFile`. */
   caFile?: string
   /** source: 'pfx' — PKCS#12 bundle (.pfx / .p12). */
   pfxFile?: string
@@ -50,9 +51,9 @@ export interface TlsConfig {
  */
 export interface ResolvedTlsOptions {
   minVersion: TlsMinVersion
+  /** Leaf certificate, with any configured chain bundle appended to it. */
   cert?: Buffer
   key?: Buffer
-  ca?: Buffer
   pfx?: Buffer
   passphrase?: string
 }
