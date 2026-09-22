@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { dirname, join, resolve as resolvePath } from 'node:path';
+import { dirname, join, parse, resolve as resolvePath } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { AliasesConfig } from '../types/command_types.js';
 import { findAliasArgsBypass, resolveAlias } from './resolve_alias.js';
@@ -7,6 +7,16 @@ import { findAliasArgsBypass, resolveAlias } from './resolve_alias.js';
 /** Base directory for fixture paths so tests avoid hard-coded /tmp literals. */
 const fixtureDir = join(tmpdir(), 'scripts');
 const fixtureBuildSh = join(fixtureDir, 'build.sh');
+
+/**
+ * An already-absolute fixture path, rooted where `resolveAlias` itself
+ * resolves from (`process.cwd()`), so that "absolute paths are preserved"
+ * means the same thing on both platforms. A bare `/opt/bin/hello` is only
+ * drive-relative on Windows and `path.resolve` legitimately rewrites it to
+ * `<current drive>:\opt\bin\hello`.
+ */
+const cwdRoot = parse(process.cwd()).root;
+const fixtureHelloBin = join(cwdRoot, 'opt', 'bin', 'hello');
 
 describe('resolveAlias', () => {
   it('returns null when aliases is undefined', () => {
@@ -37,15 +47,15 @@ describe('resolveAlias', () => {
 
   it('resolves an elf alias to a direct exec with parent dir as cwd', () => {
     const aliases: AliasesConfig = {
-      hello: { path: '/opt/bin/hello', type: 'elf' },
+      hello: { path: fixtureHelloBin, type: 'elf' },
     };
     const resolved = resolveAlias('hello', aliases);
     expect(resolved).not.toBeNull();
-    expect(resolved?.path).toBe('/opt/bin/hello');
+    expect(resolved?.path).toBe(fixtureHelloBin);
     expect(resolved?.type).toBe('elf');
-    expect(resolved?.spawnCommand).toBe('/opt/bin/hello');
+    expect(resolved?.spawnCommand).toBe(fixtureHelloBin);
     expect(resolved?.spawnArgs).toEqual([]);
-    expect(resolved?.cwd).toBe('/opt/bin');
+    expect(resolved?.cwd).toBe(dirname(fixtureHelloBin));
   });
 
   it('resolves a relative alias path against the current working directory', () => {

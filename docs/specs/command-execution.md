@@ -184,6 +184,26 @@ alias `path` values. `toolsPath` is purely additive to the search path — it
 does not change command-rule matching, approval flow, or the shell-free
 execution guarantee for aliases.
 
+## Child process lifecycle
+
+A command that exceeds `timeoutMs`, or whose caller disconnects, is killed
+together with everything it spawned. The mechanism is platform-specific
+because the two operating systems offer nothing in common here:
+
+| | Process grouping | Tree kill |
+|---|---|---|
+| Linux / macOS | child spawned `detached`, giving it its own process group | `process.kill(-pid, 'SIGKILL')` on the group |
+| Windows | none — the child stays in the parent's console | `%SystemRoot%\System32\taskkill.exe /pid <pid> /T /F` |
+
+`detached` is deliberately **not** set on Windows. libuv maps it to the
+`DETACHED_PROCESS` creation flag, which leaves the child without a console:
+a shell builtin still writes to the inherited pipe, but any external
+executable the shell launches gets a fresh console of its own and its output
+never reaches Lucifer — commands returned exit code `0` with empty `stdout`.
+It also does not help with killing, because negative PIDs have no meaning on
+Windows. `taskkill` is invoked by absolute path rather than through `PATH`,
+so the search order cannot decide which binary terminates the tree.
+
 ## Notes
 
 - The endpoint is synchronous. There is no async / `?sync=true` /
