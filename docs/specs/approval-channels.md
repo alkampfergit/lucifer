@@ -37,15 +37,23 @@ On by default; disable with `"adminCookieSession": { "enabled": false }` in
     session table, and sessions survive a restart.
   - `lucifer_admin_csrf` — same lifetime and flags but **not** `HttpOnly`, so
     the page can read it.
-  - `Secure` is added only when the request arrived over https (directly or via
-    `X-Forwarded-Proto`), so plain `http://localhost:3001` still receives the
-    cookies.
+  - `Secure` is added only when Express reports the request as secure
+    (`req.secure`), so plain `http://localhost:3001` still receives the cookies.
+    `X-Forwarded-Proto` is honoured only when the operator has set `trustProxy`
+    in `lucifer.json`; untrusted, a client could otherwise claim TLS and be
+    handed a `Secure` cookie its browser can never send back.
 - `DELETE /api/v1/admin/approvals/session` signs out by expiring both cookies.
 - **Lifetime**: 30 days, absolute. `exp` is sealed in the cookie and never
   extended; cookie `Max-Age` matches, so browser and server expire together.
 - **Payload**: a session assertion, never the admin secret. A leaked sealing key
   therefore yields a forgeable, expiring session rather than a reusable bearer
   credential — and there is no scrypt verification per request.
+- **Claim validation**: opening a cookie checks more than the GCM tag. `iat` and
+  `exp` must be safe integers, `iat` may not be more than 60 seconds in the
+  future (clock-skew tolerance), `exp` must be in the future, and `exp - iat`
+  may not exceed the configured TTL. Without the cap, anything able to seal a
+  payload could mint a practically non-expiring session, which would void the
+  "compromise yields only an expiring session" guarantee above.
 - **Authentication order**: an `Authorization` header is treated as a deliberate
   bearer attempt and decided on its own, so curl/CLI behaviour and the per-IP
   lockout are unchanged. The cookie is consulted only when no bearer header was
@@ -62,8 +70,17 @@ On by default; disable with `"adminCookieSession": { "enabled": false }` in
   are not CSRF-gated; the SSE stream keeps its existing short-lived ticket, and
   the ticket-minting `POST` is gated.
 - **Sealing key**: `LUCIFER_ADMIN_COOKIE_KEY` → OS keychain (optional
-  `@napi-rs/keyring`) → `server_secrets` table in `lucifer.db`. See
+  `@napi-rs/keyring`, pinned to the Secret Service on Linux so a host without
+  one falls through rather than landing in the volatile kernel keyring) →
+  `server_secrets` table in `lucifer.db`, whose file and WAL sidecars are set to
+  mode `0600`. A malformed `LUCIFER_ADMIN_COOKIE_KEY` is a startup error; every
+  other resolution failure degrades to the next step. See
   [../CONFIGURATION.md](../CONFIGURATION.md#admin-cookie-sessions).
+- **Auto-login probe**: the page probes `/pending` on load only when the
+  readable `lucifer_admin_csrf` companion cookie is present. A blind probe would
+  spend a real login attempt per visit and trip the per-IP lockout after five
+  reloads made before signing in. A probe that fails clears the stale marker so
+  reloading does not keep retrying.
 
 ### Auto-Approve
 

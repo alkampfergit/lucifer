@@ -13,7 +13,7 @@ resolved relative to the config file's own directory unless absolute.
 
 | File | Scope | Spec |
 |---|---|---|
-| `lucifer.json` | Server settings: port, timeouts, limits, `dataDir`, `logFile`, aliases, admin cookie sessions, paired Telegram chat ID | [specs/operator-workflows.md](specs/operator-workflows.md) |
+| `lucifer.json` | Server settings: port, timeouts, limits, `dataDir`, `logFile`, aliases, admin cookie sessions, proxy trust, paired Telegram chat ID | [specs/operator-workflows.md](specs/operator-workflows.md) |
 | `api-keys.json` | Hashed API keys + optional per-key IP allowlists | [specs/command-execution.md](specs/command-execution.md) |
 | `command-rules.json` | Command policy: `always_approve` / `always_deny` / `manual_approve` rules, matched top-to-bottom, first match wins | [specs/command-execution.md](specs/command-execution.md) |
 | `proxy-config.json` | Optional transparent HTTP proxy listeners. File missing → feature disabled. | [specs/transparent-proxy.md](specs/transparent-proxy.md) |
@@ -136,15 +136,45 @@ Resolved once at startup, first hit wins:
 2. The OS keychain — Windows Credential Manager, macOS Keychain, or the Linux
    Secret Service — via the optional `@napi-rs/keyring` native module. It is an
    `optionalDependency`; a machine without it, or without a running Secret
-   Service, simply falls through.
+   Service, simply falls through. On Linux the entry is pinned to the Secret
+   Service: the library's default would otherwise fall back to the kernel
+   keyring, which lives in RAM and would drop the key — and every outstanding
+   session — at the next reboot.
 3. The `server_secrets` table in `lucifer.db`, created on first use.
 
 Step 3 stores the key beside the data it protects, so `lucifer.db` becomes the
-trust boundary for admin sessions. Lucifer sets the database file to mode
-`0600` on open. Use step 1 or 2 when you need the key outside that boundary.
+trust boundary for admin sessions. Lucifer sets the database file **and its
+`-wal` / `-shm` sidecars** to mode `0600` on open — the sidecars matter because
+in WAL mode every write reaches them first. Use step 1 or 2 when you need the
+key outside that boundary.
 
 Losing or rotating the key invalidates every outstanding session; operators and
 users just log in again.
+
+### Running behind a TLS-terminating proxy
+
+Session cookies are marked `Secure` only when Express reports the request as
+secure. Lucifer does **not** read `X-Forwarded-Proto` on its own: any client
+could then claim TLS and be handed a `Secure` cookie its plain-HTTP browser can
+never send back. If a reverse proxy you control terminates TLS in front of
+Lucifer, tell Express to trust it:
+
+```json
+{
+  "trustProxy": 1
+}
+```
+
+`trustProxy` is passed verbatim to Express's [`trust proxy`][trust-proxy]
+setting, so a hop count (`1`), a boolean, a named range (`"loopback"`), or an
+explicit list of addresses/subnets all work. Leave it unset when Lucifer is
+reached directly — that is the safe default, and it is what keeps forwarding
+headers unspoofable.
+
+Without it behind an HTTPS proxy the cookies still work; they just lack the
+`Secure` flag. `SameSite=Strict` and `HttpOnly` apply either way.
+
+[trust-proxy]: https://expressjs.com/en/guide/behind-proxies.html
 
 Full contract: [specs/approval-channels.md](specs/approval-channels.md).
 

@@ -185,8 +185,36 @@ describe('register_approval_routes — cookie sessions', () => {
       expect(setCookie(res, SESSION_COOKIE)).not.toContain('Secure');
     });
 
-    it('postSession_forwardedAsHttps_marksBothCookiesSecure', async () => {
+    it('postSession_forwardedAsHttpsByAnUntrustedPeer_doesNotMarkTheCookiesSecure', async () => {
+      // `trust proxy` is off on this app, so the header is a client's claim and
+      // nothing more. Honouring it would hand a plain-HTTP browser a `Secure`
+      // cookie it can never send back — a session that silently never works.
       const res = await request(app)
+        .post('/api/v1/admin/approvals/session')
+        .set('Authorization', `Bearer ${ADMIN_SECRET}`)
+        .set('X-Forwarded-Proto', 'https')
+        .expect(200);
+
+      expect(setCookie(res, SESSION_COOKIE)).not.toContain('Secure');
+      expect(setCookie(res, CSRF_COOKIE)).not.toContain('Secure');
+    });
+
+    it('postSession_forwardedAsHttpsThroughATrustedProxy_marksBothCookiesSecure', async () => {
+      const proxied = express();
+      // What `trustProxy` in lucifer.json configures for the real app.
+      proxied.set('trust proxy', 1);
+      proxied.use(express.json());
+      registerApprovalRoutes({
+        router: proxied,
+        adminSecretHash: ADMIN_HASH,
+        adminSecretSalt: ADMIN_SALT,
+        webChannel,
+        approvalStore: createApprovalStore(db),
+        auditLog: createAuditLog(db),
+        adminSession: sealer,
+      });
+
+      const res = await request(proxied)
         .post('/api/v1/admin/approvals/session')
         .set('Authorization', `Bearer ${ADMIN_SECRET}`)
         .set('X-Forwarded-Proto', 'https')

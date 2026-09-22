@@ -15,6 +15,21 @@ const KEY_BYTES = 32;
 /** Where the key that is actually in use came from. */
 export type AdminSessionKeySource = 'env' | 'keychain' | 'database';
 
+/**
+ * The operator set `LUCIFER_ADMIN_COOKIE_KEY` to something unusable.
+ *
+ * Distinct from every other failure in this module so the composition root can
+ * treat it as fatal: the other steps degrade to the next fallback on purpose,
+ * but a malformed operator-managed key is a configuration mistake that must not
+ * be papered over by silently disabling cookie sessions.
+ */
+export class AdminSessionKeyConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AdminSessionKeyConfigError';
+  }
+}
+
 export interface AdminSessionKeyResolution {
   key: Buffer;
   source: AdminSessionKeySource;
@@ -26,6 +41,8 @@ export interface AdminSessionKeyOptions {
    * Returning `undefined` models a machine without the native module installed.
    */
   loadKeyringModule?: () => KeyringModule | undefined;
+  /** Test seam: pretend to run on another platform when picking the keychain store. */
+  platform?: NodeJS.Platform;
 }
 
 /** The slice of `@napi-rs/keyring`'s `Entry` this module uses. */
@@ -34,9 +51,31 @@ export interface KeyringEntry {
   setPassword(password: string): void;
 }
 
+/**
+ * The slice of `@napi-rs/keyring`'s `EntryOptions` this module uses.
+ * Linux-only; the module ignores it on other platforms.
+ */
+export interface KeyringEntryOptions {
+  linux?: { store?: 'secret-service' | 'keyutils' };
+}
+
 /** The slice of `@napi-rs/keyring` this module uses. */
 export interface KeyringModule {
-  Entry: new (service: string, account: string) => KeyringEntry;
+  Entry: new (service: string, account: string, options?: KeyringEntryOptions) => KeyringEntry;
+}
+
+/**
+ * Pin Linux to the Secret Service.
+ *
+ * `@napi-rs/keyring`'s default Linux selection falls back from Secret Service
+ * to the kernel keyutils store, which lives in RAM and is wiped on reboot. A
+ * D-Bus-less host would therefore "succeed" here and silently invalidate every
+ * outstanding session at the next restart, never reaching the durable database
+ * fallback. Requiring the store makes its absence throw, which is what the
+ * fallback chain is built to handle.
+ */
+export function keychainEntryOptions(platform: NodeJS.Platform = process.platform): KeyringEntryOptions | undefined {
+  return platform === 'linux' ? { linux: { store: 'secret-service' } } : undefined;
 }
 
 const require = createRequire(import.meta.url);
@@ -72,7 +111,7 @@ function readFromEnv(): Buffer | undefined {
   if (!key) {
     // Loud, because the operator clearly meant to manage the key themselves and
     // silently falling through would seal sessions with a key they do not hold.
-    throw new Error(
+    throw new AdminSessionKeyConfigError(
       `LUCIFER_ADMIN_COOKIE_KEY must be ${KEY_BYTES * 2} hex characters (${KEY_BYTES} bytes). ` +
       'Generate one with: node -e "console.log(require(\'node:crypto\').randomBytes(32).toString(\'hex\'))"',
     );
@@ -80,7 +119,10 @@ function readFromEnv(): Buffer | undefined {
   return key;
 }
 
-function readOrCreateInKeychain(load: () => KeyringModule | undefined): Buffer | undefined {
+function readOrCreateInKeychain(
+  load: () => KeyringModule | undefined,
+  entryOptions: KeyringEntryOptions | undefined,
+): Buffer | undefined {
   const keyring = load();
   if (!keyring) {
     log.info('OS keychain module unavailable; admin session key will use the database');
@@ -88,7 +130,7 @@ function readOrCreateInKeychain(load: () => KeyringModule | undefined): Buffer |
   }
 
   try {
-    const entry = new keyring.Entry(KEYCHAIN_SERVICE, SECRET_NAME);
+    const entry = new keyring.Entry(KEYCHAIN_SERVICE, SECRET_NAME, entryOptions);
     const existing = entry.getPassword();
     if (existing) {
       const key = parseHexKey(existing);
@@ -133,7 +175,9 @@ function readOrCreateInDatabase(db: Database.Database): Buffer {
  * Resolution order, first hit wins:
  * 1. `LUCIFER_ADMIN_COOKIE_KEY` — operator-managed, 64 hex characters.
  * 2. OS keychain (Windows Credential Manager / macOS Keychain / Linux Secret
- *    Service) via the optional `@napi-rs/keyring` native module.
+ *    Service) via the optional `@napi-rs/keyring` native module. On Linux the
+ *    entry is pinned to the Secret Service so a host without one falls through
+ *    to step 3 instead of landing in the volatile kernel keyring.
  * 3. The `server_secrets` table in `lucifer.db`.
  *
  * Step 3 stores the key beside the data it protects, which makes `lucifer.db`
@@ -141,8 +185,8 @@ function readOrCreateInDatabase(db: Database.Database): Buffer {
  * on a headless box, and the alternative (no session cookie at all) is what the
  * operator is trying to avoid.
  *
- * Throws only when `LUCIFER_ADMIN_COOKIE_KEY` is set but unusable; every other
- * failure degrades to the next step.
+ * Throws `AdminSessionKeyConfigError` only when `LUCIFER_ADMIN_COOKIE_KEY` is
+ * set but unusable; every other failure degrades to the next step.
  */
 export function resolveAdminSessionKey(
   db: Database.Database,
@@ -154,7 +198,10 @@ export function resolveAdminSessionKey(
     return { key: fromEnv, source: 'env' };
   }
 
-  const fromKeychain = readOrCreateInKeychain(options.loadKeyringModule ?? loadKeyring);
+  const fromKeychain = readOrCreateInKeychain(
+    options.loadKeyringModule ?? loadKeyring,
+    keychainEntryOptions(options.platform),
+  );
   if (fromKeychain) {
     log.info('Admin session key loaded from the OS keychain');
     return { key: fromKeychain, source: 'keychain' };

@@ -39,6 +39,17 @@ function isToolsPath(value: unknown): boolean {
   return Array.isArray(value) && value.every((p) => typeof p === 'string' && p.length > 0);
 }
 
+/**
+ * Express accepts a boolean, a hop count, a comma-separated string, or a list
+ * of addresses/subnets for `trust proxy`. Anything else would be silently
+ * coerced by Express, so reject it at the boundary instead.
+ */
+function isTrustProxy(value: unknown): boolean {
+  if (typeof value === 'boolean' || typeof value === 'string') return true;
+  if (typeof value === 'number') return Number.isInteger(value) && value >= 0;
+  return Array.isArray(value) && value.every((v) => typeof v === 'string' && v.length > 0);
+}
+
 function isLuciferConfig(data: unknown): data is LuciferConfig {
   if (typeof data !== 'object' || data === null) return false;
   const d = data as Record<string, unknown>;
@@ -51,6 +62,7 @@ function isLuciferConfig(data: unknown): data is LuciferConfig {
   if (d.aliases !== undefined && !isAliasesConfig(d.aliases)) return false;
   if (d.toolsPath !== undefined && !isToolsPath(d.toolsPath)) return false;
   if (d.adminCookieSession !== undefined && !isAdminCookieSessionConfig(d.adminCookieSession)) return false;
+  if (d.trustProxy !== undefined && !isTrustProxy(d.trustProxy)) return false;
   return true;
 }
 

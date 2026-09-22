@@ -81,12 +81,18 @@ function readCookie(req: Request, name: string): string | undefined {
   return undefined;
 }
 
-/** True when the request reached us over TLS, directly or via a trusted proxy. */
+/**
+ * True when the request reached us over TLS, directly or via a trusted proxy.
+ *
+ * Deliberately `req.secure` alone: Express derives it from `X-Forwarded-Proto`
+ * only when the operator has configured `trust proxy` (see `trustProxy` in
+ * `lucifer.json`). Reading the header directly would let any client claim TLS
+ * and be handed `Secure` cookies its plain-HTTP browser can never send back —
+ * an instant lockout loop. Untrusted forwarding therefore degrades to a cookie
+ * without `Secure`, which still works; it never yields an undeliverable one.
+ */
 function isSecureRequest(req: Request): boolean {
-  if (req.secure) return true;
-  const forwarded = req.headers['x-forwarded-proto'];
-  const first = (Array.isArray(forwarded) ? forwarded[0] : forwarded)?.split(',')[0]?.trim();
-  return first === 'https';
+  return req.secure;
 }
 
 function clientIp(req: Request): string {

@@ -105,6 +105,10 @@ The feature is on by default. To require the secret every time, put this in
 
 Key storage and rotation: [`docs/CONFIGURATION.md`](../CONFIGURATION.md#admin-cookie-sessions).
 
+If a reverse proxy terminates TLS in front of Lucifer, set `trustProxy` in
+`lucifer.json` so the cookies get the `Secure` flag — see
+[Running behind a TLS-terminating proxy](../CONFIGURATION.md#running-behind-a-tls-terminating-proxy).
+
 ## Security notes
 
 - Protect the UI with TLS and network access controls when it is not local.
