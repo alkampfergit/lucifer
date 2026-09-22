@@ -13,7 +13,7 @@ resolved relative to the config file's own directory unless absolute.
 
 | File | Scope | Spec |
 |---|---|---|
-| `lucifer.json` | Server settings: port, timeouts, limits, `dataDir`, `logFile`, aliases, paired Telegram chat ID | [specs/operator-workflows.md](specs/operator-workflows.md) |
+| `lucifer.json` | Server settings: port, timeouts, limits, `dataDir`, `logFile`, aliases, admin cookie sessions, paired Telegram chat ID | [specs/operator-workflows.md](specs/operator-workflows.md) |
 | `api-keys.json` | Hashed API keys + optional per-key IP allowlists | [specs/command-execution.md](specs/command-execution.md) |
 | `command-rules.json` | Command policy: `always_approve` / `always_deny` / `manual_approve` rules, matched top-to-bottom, first match wins | [specs/command-execution.md](specs/command-execution.md) |
 | `proxy-config.json` | Optional transparent HTTP proxy listeners. File missing → feature disabled. | [specs/transparent-proxy.md](specs/transparent-proxy.md) |
@@ -44,6 +44,7 @@ matching contract.
 | `LUCIFER_TELEGRAM_TOKEN` | Yes (prod) | Telegram bot token from @BotFather. Use `skip` to disable Telegram entirely in dev. |
 | `LUCIFER_TELEGRAM_CHAT_ID` | No | Telegram chat ID. Prefer the `pair` subcommand, which writes it into `lucifer.json`. Set as env to override the config value. |
 | `LUCIFER_ADMIN_SECRET` | No | Bearer token for the web approval UI (`/admin/approvals`). See [specs/approval-channels.md](specs/approval-channels.md). |
+| `LUCIFER_ADMIN_COOKIE_KEY` | No | 64 hex characters (32 bytes) used to seal admin session cookies. Set it to manage the key yourself; otherwise Lucifer generates and stores one. A malformed value is a startup error, not a silent fallback. |
 | `PORT` | No | Server port (default `3001`). |
 | `LOG_LEVEL` | No | `debug`, `info`, `warn`, `error`. Default `debug` in dev, `info` when `NODE_ENV=production`. |
 | `NODE_ENV` | No | Set to `production` for production defaults (info log level, no pretty-printing). |
@@ -107,6 +108,45 @@ daemon's own `PATH` without spelling out a full path in `command-rules.json`
 every time. Relative entries are resolved against the config file's
 directory, same as alias `path` values. Full contract:
 [specs/command-execution.md](specs/command-execution.md#tools-path).
+
+## Admin cookie sessions
+
+The web approval UI can remember a browser instead of asking for the admin
+secret on every visit. Tick **Remember me on this device** on the login form
+and the server issues a sealed, `HttpOnly` cookie valid for **30 days,
+absolute** — the expiry is never extended by activity, so after 30 days the
+secret is required again.
+
+The feature is on by default. Turn it off in `lucifer.json`:
+
+```json
+{
+  "adminCookieSession": { "enabled": false }
+}
+```
+
+With it disabled the `/session` routes are not registered at all and admin
+auth is bearer-only, exactly as before.
+
+### Where the sealing key lives
+
+Resolved once at startup, first hit wins:
+
+1. `LUCIFER_ADMIN_COOKIE_KEY` (64 hex characters).
+2. The OS keychain — Windows Credential Manager, macOS Keychain, or the Linux
+   Secret Service — via the optional `@napi-rs/keyring` native module. It is an
+   `optionalDependency`; a machine without it, or without a running Secret
+   Service, simply falls through.
+3. The `server_secrets` table in `lucifer.db`, created on first use.
+
+Step 3 stores the key beside the data it protects, so `lucifer.db` becomes the
+trust boundary for admin sessions. Lucifer sets the database file to mode
+`0600` on open. Use step 1 or 2 when you need the key outside that boundary.
+
+Losing or rotating the key invalidates every outstanding session; operators and
+users just log in again.
+
+Full contract: [specs/approval-channels.md](specs/approval-channels.md).
 
 ## Transparent HTTP proxy
 

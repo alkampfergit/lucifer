@@ -4,9 +4,15 @@ import { randomUUID, timingSafeEqual, scryptSync } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import type { Router, Request, Response } from 'express';
 import rateLimit from 'express-rate-limit';
-import type { ApprovalMatchType, ApprovalDecision, ErrorResponse } from '../types/command_types.js';
+import type { AdminSessionAssertion, ApprovalMatchType, ApprovalDecision, ErrorResponse } from '../types/command_types.js';
 import type { ApprovalStore, AuditLog } from '../types/store_interfaces.js';
 import type { WebApprovalChannelHandle } from '../service/web_approval_channel.js';
+import {
+  ADMIN_CSRF_COOKIE,
+  ADMIN_CSRF_HEADER,
+  ADMIN_SESSION_COOKIE,
+  type AdminSessionSealer,
+} from '../service/admin_session.js';
 import { createChildLogger } from '../../../lib/logger.js';
 
 const log = createChildLogger('admin-routes');
@@ -48,8 +54,83 @@ function verifyAdminSecret(rawSecret: string, hash: string, salt: string): boole
   return timingSafeEqual(Buffer.from(computed), Buffer.from(hash));
 }
 
-function checkAdminAuth(adminSecretHash: string, adminSecretSalt: string, req: Request, res: Response): boolean {
-  const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.socket.remoteAddress ?? 'unknown';
+/** How the caller proved they are the admin on this request. */
+type AdminAuthMethod = 'bearer' | 'cookie';
+
+interface AdminAuth {
+  method: AdminAuthMethod;
+  /** Present only for `method: 'cookie'`; carries the sealed CSRF token. */
+  assertion?: AdminSessionAssertion;
+}
+
+/** Read one cookie out of the raw `Cookie` header. Express 5 has no built-in parser. */
+function readCookie(req: Request, name: string): string | undefined {
+  const header = req.headers.cookie;
+  if (!header) return undefined;
+
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() !== name) continue;
+    try {
+      return decodeURIComponent(part.slice(eq + 1).trim());
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+/** True when the request reached us over TLS, directly or via a trusted proxy. */
+function isSecureRequest(req: Request): boolean {
+  if (req.secure) return true;
+  const forwarded = req.headers['x-forwarded-proto'];
+  const first = (Array.isArray(forwarded) ? forwarded[0] : forwarded)?.split(',')[0]?.trim();
+  return first === 'https';
+}
+
+function clientIp(req: Request): string {
+  return (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.socket.remoteAddress ?? 'unknown';
+}
+
+function rejectUnauthorized(ip: string, res: Response): undefined {
+  const current = authRateLimits.get(ip) ?? { failures: 0, lockedUntil: 0 };
+  current.failures++;
+  if (current.failures >= MAX_FAILURES) {
+    current.lockedUntil = Date.now() + LOCKOUT_MS;
+    current.failures = 0;
+    log.warn({ ip }, 'Admin auth locked out after repeated failures');
+  }
+  authRateLimits.set(ip, current);
+
+  res.status(401).json({
+    code: 'UNAUTHORIZED',
+    message: 'Invalid or missing admin secret',
+    retryable: false,
+  } satisfies ErrorResponse);
+  return undefined;
+}
+
+/**
+ * Authenticate an admin request, by bearer secret or by sealed session cookie.
+ *
+ * An `Authorization` header is treated as a deliberate bearer attempt and is
+ * decided on its own: a wrong secret is a failed login even if the caller also
+ * holds a valid cookie. That keeps the per-IP lockout meaningful and leaves the
+ * CLI/curl path behaving exactly as it did before cookies existed. The cookie is
+ * consulted only when no bearer header was sent; an expired or tampered cookie
+ * falls through to the same 401 + lockout path as a bad secret.
+ *
+ * Returns `undefined` after having already written the error response.
+ */
+function checkAdminAuth(
+  adminSecretHash: string,
+  adminSecretSalt: string,
+  sealer: AdminSessionSealer | undefined,
+  req: Request,
+  res: Response,
+): AdminAuth | undefined {
+  const ip = clientIp(req);
 
   // Check lockout
   const limit = authRateLimits.get(ip);
@@ -61,33 +142,60 @@ function checkAdminAuth(adminSecretHash: string, adminSecretSalt: string, req: R
       retryable: true,
       details: `Locked out for ${retryAfter}s`,
     } satisfies ErrorResponse & { details: string });
-    return false;
+    return undefined;
   }
 
   const authHeader = req.headers.authorization;
   const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : undefined;
 
-  if (!token || !verifyAdminSecret(token, adminSecretHash, adminSecretSalt)) {
-    // Track failure
-    const current = authRateLimits.get(ip) ?? { failures: 0, lockedUntil: 0 };
-    current.failures++;
-    if (current.failures >= MAX_FAILURES) {
-      current.lockedUntil = Date.now() + LOCKOUT_MS;
-      current.failures = 0;
-      log.warn({ ip }, 'Admin auth locked out after repeated failures');
+  if (authHeader !== undefined) {
+    if (!token || !verifyAdminSecret(token, adminSecretHash, adminSecretSalt)) {
+      return rejectUnauthorized(ip, res);
     }
-    authRateLimits.set(ip, current);
+    authRateLimits.delete(ip);
+    return { method: 'bearer' };
+  }
 
-    res.status(401).json({
-      code: 'UNAUTHORIZED',
-      message: 'Invalid or missing admin secret',
+  const assertion = sealer?.open(readCookie(req, ADMIN_SESSION_COOKIE));
+  if (!assertion) {
+    return rejectUnauthorized(ip, res);
+  }
+
+  authRateLimits.delete(ip);
+  return { method: 'cookie', assertion };
+}
+
+/**
+ * Gate a state-changing route against cross-site request forgery.
+ *
+ * Only cookie-authenticated callers are checked: a bearer token is never
+ * attached by the browser automatically, so those requests are not forgeable
+ * from another origin. Cookie callers must echo the token sealed inside their
+ * own session, which a plain double-submit (token mirrored from a cookie an
+ * attacker can also set) would not catch.
+ *
+ * A CSRF failure deliberately does NOT count toward the per-IP auth lockout —
+ * it is a wiring or origin problem, not a password guess.
+ */
+function enforceCsrf(
+  sealer: AdminSessionSealer | undefined,
+  auth: AdminAuth,
+  req: Request,
+  res: Response,
+): boolean {
+  if (auth.method !== 'cookie') return true;
+
+  const header = req.headers[ADMIN_CSRF_HEADER];
+  const presented = Array.isArray(header) ? header[0] : header;
+
+  if (!sealer || !auth.assertion || !sealer.csrfMatches(auth.assertion, presented)) {
+    res.status(403).json({
+      code: 'CSRF_INVALID',
+      message: `Missing or invalid CSRF token. Send the ${ADMIN_CSRF_COOKIE} cookie value in the X-Lucifer-CSRF header.`,
       retryable: false,
     } satisfies ErrorResponse);
     return false;
   }
-
-  // Reset failures on success
-  authRateLimits.delete(ip);
   return true;
 }
 
@@ -139,10 +247,15 @@ export interface ApprovalRouteDeps {
   webChannel: WebApprovalChannelHandle;
   approvalStore: ApprovalStore;
   auditLog: AuditLog;
+  /**
+   * Seals/opens the `lucifer_admin` session cookie. Omit to run bearer-only:
+   * the `/session` routes are then not registered and cookies are ignored.
+   */
+  adminSession?: AdminSessionSealer;
 }
 
 export function registerApprovalRoutes(deps: ApprovalRouteDeps): void {
-  const { router, adminSecretHash, adminSecretSalt, webChannel, approvalStore, auditLog } = deps;
+  const { router, adminSecretHash, adminSecretSalt, webChannel, approvalStore, auditLog, adminSession } = deps;
 
   // Rate limiter middleware for admin API routes
   const adminRateLimiter = rateLimit({
@@ -172,21 +285,73 @@ export function registerApprovalRoutes(deps: ApprovalRouteDeps): void {
     res.type('html').send(approvalPageHtml);
   });
 
+  // Cookie-backed sessions. Registered only when a sealer is wired in, so a
+  // deployment that disables the feature has no session surface at all.
+  if (adminSession) {
+    const cookieBase = (req: Request) => ({
+      sameSite: 'strict' as const,
+      // `Secure` would make the cookie undeliverable over plain HTTP, which is
+      // exactly how the UI is normally reached (http://localhost:3001).
+      secure: isSecureRequest(req),
+      path: '/',
+    });
+
+    // Exchange the admin bearer secret for a sealed session cookie.
+    router.post('/api/v1/admin/approvals/session', adminRateLimiter, (req: Request, res: Response) => {
+      const auth = checkAdminAuth(adminSecretHash, adminSecretSalt, adminSession, req, res);
+      if (!auth) return;
+
+      // Minting from a cookie would turn the 30-day absolute lifetime into a
+      // sliding one, one renewal at a time. Re-authentication means the secret.
+      if (auth.method !== 'bearer') {
+        res.status(403).json({
+          code: 'BEARER_REQUIRED',
+          message: 'A session can only be created with the admin secret, not with an existing session cookie',
+          retryable: false,
+        } satisfies ErrorResponse);
+        return;
+      }
+
+      const sealed = adminSession.seal();
+      const base = cookieBase(req);
+      res.cookie(ADMIN_SESSION_COOKIE, sealed.cookie, { ...base, httpOnly: true, maxAge: sealed.maxAgeSeconds * 1000 });
+      // Readable on purpose: the page echoes it back in X-Lucifer-CSRF.
+      res.cookie(ADMIN_CSRF_COOKIE, sealed.csrf, { ...base, httpOnly: false, maxAge: sealed.maxAgeSeconds * 1000 });
+
+      log.info({ ip: clientIp(req) }, 'Admin session cookie issued');
+      res.json({ ok: true, expiresInSeconds: sealed.maxAgeSeconds });
+    });
+
+    // Sign out: drop both cookies.
+    router.delete('/api/v1/admin/approvals/session', adminRateLimiter, (req: Request, res: Response) => {
+      const auth = checkAdminAuth(adminSecretHash, adminSecretSalt, adminSession, req, res);
+      if (!auth) return;
+      if (!enforceCsrf(adminSession, auth, req, res)) return;
+
+      const base = cookieBase(req);
+      res.clearCookie(ADMIN_SESSION_COOKIE, { ...base, httpOnly: true });
+      res.clearCookie(ADMIN_CSRF_COOKIE, { ...base, httpOnly: false });
+      res.json({ ok: true });
+    });
+  }
+
   // List pending requests
   router.get('/api/v1/admin/approvals/pending', adminRateLimiter, (req: Request, res: Response) => {
-    if (!checkAdminAuth(adminSecretHash, adminSecretSalt, req, res)) return;
+    if (!checkAdminAuth(adminSecretHash, adminSecretSalt, adminSession, req, res)) return;
     res.json({ pending: webChannel.getPendingRequests() });
   });
 
   // List durable command-call history independently of transient pending requests.
   router.get('/api/v1/admin/approvals/history', adminRateLimiter, (req: Request, res: Response) => {
-    if (!checkAdminAuth(adminSecretHash, adminSecretSalt, req, res)) return;
+    if (!checkAdminAuth(adminSecretHash, adminSecretSalt, adminSession, req, res)) return;
     res.json({ history: auditLog.queryRecentRequests(20) });
   });
 
   // Exchange bearer token for one-time SSE ticket
   router.post('/api/v1/admin/approvals/stream-ticket', adminRateLimiter, (req: Request, res: Response) => {
-    if (!checkAdminAuth(adminSecretHash, adminSecretSalt, req, res)) return;
+    const auth = checkAdminAuth(adminSecretHash, adminSecretSalt, adminSession, req, res);
+    if (!auth) return;
+    if (!enforceCsrf(adminSession, auth, req, res)) return;
     const token = randomUUID();
     sseTickets.set(token, { token, createdAt: Date.now() });
     res.json({ ticket: token, ttlSeconds: TICKET_TTL_MS / 1000 });
@@ -236,7 +401,9 @@ export function registerApprovalRoutes(deps: ApprovalRouteDeps): void {
 
   // Approve or deny a request
   router.post('/api/v1/admin/approvals/:requestId/decide', adminRateLimiter, (req: Request, res: Response) => {
-    if (!checkAdminAuth(adminSecretHash, adminSecretSalt, req, res)) return;
+    const auth = checkAdminAuth(adminSecretHash, adminSecretSalt, adminSession, req, res);
+    if (!auth) return;
+    if (!enforceCsrf(adminSession, auth, req, res)) return;
 
     const requestId = Array.isArray(req.params.requestId) ? req.params.requestId[0] : req.params.requestId;
     const validated = validateDecideInput(req.body as DecideInput);

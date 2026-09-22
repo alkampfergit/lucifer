@@ -518,3 +518,95 @@ Add an optional `allowArgs: boolean` (default `false`) to `CommandAlias`.
   Rejected: silently changes the security posture of every existing alias
   config on upgrade. Opt-in keeps ADR-009's exact-match guarantee as the
   default.
+
+---
+
+## ADR-013: Cookie-backed admin sessions sealed with a server-held key
+
+**Date**: 2026-09-22
+**Status**: Accepted
+**Deciders**: alkampfergit
+
+### Context
+
+`/admin/approvals` asked for the admin secret on every visit, because the page
+held it only in a JavaScript variable and sent it as `Authorization: Bearer` on
+each call. Any reload — and a browser restart in particular — meant retyping a
+48-character secret, which pushes operators toward pasting it into a password
+manager field, a bookmark, or worse. Issue #58 asked for the secret to live in
+an encrypted cookie the server can decrypt on its own.
+
+### Decision
+
+Add an opt-in-per-login session cookie for the web approval UI, on by default
+at the deployment level (`"adminCookieSession": { "enabled": false }` in
+`lucifer.json` turns it off, which unregisters the `/session` routes entirely).
+
+- **Payload is a session assertion, not the secret.** `POST
+  /api/v1/admin/approvals/session` takes the bearer secret and returns
+  `lucifer_admin=v1.<iv>.<ciphertext>.<tag>` (base64url), an AES-256-GCM sealed
+  `{ v: 1, sub: "admin", iat, exp, csrf }`. Self-contained, so there is no
+  session table and sessions survive a restart.
+- **30 days, absolute.** `exp` is sealed at issue time and never extended;
+  cookie `Max-Age` matches, so browser and server expire together. `POST
+  /session` refuses cookie auth (`403 BEARER_REQUIRED`) precisely so the
+  lifetime cannot be slid forward one renewal at a time.
+- **Cookie flags**: `HttpOnly; SameSite=Strict; Path=/`, with `Secure` added
+  only when the request arrived over https. The companion
+  `lucifer_admin_csrf` cookie carries the same flags minus `HttpOnly`.
+- **CSRF**: cookie-authenticated state-changing routes require the
+  `lucifer_admin_csrf` value in an `X-Lucifer-CSRF` header, compared
+  `timingSafeEqual` against the `csrf` claim sealed inside the cookie. Failures
+  return `403 CSRF_INVALID` and do not count toward the per-IP auth lockout.
+- **Bearer path untouched.** An `Authorization` header is decided on its own —
+  the cookie is only consulted when no bearer header was sent — so the CLI,
+  curl, and every pre-existing test behave identically and the lockout keeps
+  counting real login failures.
+- **Key chain**: `LUCIFER_ADMIN_COOKIE_KEY` (64 hex) → OS keychain via the
+  optional `@napi-rs/keyring` → a new `server_secrets` table in `lucifer.db`.
+  The keyring is an `optionalDependency` loaded through `createRequire` in a
+  try/catch, so a missing native module or an absent Secret Service degrades
+  silently to the database.
+
+### Consequences
+
+- (+) One login per browser per 30 days instead of one per page load, with no
+  new runtime dependency (Express 5 ships `res.cookie`; the ~15-line cookie
+  parse is local).
+- (+) A leaked sealing key yields a forgeable, *expiring* session rather than a
+  reusable bearer credential, and verifying a cookie costs one AES-GCM open
+  instead of one scrypt derivation.
+- (+) The feature works headless: our `node:22-alpine` image has no D-Bus, and
+  the database fallback keeps it usable there.
+- (-) The database fallback puts the key in the same file as the data it
+  protects, so `lucifer.db` becomes the trust boundary for admin sessions.
+  Mitigated by `chmod 0600` on the database file and by documenting the env-var
+  and keychain alternatives; it is not keychain-grade, and that is the price of
+  running headless.
+- (-) Cookie auth reintroduces a CSRF surface that bearer-only auth was immune
+  to. Mitigated by `SameSite=Strict` plus the session-bound header above.
+- (-) Rotating or losing the key invalidates every outstanding session. That is
+  also the revocation mechanism — there is no per-session revocation list, by
+  design, since sessions are stateless.
+- (-) A second native dependency in the tree, albeit optional and never
+  required for `npm ci` to succeed.
+
+### Alternatives Considered
+
+- **Seal the raw admin secret in the cookie.** Rejected: the blob would be a
+  replayable bearer credential if the key leaked, could not expire
+  independently of the secret, and would cost a scrypt verification per
+  request. Same UX either way.
+- **Server-side session table in SQLite.** Rejected: it adds state, a cleanup
+  job, and a read per request, to buy per-session revocation that rotating the
+  key already approximates for a single-admin surface.
+- **File fallback (`<dataDir>/admin-session.key`, mode 0600`) instead of the
+  database.** Rejected in review: it is the same trust boundary as the database
+  in practice (same directory, same owner) while adding a second on-disk secret
+  location to document, back up, and get wrong.
+- **Keychain-only, no fallback.** Rejected: unusable in exactly the headless
+  deployments Lucifer most often runs in, which would make the feature look
+  broken rather than degraded.
+- **Plain double-submit CSRF (token mirrored from a readable cookie).**
+  Rejected: it does not survive cookie injection or session fixation. Binding
+  the token to the sealed assertion costs nothing extra and does.

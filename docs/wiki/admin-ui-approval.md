@@ -52,6 +52,9 @@ The web API requires the same credential as a bearer token:
 | Route | Purpose |
 |---|---|
 | `GET /api/v1/admin/approvals/pending` | List pending requests |
+| `GET /api/v1/admin/approvals/history` | List recent command calls |
+| `POST /api/v1/admin/approvals/session` | Exchange the secret for a session cookie |
+| `DELETE /api/v1/admin/approvals/session` | Sign out |
 | `POST /api/v1/admin/approvals/stream-ticket` | Create a one-time SSE ticket |
 | `GET /api/v1/admin/approvals/stream?ticket=...` | Receive live updates |
 | `POST /api/v1/admin/approvals/:requestId/decide` | Approve or deny a request |
@@ -75,10 +78,43 @@ A denial only needs:
 Send `Authorization: Bearer YOUR_ADMIN_SECRET` for direct API calls. The
 browser UI handles the ticket exchange and decision calls for you.
 
+## 5. Stay signed in (optional)
+
+Tick **Remember me on this device** on the login form. The server then issues
+an encrypted, `HttpOnly` cookie and the page skips the login screen on the next
+visit. Use **Sign out** in the header to drop it.
+
+- The session lasts **30 days, absolute** — activity does not extend it, so the
+  secret is required again after 30 days.
+- The cookie contains a sealed session assertion, not the admin secret, so it
+  cannot be replayed as a bearer token against the API.
+- Nothing is issued unless you tick the box; leave it unticked on a shared or
+  untrusted machine.
+- Cookie-authenticated writes must carry the `lucifer_admin_csrf` cookie value
+  in an `X-Lucifer-CSRF` header; the page does this for you. Direct API callers
+  using `Authorization: Bearer` are unaffected.
+
+The feature is on by default. To require the secret every time, put this in
+`lucifer.json`:
+
+```json
+{
+  "adminCookieSession": { "enabled": false }
+}
+```
+
+Key storage and rotation: [`docs/CONFIGURATION.md`](../CONFIGURATION.md#admin-cookie-sessions).
+
 ## Security notes
 
 - Protect the UI with TLS and network access controls when it is not local.
 - Never put the admin secret in a URL, browser bookmark, shell history, or
   source repository.
-- The admin API is bearer-authenticated and rate-limited.
+- The admin API is bearer-authenticated and rate-limited. Cookie sessions add
+  CSRF protection (`SameSite=Strict` plus a session-bound `X-Lucifer-CSRF`
+  header) because cookies, unlike bearer tokens, are attached automatically by
+  the browser.
+- A session cookie is as sensitive as a logged-in browser: anyone with access
+  to that browser profile is the admin until the cookie expires or is revoked
+  by rotating `LUCIFER_ADMIN_COOKIE_KEY`.
 - If Telegram and the Admin UI are both enabled, the first decision wins.

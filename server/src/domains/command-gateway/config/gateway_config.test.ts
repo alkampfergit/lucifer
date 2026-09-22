@@ -220,6 +220,30 @@ describe('loadGatewayConfig', () => {
     const filePath = writeConfig(dir, { toolsPath: [''] });
     expect(() => loadGatewayConfig(filePath)).toThrow('failed validation');
   });
+
+  it('leaves adminCookieSession undefined when the config omits it, so the feature stays on by default', () => {
+    const dir = createTempDir();
+    const filePath = writeConfig(dir, {});
+    expect(loadGatewayConfig(filePath).adminCookieSession).toBeUndefined();
+  });
+
+  it('reads an explicit adminCookieSession opt-out', () => {
+    const dir = createTempDir();
+    const filePath = writeConfig(dir, { adminCookieSession: { enabled: false } });
+    expect(loadGatewayConfig(filePath).adminCookieSession).toEqual({ enabled: false });
+  });
+
+  it('rejects an adminCookieSession whose enabled flag is not a boolean', () => {
+    const dir = createTempDir();
+    const filePath = writeConfig(dir, { adminCookieSession: { enabled: 'yes' } });
+    expect(() => loadGatewayConfig(filePath)).toThrow('failed validation');
+  });
+
+  it('rejects an adminCookieSession that is missing the enabled flag', () => {
+    const dir = createTempDir();
+    const filePath = writeConfig(dir, { adminCookieSession: {} });
+    expect(() => loadGatewayConfig(filePath)).toThrow('failed validation');
+  });
 });
 
 describe('getTelegramToken', () => {

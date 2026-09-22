@@ -7,6 +7,7 @@ import { createRuntimeMetadataRepository } from './domains/platform-api/reposito
 import { createHealthReportService } from './domains/platform-api/service/create_health_report.js'
 import { loadGatewayConfig } from './domains/command-gateway/config/gateway_config.js'
 import { getDatabase, closeDatabase } from './domains/command-gateway/repository/database.js'
+import { resolveAdminSessionKey } from './domains/command-gateway/repository/admin_session_key_store.js'
 import { createApprovalStore } from './domains/command-gateway/repository/approval_store.js'
 import { createAuditLog } from './domains/command-gateway/repository/audit_log.js'
 import { createApiKeyStore } from './domains/command-gateway/repository/api_key_store.js'
@@ -18,6 +19,7 @@ import { createAutoApproveChannel } from './domains/command-gateway/service/auto
 import { createWebApprovalChannel } from './domains/command-gateway/service/web_approval_channel.js'
 import { createMultiApprovalChannel } from './domains/command-gateway/service/multi_approval_channel.js'
 import { registerApprovalRoutes } from './domains/command-gateway/api/register_approval_routes.js'
+import { createAdminSessionSealer, type AdminSessionSealer } from './domains/command-gateway/service/admin_session.js'
 import type { ApprovalChannel } from './domains/command-gateway/types/command_types.js'
 import { loadProxyConfig, validateProxyPorts } from './domains/request-proxy/config/proxy_config.js'
 import { createProxyServers, type ProxyServerDeps, type ProxyServers } from './domains/request-proxy/service/proxy_server.js'
@@ -40,10 +42,35 @@ export interface CreateAppOptions {
 
 interface GatewayDeps {
   app: ReturnType<typeof express>
+  db: ReturnType<typeof getDatabase>
   pendingStore: ReturnType<typeof createPendingRequestStore>
   approvalStore: ReturnType<typeof createApprovalStore>
   auditLog: ReturnType<typeof createAuditLog>
   gatewayConfig: ReturnType<typeof loadGatewayConfig>
+}
+
+/**
+ * Build the cookie sealer for the admin UI, unless the operator turned the
+ * feature off. A key that cannot be resolved is not fatal: the web channel
+ * still works, callers just have to re-enter the admin secret each time.
+ */
+function initAdminSessionSealer(
+  db: ReturnType<typeof getDatabase>,
+  gatewayConfig: ReturnType<typeof loadGatewayConfig>,
+): AdminSessionSealer | undefined {
+  if (gatewayConfig.adminCookieSession?.enabled === false) {
+    log.info('Admin cookie sessions disabled by config; admin auth is bearer-only')
+    return undefined
+  }
+
+  try {
+    const { key, source } = resolveAdminSessionKey(db)
+    log.info({ source }, 'Admin cookie sessions enabled')
+    return createAdminSessionSealer(key)
+  } catch (err) {
+    log.error({ err }, 'Could not resolve the admin session key; admin auth stays bearer-only')
+    return undefined
+  }
 }
 
 function initApprovalChannel(deps: GatewayDeps, autoApprove: boolean, telegramApiRoot?: string): ApprovalChannel {
@@ -52,7 +79,7 @@ function initApprovalChannel(deps: GatewayDeps, autoApprove: boolean, telegramAp
   }
 
   const channels: ApprovalChannel[] = []
-  const { app, pendingStore, approvalStore, auditLog, gatewayConfig } = deps
+  const { app, db, pendingStore, approvalStore, auditLog, gatewayConfig } = deps
 
   const telegramToken = process.env.LUCIFER_TELEGRAM_TOKEN
   const chatId = gatewayConfig.telegramChatId ?? process.env.LUCIFER_TELEGRAM_CHAT_ID
@@ -66,7 +93,8 @@ function initApprovalChannel(deps: GatewayDeps, autoApprove: boolean, telegramAp
   if (adminSecretHash && adminSecretSalt) {
     const webChannel = createWebApprovalChannel()
     channels.push(webChannel)
-    registerApprovalRoutes({ router: app, adminSecretHash, adminSecretSalt, webChannel, approvalStore, auditLog })
+    const adminSession = initAdminSessionSealer(db, gatewayConfig)
+    registerApprovalRoutes({ router: app, adminSecretHash, adminSecretSalt, webChannel, approvalStore, auditLog, adminSession })
     log.info('Web approval UI enabled at /admin/approvals')
   }
 
@@ -204,7 +232,7 @@ function wireCommandGateway(
   const pendingStore = createPendingRequestStore()
 
   const approvalChannel = initApprovalChannel(
-    { app, pendingStore, approvalStore, auditLog, gatewayConfig },
+    { app, db, pendingStore, approvalStore, auditLog, gatewayConfig },
     options.autoApprove ?? false,
     options.telegramApiRoot,
   )

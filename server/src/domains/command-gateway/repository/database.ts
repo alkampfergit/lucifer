@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { mkdirSync } from 'node:fs';
+import { chmodSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { createChildLogger } from '../../../lib/logger.js';
 
@@ -50,7 +50,23 @@ export function getDatabase(dataDir: string): Database.Database {
 
     CREATE INDEX IF NOT EXISTS idx_audit_request_id ON audit_log (request_id);
     CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log (ts);
+
+    CREATE TABLE IF NOT EXISTS server_secrets (
+      name TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
   `);
+
+  // `server_secrets` can hold the admin session sealing key, so the database
+  // file becomes the trust boundary for it. Owner-only permissions are the
+  // cheapest meaningful defence; best-effort because not every filesystem
+  // (notably Windows and some bind mounts) honours POSIX modes.
+  try {
+    chmodSync(dbPath, 0o600);
+  } catch (err) {
+    log.warn({ err, dbPath }, 'Could not restrict database file permissions to owner-only');
+  }
 
   log.info('Database schema initialized');
   return db;

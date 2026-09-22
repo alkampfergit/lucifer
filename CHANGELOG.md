@@ -14,6 +14,19 @@ Target content for 1.0 (tracked in [`docs/quality/PRE-1.0-CHECKPOINT.md`](docs/q
 - Stabilise the public HTTP surface on `command-gateway` and `request-proxy`.
 - Lock the layered dependency direction (Types → Config → Repository → Service → Runtime → UI/API) as a hard CI invariant.
 
+## [0.11.0] — 2026-09-22
+
+### Added
+- **Cookie-backed admin sessions for `/admin/approvals` (#58).** Tick "Remember me on this device" on the login form and the server issues an AES-256-GCM sealed, `HttpOnly` cookie so the page stops asking for the admin secret on every visit. Two new routes: `POST /api/v1/admin/approvals/session` (bearer in, cookie out) and `DELETE …/session` (sign out). The cookie holds a session assertion — `{ v, sub, iat, exp, csrf }` — never the admin secret, and lasts **30 days absolute**; activity does not extend it. On by default; disable with `"adminCookieSession": { "enabled": false }` in `lucifer.json`, which unregisters the session routes entirely. See [ADR-013](docs/context/DECISIONS.md).
+- `LUCIFER_ADMIN_COOKIE_KEY` environment variable (64 hex characters) to manage the session sealing key yourself. Otherwise the key is resolved from the OS keychain (Windows Credential Manager / macOS Keychain / Linux Secret Service, via the new optional `@napi-rs/keyring` dependency) and finally from a new `server_secrets` table in `lucifer.db`.
+
+### Security
+- Cookie-authenticated state-changing admin routes now require CSRF proof: the readable `lucifer_admin_csrf` cookie echoed in an `X-Lucifer-CSRF` header, compared `timingSafeEqual` against the token sealed *inside* the session cookie (so cookie injection does not defeat it), on top of `SameSite=Strict`. Failures return `403 CSRF_INVALID` and deliberately do not count toward the per-IP auth lockout. Callers using `Authorization: Bearer` — CLI, curl, scripts — are unaffected.
+- `lucifer.db` is now opened with mode `0600`, because `server_secrets` may hold the session sealing key.
+
+### Changed
+- Admin auth consults the session cookie only when no `Authorization` header was sent. A present-but-wrong bearer secret is still a failed login even if the caller holds a valid cookie, so the per-IP lockout keeps counting real guesses and existing bearer behaviour is byte-for-byte unchanged.
+
 ## [0.10.2] — 2026-09-22
 
 ### Security
