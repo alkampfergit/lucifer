@@ -13,7 +13,7 @@ resolved relative to the config file's own directory unless absolute.
 
 | File | Scope | Spec |
 |---|---|---|
-| `lucifer.json` | Server settings: port, timeouts, limits, `dataDir`, `logFile`, aliases, admin cookie sessions, proxy trust, paired Telegram chat ID | [specs/operator-workflows.md](specs/operator-workflows.md) |
+| `lucifer.json` | Server settings: port, timeouts, limits, `dataDir`, `logFile`, aliases, optional `tls` block, admin cookie sessions, proxy trust, paired Telegram chat ID | [specs/operator-workflows.md](specs/operator-workflows.md) |
 | `api-keys.json` | Hashed API keys + optional per-key IP allowlists | [specs/command-execution.md](specs/command-execution.md) |
 | `command-rules.json` | Command policy: `always_approve` / `always_deny` / `manual_approve` rules, matched top-to-bottom, first match wins | [specs/command-execution.md](specs/command-execution.md) |
 | `proxy-config.json` | Optional transparent HTTP proxy listeners. File missing → feature disabled. | [specs/transparent-proxy.md](specs/transparent-proxy.md) |
@@ -45,6 +45,7 @@ matching contract.
 | `LUCIFER_TELEGRAM_CHAT_ID` | No | Telegram chat ID. Prefer the `pair` subcommand, which writes it into `lucifer.json`. Set as env to override the config value. |
 | `LUCIFER_ADMIN_SECRET` | No | Bearer token for the web approval UI (`/admin/approvals`). See [specs/approval-channels.md](specs/approval-channels.md). |
 | `LUCIFER_ADMIN_COOKIE_KEY` | No | 64 hex characters (32 bytes) used to seal admin session cookies. Set it to manage the key yourself; otherwise Lucifer generates and stores one. A malformed value is a startup error, not a silent fallback. |
+| `LUCIFER_TLS_PASSPHRASE` | No | Passphrase for a PKCS#12 bundle or an encrypted PEM key referenced by the `tls` block. Never read from `lucifer.json`. See [specs/tls.md](specs/tls.md). |
 | `PORT` | No | Server port (default `3001`). |
 | `LOG_LEVEL` | No | `debug`, `info`, `warn`, `error`. Default `debug` in dev, `info` when `NODE_ENV=production`. |
 | `NODE_ENV` | No | Set to `production` for production defaults (info log level, no pretty-printing). |
@@ -203,3 +204,33 @@ Full contract: [specs/approval-channels.md](specs/approval-channels.md).
 Optional `proxy-config.json` enables one or more HTTP listeners that
 forward to configured upstreams with server-side credential injection.
 Full contract: [specs/transparent-proxy.md](specs/transparent-proxy.md).
+
+## HTTPS (TLS)
+
+Optional `tls` block in `lucifer.json` makes the main gateway port serve
+HTTPS. Omit it and the listener stays plain HTTP, as before.
+
+```json
+{
+  "tls": {
+    "source": "pem",
+    "certFile": "certs/server.crt",
+    "keyFile": "certs/server.key"
+  }
+}
+```
+
+`source` is one of:
+
+| `source` | Fields | Notes |
+|---|---|---|
+| `pem` | `certFile`, `keyFile`, optional `caFile` | Certificate and key as separate PEM files. |
+| `pfx` | `pfxFile` | PKCS#12 bundle (`.pfx` / `.p12`). Unlock with `LUCIFER_TLS_PASSPHRASE`. |
+| `windows-store` | `store.thumbprint` **or** `store.subject`, optional `store.location` / `store.name` | Windows only. The private key must be exportable; `LocalMachine` usually needs elevation. |
+
+Optional `minVersion` is `TLSv1.2` (default) or `TLSv1.3`. Certificate paths
+are resolved relative to the config file's directory. Certificates are read
+once at startup, so rotation requires a restart, and a bad certificate fails
+startup rather than silently downgrading to HTTP. The port serves HTTPS only
+— there is no companion plain-HTTP port. Full contract:
+[specs/tls.md](specs/tls.md).

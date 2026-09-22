@@ -37,10 +37,24 @@
 | J10-S2 | As an Operator, I edit `command-rules.json` to control which commands need approval | Rules are matched in order by prefix; first match determines the action | `covered` — `match_command_rule.test.ts`, `gateway_config.test.ts` |
 | J10-S3 | As an Operator, I configure `lucifer.json` with server and channel settings | Main config file is loaded and validated at startup | `covered` — `gateway_config.test.ts` |
 
+## J14: HTTPS for the Gateway Listener
+
+> **Actor**: Operator
+> **Goal**: Serve the gateway over HTTPS using a certificate they already have.
+
+### Stories
+
+| ID | Story | Acceptance Criteria | Coverage |
+|---|---|---|---|
+| J14-S1 | As an Operator, I add a `tls` block pointing at a PEM certificate and key so that the gateway serves HTTPS | Listener negotiates TLS 1.2 or better and answers `/api/health`; without the block the listener stays plain HTTP | `covered` — `tls.test.ts`, `tls_config.test.ts`, `resolve_tls_options.test.ts` |
+| J14-S2 | As an Operator, I point the `tls` block at a PKCS#12 bundle and supply `LUCIFER_TLS_PASSPHRASE` so that I can reuse a `.pfx` I already hold | Bundle is unlocked from the environment variable, never from `lucifer.json`, and the listener serves HTTPS | `covered` — `tls.test.ts`, `resolve_tls_options.test.ts` |
+| J14-S3 | As an Operator on Windows, I select a certificate from the Windows certificate store by thumbprint or subject so that I do not export it by hand | Certificate is exported in memory with a single-use passphrase; a non-Windows host fails at startup with a message pointing at `pem`/`pfx` | `partial` — `windows_certificate_store.test.ts`, `resolve_tls_options.test.ts` cover command construction, the platform guard, and the failure paths; CI is ubuntu-only so there is no end-to-end Windows run |
+| J14-S4 | As an Operator, I get a descriptive startup failure when the TLS config is wrong so that I never silently serve plain HTTP | Unknown `source`, mixed-source fields, a bad thumbprint, or a missing certificate file all throw at startup, naming the field or path | `covered` — `tls_config.test.ts`, `tls.test.ts` |
+
 ## Section Summary
 
 | Status | Count |
 |---|---|
-| `covered` | 7 |
-| `partial` | 0 |
+| `covered` | 10 |
+| `partial` | 1 |
 | `uncovered` | 0 |

@@ -190,10 +190,30 @@ directory (most tools that read relative config/state do), use an
 
 | File | Purpose |
 |---|---|
-| `lucifer.json` | Server settings, timeouts, data directory, and paired Telegram chat |
+| `lucifer.json` | Server settings, timeouts, data directory, optional `tls` block, and paired Telegram chat |
 | `api-keys.json` | Hashed caller API keys and optional IP allowlists |
 | `command-rules.json` | Allow, deny, and manual-approval policy |
 | `<dataDir>/lucifer.db` | Resolved approvals and audit log |
 
 See the [configuration reference](../CONFIGURATION.md) for environment
 variables, logging, Docker, aliases, and proxy configuration.
+
+## Serving over HTTPS
+
+API keys travel in request headers, so terminate TLS somewhere. To let
+Lucifer do it itself, add a `tls` block to `lucifer.json`:
+
+```json
+{
+  "tls": {
+    "source": "pem",
+    "certFile": "certs/server.crt",
+    "keyFile": "certs/server.key"
+  }
+}
+```
+
+Use `"source": "pfx"` with `pfxFile` for a PKCS#12 bundle (passphrase in
+`LUCIFER_TLS_PASSPHRASE`), or `"source": "windows-store"` on Windows to pick a
+certificate out of the certificate store by thumbprint. Omit the block and the
+server stays plain HTTP. Full contract: [TLS](../specs/tls.md).

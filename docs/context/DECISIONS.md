@@ -658,3 +658,92 @@ decision:
   made the five-failure lockout unreachable — and let them pin a lockout on
   somebody else's address. This restores the guarantee the first round's
   authentication-order note depends on.
+
+---
+
+## ADR-014: Native TLS on the gateway listener, with the Windows store reached through PowerShell
+
+**Date**: 2026-09-22
+**Status**: Accepted
+**Deciders**: alkampfergit
+
+### Context
+
+Until now Lucifer bound plain HTTP everywhere, and HTTPS meant putting a
+reverse proxy in front. That is a reasonable production posture but a poor
+default: API keys travel in request headers, and the smallest deployments —
+a single box on a LAN, a Windows host with a certificate already issued by a
+corporate CA — are exactly the ones least likely to run nginx in front.
+
+Issue #56 asked for three things: a config entry naming the certificate,
+support for more than one certificate format, and, on Windows, the ability to
+read the certificate out of the certificate store rather than exporting it to
+disk by hand.
+
+Node has no binding to the Windows certificate store. `win-ca`, the usual
+suggestion, only surfaces CA roots — it cannot produce a private key, so it
+cannot serve a certificate.
+
+### Decision
+
+Add an optional `tls` block to `lucifer.json`, owned by `platform-api` (which
+already owns the listener and the app bootstrap), with three sources: `pem`,
+`pfx`, and `windows-store`.
+
+- **Absent block means plain HTTP.** No behaviour change for existing
+  installs, and no implicit "TLS if certificates happen to be present".
+- **Fail fast, never downgrade.** A malformed block, a missing file, or a
+  failed store export throws during startup with the offending field or path
+  named. The server does not fall back to HTTP — a silent downgrade is how
+  API keys end up on the wire in clear text.
+- **HTTPS only on the configured port.** No companion plain-HTTP port and no
+  redirect: a client that forgets the scheme should fail loudly.
+- **Passphrase from `LUCIFER_TLS_PASSPHRASE`, never from `lucifer.json`.**
+  That file holds non-secret settings and is commonly committed or mounted
+  read-only alongside them.
+- **`windows-store` shells out to PowerShell** and uses
+  `X509Certificate2.Export(Pfx, <password>)`, returning the bundle base64 on
+  stdout under a single-use password generated per start. Selector values are
+  passed as environment variables, not interpolated into the script text.
+- **Scope is the main gateway listener.** `proxy-config.json` mappings stay
+  plain HTTP in this version.
+
+### Consequences
+
+- (+) The smallest deployments get HTTPS without a second moving part, using
+  whatever certificate format the operator already has.
+- (+) Nothing changes for anyone already terminating TLS upstream.
+- (+) Passing selector values through the environment removes the injection
+  surface an interpolated `subject` would otherwise open.
+- (-) `windows-store` requires an **exportable** private key. Keys marked
+  non-exportable, and CNG/HSM-held keys whose provider refuses export, cannot
+  be used; the underlying PowerShell error is surfaced verbatim. `LocalMachine`
+  stores normally require elevation.
+- (-) CI runs `ubuntu-latest`, so the `windows-store` path is unit-tested only
+  (command construction, platform guard, failure paths). Tracked as the single
+  `partial` story in `USER-JOURNEYS.md` (`J14-S3`).
+- (-) Certificate material is read once at startup, so rotation requires a
+  restart.
+
+### Alternatives Considered
+
+- **Documenting "put a reverse proxy in front" and closing the issue.**
+  Rejected: it answers neither the "various formats" nor the "Windows store"
+  half of the request, and it pushes the security-critical hop onto a
+  component the operator has to learn separately.
+- **`Export-PfxCertificate` to a temp file, then read and delete it.**
+  Rejected: it puts a private key on disk, needs cleanup on every failure
+  path, and lands in a world-writable directory on some hosts. Exporting to a
+  byte array in-process avoids all three.
+- **Interpolating the thumbprint/subject into the PowerShell script.**
+  Rejected: `subject` is a free-form operator string, and quoting rules in
+  PowerShell are a poor place to be the only line of defence. Environment
+  variables remove the question.
+- **Reading the certificate store with `win-ca` or another native module.**
+  Rejected: `win-ca` exposes CA roots only, with no private key, and adding a
+  native dependency for one platform-specific path is a heavier commitment
+  than spawning a binary Windows already ships.
+- **Per-proxy-mapping certificates in the same change.** Deferred: the
+  gateway listener is where API keys are submitted, so it is the one that has
+  to be fixed first; per-listener certificates can reuse the same `tls` shape
+  when asked for.

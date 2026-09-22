@@ -15,6 +15,7 @@ implementation in detail. Specs should stay short, factual, and tied to code.
 | [operator-workflows.md](operator-workflows.md) | Init, pairing, logging, stats, and runtime config |
 | [platform-health.md](platform-health.md) | Health endpoint and runtime status contract |
 | [transparent-proxy.md](transparent-proxy.md) | Optional HTTP proxy listeners with header injection |
+| [tls.md](tls.md) | Optional HTTPS for the gateway listener, including the Windows certificate store |
 
 ## Rules
 
