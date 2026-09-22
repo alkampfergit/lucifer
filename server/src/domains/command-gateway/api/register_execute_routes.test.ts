@@ -460,7 +460,12 @@ describe('POST /api/v1/execute alias bypass and execution', () => {
       // vector the bypass check must close: without it, "deploy --flag" would fall through
       // to the shell and inherit auto-approval via this prefix match.
       extraRules: [{ prefix: 'deploy', action: 'always_approve' }],
-      extraAliases: { deploy: { path: '/usr/bin/true', type: 'elf' } },
+      // The current `node` binary standing in for `/usr/bin/true`: an
+      // absolute path to a real executable that exits 0 and prints nothing,
+      // on every platform the suite runs on. `/usr/bin/true` does not exist
+      // on Windows, where it resolves to `<drive>:\usr\bin\true` and the
+      // spawn fails.
+      extraAliases: { deploy: { path: process.execPath, args: ['-e', ''], type: 'elf' } },
     });
     await aliasCtx.start();
   });
