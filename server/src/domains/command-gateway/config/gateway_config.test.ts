@@ -1,9 +1,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, parse, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { loadGatewayConfig, getTelegramToken, getAdminSecret } from './gateway_config.js';
+
+/**
+ * An already-absolute fixture path, rooted on the same volume as the config
+ * file so that "absolute paths are preserved" holds on both platforms. A bare
+ * `/opt/...` is only drive-relative on Windows, and resolving it against the
+ * config directory legitimately yields `<that drive>:\opt\...`.
+ */
+function absoluteFixture(configDir: string, ...segments: string[]): string {
+  return join(parse(configDir).root, ...segments);
+}
 
 const tempDirs: string[] = [];
 
@@ -113,16 +123,17 @@ describe('loadGatewayConfig', () => {
   it('loads a valid aliases map with bash and elf entries', () => {
     const dir = createTempDir();
     const buildPath = join(tmpdir(), 'scripts', 'build.sh');
+    const helloPath = absoluteFixture(dir, 'opt', 'bin', 'hello');
     const filePath = writeConfig(dir, {
       aliases: {
         build: { path: buildPath, type: 'bash' },
-        hello: { path: '/opt/bin/hello', type: 'elf' },
+        hello: { path: helloPath, type: 'elf' },
       },
     });
     const config = loadGatewayConfig(filePath);
     expect(config.aliases).toEqual({
       build: { path: buildPath, type: 'bash' },
-      hello: { path: '/opt/bin/hello', type: 'elf' },
+      hello: { path: helloPath, type: 'elf' },
     });
   });
 
@@ -144,11 +155,12 @@ describe('loadGatewayConfig', () => {
 
   it('preserves absolute alias paths unchanged', () => {
     const dir = createTempDir();
+    const deployPath = absoluteFixture(dir, 'opt', 'ops', 'deploy.sh');
     const filePath = writeConfig(dir, {
-      aliases: { deploy: { path: '/opt/ops/deploy.sh', type: 'bash' } },
+      aliases: { deploy: { path: deployPath, type: 'bash' } },
     });
     const config = loadGatewayConfig(filePath);
-    expect(config.aliases?.deploy.path).toBe('/opt/ops/deploy.sh');
+    expect(config.aliases?.deploy.path).toBe(deployPath);
   });
 
   it('normalizes relative alias paths against the config file directory', () => {

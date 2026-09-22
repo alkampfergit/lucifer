@@ -6,7 +6,14 @@ import request from 'supertest';
 import { createApp } from './create_app.js';
 
 const CLI_PATH = resolve(__dirname, 'cli.ts');
-const TSX = join(process.cwd(), 'node_modules', '.bin', 'tsx');
+/**
+ * tsx's JS entrypoint, run through the current `node` binary rather than the
+ * `node_modules/.bin/tsx` shim. The shim is a shell script with no extension
+ * on Windows — the executable there is `tsx.cmd` — so spawning it by that
+ * path fails with ENOENT. Going straight to the entrypoint avoids both the
+ * platform-specific shim name and needing `shell: true` to run a `.cmd`.
+ */
+const TSX_ENTRY = join(process.cwd(), 'node_modules', 'tsx', 'dist', 'cli.mjs');
 
 /**
  * Run the CLI and collect output. The CLI process may not exit on its own
@@ -15,7 +22,7 @@ const TSX = join(process.cwd(), 'node_modules', '.bin', 'tsx');
  */
 function runCli(...args: string[]): Promise<{ stdout: string; stderr: string; code: number | null }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(TSX, [CLI_PATH, ...args], {
+    const child = spawn(process.execPath, [TSX_ENTRY, CLI_PATH, ...args], {
       env: { ...process.env, LUCIFER_TELEGRAM_TOKEN: 'skip' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });

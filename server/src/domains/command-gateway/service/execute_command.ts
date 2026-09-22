@@ -1,10 +1,20 @@
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { delimiter as pathDelimiter } from 'node:path';
+import { delimiter as pathDelimiter, join as joinPath } from 'node:path';
 import type { AliasesConfig, ExecutionResult } from '../types/command_types.js';
 import { resolveAlias, type ResolvedAlias } from './resolve_alias.js';
 import { createChildLogger } from '../../../lib/logger.js';
 
 const log = createChildLogger('executor');
+
+const IS_WINDOWS = process.platform === 'win32';
+
+/**
+ * `taskkill` resolved from `%SystemRoot%` rather than looked up on `PATH`:
+ * this process terminates a command tree, so the search order must not be
+ * able to decide which binary runs. Same reasoning as the absolute DLL paths
+ * in the Windows certificate store reader.
+ */
+const TASKKILL_PATH = joinPath(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe');
 
 let activeExecutions = 0;
 
@@ -60,20 +70,53 @@ function buildChildEnv(toolsPath: string[] | undefined): NodeJS.ProcessEnv | und
   return { ...process.env, PATH: [...toolsPath, existingPath].filter(Boolean).join(pathDelimiter) };
 }
 
+/**
+ * POSIX only. `detached` puts the child in its own process group so
+ * `process.kill(-pid)` can take down the whole tree, which is how a timeout
+ * or an aborted request reaches grandchildren.
+ *
+ * On Windows the same flag is actively harmful and buys nothing. libuv maps
+ * it to `DETACHED_PROCESS`, so the child runs without a console; a shell
+ * builtin still writes to the inherited pipe, but any external executable the
+ * shell launches allocates a fresh console and its output is lost — commands
+ * returned exit code 0 with empty stdout. Nor does it help with killing:
+ * negative PIDs are meaningless on Windows, so the tree is torn down with
+ * `taskkill /T` instead.
+ */
+const USE_PROCESS_GROUP = !IS_WINDOWS;
+
 function spawnChild(options: ExecuteOptions, resolved: ResolvedAlias | null): ChildProcessWithoutNullStreams {
   const env = buildChildEnv(options.toolsPath);
   // This is a command gateway that intentionally executes user-supplied
   // commands. Access is gated by API-key auth and configurable command
   // rules (allow/deny lists). The spawn call below is by design.
   if (resolved) {
-    return spawn(resolved.spawnCommand, resolved.spawnArgs, { cwd: resolved.cwd, detached: true, env });
+    return spawn(resolved.spawnCommand, resolved.spawnArgs, { cwd: resolved.cwd, detached: USE_PROCESS_GROUP, env });
   }
-  return spawn(options.command, { shell: true, cwd: options.cwd ?? process.cwd(), detached: true, env }); // NOSONAR -- intentional: this gateway executes user-supplied commands gated by API-key auth and command rules
+  return spawn(options.command, { shell: true, cwd: options.cwd ?? process.cwd(), detached: USE_PROCESS_GROUP, env }); // NOSONAR -- intentional: this gateway executes user-supplied commands gated by API-key auth and command rules
 }
 
 function killChildTree(child: ChildProcess): void {
+  const pid = child.pid;
+  if (pid === undefined) {
+    child.kill('SIGKILL');
+    return;
+  }
+
+  if (IS_WINDOWS) {
+    // `/T` includes descendants, `/F` is unconditional. Failure is expected
+    // and harmless when the tree has already exited between the timeout
+    // firing and this call, so the exit code is deliberately not inspected.
+    const killer = spawn(TASKKILL_PATH, ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' });
+    killer.on('error', (err) => {
+      log.warn({ pid, err: err.message }, 'taskkill failed; falling back to a direct kill');
+      child.kill('SIGKILL');
+    });
+    return;
+  }
+
   try {
-    process.kill(-child.pid!, 'SIGKILL');
+    process.kill(-pid, 'SIGKILL');
   } catch {
     child.kill('SIGKILL');
   }

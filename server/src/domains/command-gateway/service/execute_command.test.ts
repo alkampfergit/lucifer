@@ -1,9 +1,23 @@
 import { describe, it, expect } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { writeFileSync, mkdirSync, chmodSync, rmSync } from 'node:fs';
+import { writeFileSync, mkdirSync, chmodSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { executeCommand } from './execute_command.js';
+
+const IS_WINDOWS = process.platform === 'win32';
+
+/** Prints the shell's working directory. `cd` with no operand on cmd.exe. */
+const PRINT_CWD = IS_WINDOWS ? 'cd' : 'pwd';
+
+/**
+ * Compare two paths that name the same directory but may differ in casing or
+ * 8.3 short-name form — `tmpdir()` reports `C:\Users\RUNNER~1\...` on a
+ * GitHub runner while the shell prints the expanded `C:\Users\runneradmin\...`.
+ */
+function samePath(a: string, b: string): boolean {
+  return realpathSync.native(a).toLowerCase() === realpathSync.native(b).toLowerCase();
+}
 
 describe('executeCommand', () => {
   it('executes a simple command and returns output', async () => {
@@ -86,7 +100,7 @@ describe('executeCommand', () => {
   it('respects cwd option', async () => {
     const sysTmp = tmpdir();
     const result = await executeCommand({
-      command: 'pwd',
+      command: PRINT_CWD,
       requestId: 'test-7',
       cwd: sysTmp,
       timeoutMs: 5000,
@@ -94,8 +108,26 @@ describe('executeCommand', () => {
       maxConcurrent: 5,
     });
     expect(result.status).toBe('completed');
-    expect(result.stdout?.trim()).toBe(sysTmp);
+    expect(samePath(result.stdout!.trim(), sysTmp)).toBe(true);
   });
+
+  // Regression: the executor used to pass `detached: true` on every platform.
+  // On Windows that means `DETACHED_PROCESS`, so the shell ran without a
+  // console and any external executable it launched wrote to a fresh console
+  // of its own instead of the inherited pipe — exit code 0, empty stdout.
+  // Shell builtins were unaffected, which is why every other case here passed.
+  it('captures stdout from an external executable, not only from shell builtins', async () => {
+    const result = await executeCommand({
+      command: 'node -e "process.stdout.write(\'from-a-real-binary\')"',
+      requestId: 'test-external-binary',
+      timeoutMs: 15000,
+      maxOutputBytes: 1024,
+      maxConcurrent: 5,
+    });
+    expect(result.status).toBe('completed');
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('from-a-real-binary');
+  }, 20000);
 
   it('runs a bash alias from the script directory, ignoring caller cwd', async () => {
     const dir = join(tmpdir(), `lucifer-alias-test-${Date.now()}-${randomUUID()}`);
@@ -119,7 +151,12 @@ describe('executeCommand', () => {
         },
       });
       expect(result.status).toBe('completed');
-      expect(result.stdout?.trim()).toBe(dir);
+      // Compared by leaf name: on Windows the script runs under Git Bash,
+      // which prints its cwd in POSIX form (`/tmp/<leaf>`) rather than the
+      // `C:\...\Temp\<leaf>` the test created. The leaf is unique per run, so
+      // it still distinguishes the script's own directory from the caller
+      // cwd (`tmpdir()`) that the executor is required to ignore.
+      expect(basename(result.stdout!.trim())).toBe(basename(dir));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
