@@ -42,8 +42,38 @@ describe('exportCertificateFromWindowsStore', () => {
     expect(seen[0].script).toBe(WINDOWS_STORE_EXPORT_SCRIPT)
     expect(seen[0].env.LUCIFER_TLS_STORE_PATH).toBe('LocalMachine\\My')
     expect(seen[0].env.LUCIFER_TLS_THUMBPRINT).toBe(thumbprintSelector.thumbprint)
+    expect(seen[0].env.LUCIFER_TLS_DNS_NAME).toBe('')
     expect(seen[0].env.LUCIFER_TLS_SUBJECT).toBe('')
     expect(result.pfx.toString()).toBe('pkcs12-bytes')
+  })
+
+  it('matches on the certificate DNS names, not the subject DN, when dnsName is set', () => {
+    let env: NodeJS.ProcessEnv | undefined
+    exportCertificateFromWindowsStore(
+      { location: 'LocalMachine', name: 'My', dnsName: 'pippo.codewrecks.com' },
+      {
+        platform: 'win32',
+        runPowerShell: (_script, seenEnv) => {
+          env = seenEnv
+          return ok(Buffer.from('x').toString('base64'))
+        },
+      },
+    )
+
+    expect(env?.LUCIFER_TLS_DNS_NAME).toBe('pippo.codewrecks.com')
+    expect(env?.LUCIFER_TLS_THUMBPRINT).toBe('')
+    expect(env?.LUCIFER_TLS_SUBJECT).toBe('')
+    expect(WINDOWS_STORE_EXPORT_SCRIPT).toContain('$_.DnsNameList.Unicode -contains $dnsName')
+  })
+
+  it('prefers a currently valid certificate when a name matches more than one', () => {
+    // A renewal leaves the superseded certificate in the store, so the script
+    // narrows a multi-match to the ones that could serve traffic today before
+    // it gives up and asks for a thumbprint.
+    expect(WINDOWS_STORE_EXPORT_SCRIPT).toContain(
+      '$usable = @($certs | Where-Object { $_.HasPrivateKey -and $_.NotBefore -le $now -and $_.NotAfter -gt $now })',
+    )
+    expect(WINDOWS_STORE_EXPORT_SCRIPT).toContain('use a thumbprint to disambiguate')
   })
 
   it('generates a fresh single-use passphrase per export', () => {

@@ -31,17 +31,36 @@ export interface WindowsStoreDeps {
  * Every operator-supplied value is read from the environment rather than
  * interpolated into the script text, so a crafted `subject` cannot inject
  * PowerShell.
+ *
+ * `DnsNameList` is the certificate provider's view of the host names a
+ * certificate was issued for: its subject alternative names, falling back to
+ * the simple subject name when the certificate carries no SAN extension. That
+ * is the name an operator reads in certmgr, so it is what `dnsName` matches.
  */
 export const WINDOWS_STORE_EXPORT_SCRIPT = [
   "$ErrorActionPreference = 'Stop'",
-  "$path = 'Cert:\\' + $env:LUCIFER_TLS_STORE_PATH",
+  String.raw`$path = 'Cert:\' + $env:LUCIFER_TLS_STORE_PATH`,
   '$certs = @(Get-ChildItem -Path $path)',
   'if ($env:LUCIFER_TLS_THUMBPRINT) {',
   '  $certs = @($certs | Where-Object { $_.Thumbprint -eq $env:LUCIFER_TLS_THUMBPRINT })',
-  '} else {',
+  '} elseif ($env:LUCIFER_TLS_DNS_NAME) {',
+  '  $dnsName = $env:LUCIFER_TLS_DNS_NAME',
+  '  $certs = @($certs | Where-Object {',
+  '    $_.DnsNameList.Unicode -contains $dnsName -or $_.DnsNameList.Punycode -contains $dnsName',
+  '  })',
+  '} elseif ($env:LUCIFER_TLS_SUBJECT) {',
   '  $certs = @($certs | Where-Object { $_.Subject -like "*$($env:LUCIFER_TLS_SUBJECT)*" })',
+  '} else {',
+  '  throw "No certificate selector was supplied."',
   '}',
   'if ($certs.Count -eq 0) { throw "No certificate in $path matched the configured selector." }',
+  'if ($certs.Count -gt 1) {',
+  '  # A renewed certificate leaves the superseded one in the store, so narrow',
+  '  # a name match to the ones that could actually serve traffic today.',
+  '  $now = Get-Date',
+  '  $usable = @($certs | Where-Object { $_.HasPrivateKey -and $_.NotBefore -le $now -and $_.NotAfter -gt $now })',
+  '  if ($usable.Count -gt 0) { $certs = $usable }',
+  '}',
   'if ($certs.Count -gt 1) { throw "$($certs.Count) certificates in $path matched the configured selector; use a thumbprint to disambiguate." }',
   '$cert = $certs[0]',
   'if (-not $cert.HasPrivateKey) { throw "Certificate $($cert.Thumbprint) has no usable private key in $path." }',
@@ -49,9 +68,21 @@ export const WINDOWS_STORE_EXPORT_SCRIPT = [
   '[Convert]::ToBase64String($bytes)',
 ].join('\n')
 
+/**
+ * Windows ships PowerShell at a fixed location under the system root. Spawning
+ * it by absolute path rather than by name keeps the lookup off `PATH`, which a
+ * less privileged account may be able to prepend to.
+ */
+const POWERSHELL_RELATIVE_PATH = String.raw`\System32\WindowsPowerShell\v1.0\powershell.exe`
+const DEFAULT_SYSTEM_ROOT = String.raw`C:\Windows`
+
+function powerShellPath(): string {
+  return `${process.env.SystemRoot || DEFAULT_SYSTEM_ROOT}${POWERSHELL_RELATIVE_PATH}`
+}
+
 function runWithPowerShell(script: string, env: NodeJS.ProcessEnv): PowerShellResult {
   const result = spawnSync(
-    'powershell.exe',
+    powerShellPath(),
     ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
     { env, encoding: 'utf8', windowsHide: true, maxBuffer: 16 * 1024 * 1024 },
   )
@@ -60,6 +91,17 @@ function runWithPowerShell(script: string, env: NodeJS.ProcessEnv): PowerShellRe
     stdout: result.stdout ?? '',
     stderr: result.stderr ?? '',
     error: result.error,
+  }
+}
+
+function selectorEnv(selector: WindowsStoreSelector, passphrase: string): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    LUCIFER_TLS_STORE_PATH: `${selector.location}\\${selector.name}`,
+    LUCIFER_TLS_THUMBPRINT: selector.thumbprint ?? '',
+    LUCIFER_TLS_DNS_NAME: selector.dnsName ?? '',
+    LUCIFER_TLS_SUBJECT: selector.subject ?? '',
+    LUCIFER_TLS_EXPORT_PASSWORD: passphrase,
   }
 }
 
@@ -87,13 +129,7 @@ export function exportCertificateFromWindowsStore(
   const passphrase = randomBytes(32).toString('base64')
   const runner = deps.runPowerShell ?? runWithPowerShell
 
-  const result = runner(WINDOWS_STORE_EXPORT_SCRIPT, {
-    ...process.env,
-    LUCIFER_TLS_STORE_PATH: `${selector.location}\\${selector.name}`,
-    LUCIFER_TLS_THUMBPRINT: selector.thumbprint ?? '',
-    LUCIFER_TLS_SUBJECT: selector.subject ?? '',
-    LUCIFER_TLS_EXPORT_PASSWORD: passphrase,
-  })
+  const result = runner(WINDOWS_STORE_EXPORT_SCRIPT, selectorEnv(selector, passphrase))
 
   if (result.error) {
     throw new Error(

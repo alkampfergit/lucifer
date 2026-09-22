@@ -9,13 +9,18 @@ export type WindowsStoreLocation = 'LocalMachine' | 'CurrentUser'
 
 /**
  * Selects one certificate inside the Windows certificate store. Exactly one
- * of `thumbprint` / `subject` must be set: `thumbprint` is an exact match,
- * `subject` is a substring match on the certificate's subject DN.
+ * of `thumbprint` / `dnsName` / `subject` must be set:
+ *
+ * - `thumbprint` is an exact match on the certificate thumbprint.
+ * - `dnsName` matches a host name the certificate was issued for
+ *   (`pippo.codewrecks.com`), taken from its DNS names.
+ * - `subject` is a substring match on the certificate's subject DN.
  */
 export interface WindowsStoreSelector {
   location: WindowsStoreLocation
   name: string
   thumbprint?: string
+  dnsName?: string
   subject?: string
 }
 

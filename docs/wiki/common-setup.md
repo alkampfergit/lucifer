@@ -215,5 +215,16 @@ Lucifer do it itself, add a `tls` block to `lucifer.json`:
 
 Use `"source": "pfx"` with `pfxFile` for a PKCS#12 bundle (passphrase in
 `LUCIFER_TLS_PASSPHRASE`), or `"source": "windows-store"` on Windows to pick a
-certificate out of the certificate store by thumbprint. Omit the block and the
+certificate out of the certificate store by the host name it was issued for:
+
+```json
+{
+  "tls": {
+    "source": "windows-store",
+    "store": { "dnsName": "pippo.codewrecks.com" }
+  }
+}
+```
+
+A `thumbprint` or a `subject` substring works too. Omit the block and the
 server stays plain HTTP. Full contract: [TLS](../specs/tls.md).

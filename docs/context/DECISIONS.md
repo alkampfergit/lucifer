@@ -704,7 +704,17 @@ already owns the listener and the app bootstrap), with three sources: `pem`,
 - **`windows-store` shells out to PowerShell** and uses
   `X509Certificate2.Export(Pfx, <password>)`, returning the bundle base64 on
   stdout under a single-use password generated per start. Selector values are
-  passed as environment variables, not interpolated into the script text.
+  passed as environment variables, not interpolated into the script text, and
+  PowerShell is spawned by its absolute path under `%SystemRoot%` rather than
+  resolved through `PATH`.
+- **The certificate is selectable by the host name it was issued for**
+  (`"dnsName": "pippo.codewrecks.com"`), alongside `thumbprint` and `subject`.
+  That is the name an operator reads off certmgr, and the only one they
+  reliably know; a thumbprint has to be copied out of a dialog and changes on
+  every renewal. Because a name match is inherently ambiguous after a renewal,
+  a multi-match is narrowed to certificates that hold a private key and are
+  inside their validity window before startup gives up and asks for a
+  thumbprint.
 - **Scope is the main gateway listener.** `proxy-config.json` mappings stay
   plain HTTP in this version.
 
