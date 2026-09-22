@@ -22,7 +22,14 @@ permissions:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    # Windows is not incidental here: "tls.source": "windows-store" calls the
+    # Windows CryptoAPI, and the only way to exercise it is to build and test
+    # on a Windows runner.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: read
     steps:
@@ -40,6 +47,31 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # Plants a throwaway certificate so the windows-store integration test
+      # runs against a real store instead of being skipped. The private key
+      # never leaves the runner; only the public half is written to disk.
+      - name: Plant a TLS test certificate in the Windows certificate store
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dnsName = 'lucifer-ci.test'
+          $cert = New-SelfSignedCertificate `
+            -DnsName $dnsName `
+            -CertStoreLocation 'Cert:\CurrentUser\My' `
+            -KeyExportPolicy Exportable `
+            -KeyAlgorithm RSA -KeyLength 2048 `
+            -NotAfter (Get-Date).AddDays(1) `
+            -FriendlyName 'Lucifer CI TLS test'
+
+          $pemPath = Join-Path $env:RUNNER_TEMP 'lucifer-ci-test.pem'
+          $body = [Convert]::ToBase64String($cert.RawData, 'InsertLineBreaks')
+          $pem = "-----BEGIN CERTIFICATE-----`r`n" + $body + "`r`n-----END CERTIFICATE-----`r`n"
+          [System.IO.File]::WriteAllText($pemPath, $pem)
+
+          "LUCIFER_TEST_WINDOWS_STORE_DNS_NAME=$dnsName" >> $env:GITHUB_ENV
+          "LUCIFER_TEST_WINDOWS_STORE_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+          "LUCIFER_TEST_WINDOWS_STORE_CERT_PEM=$pemPath" >> $env:GITHUB_ENV
 
       - name: Lint
         run: npm run lint
