@@ -14,7 +14,7 @@ const IS_WINDOWS = process.platform === 'win32';
  * able to decide which binary runs. Same reasoning as the absolute DLL paths
  * in the Windows certificate store reader.
  */
-const TASKKILL_PATH = joinPath(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe');
+const TASKKILL_PATH = joinPath(process.env.SystemRoot ?? String.raw`C:\Windows`, 'System32', 'taskkill.exe');
 
 let activeExecutions = 0;
 
