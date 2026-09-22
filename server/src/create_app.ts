@@ -2,6 +2,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 import express from 'express'
 import { getServerConfig } from './domains/platform-api/config/server_config.js'
+import { loadTlsConfig } from './domains/platform-api/config/tls_config.js'
+import { resolveTlsOptions } from './domains/platform-api/service/resolve_tls_options.js'
+import type { ResolvedTlsOptions } from './domains/platform-api/types/tls_config.js'
 import { registerHealthRoutes } from './domains/platform-api/api/register_health_routes.js'
 import { createRuntimeMetadataRepository } from './domains/platform-api/repository/runtime_metadata_repository.js'
 import { createHealthReportService } from './domains/platform-api/service/create_health_report.js'
@@ -287,6 +290,19 @@ function wireProxyServers(
   return proxyServers
 }
 
+/**
+ * Read the optional `tls` block and load the certificate material it names.
+ * Resolved here rather than at listen time so a misconfigured certificate
+ * fails during startup, with the offending file named.
+ */
+function resolveListenerTls(configPath: string | undefined): ResolvedTlsOptions | undefined {
+  const tlsConfig = loadTlsConfig(configPath)
+  if (!tlsConfig) return undefined
+  const tlsOptions = resolveTlsOptions(tlsConfig)
+  log.info({ source: tlsConfig.source, minVersion: tlsConfig.minVersion }, 'TLS enabled for the gateway listener')
+  return tlsOptions
+}
+
 export function createApp(options: CreateAppOptions = {}) {
   const serverConfig = getServerConfig()
   const metadataRepository = createRuntimeMetadataRepository()
@@ -299,6 +315,7 @@ export function createApp(options: CreateAppOptions = {}) {
 
   const gatewayConfig = loadGatewayConfig(options.configPath)
   const paths = resolveConfigPaths(options.configPath)
+  const tlsOptions = resolveListenerTls(options.configPath)
 
   // Off unless the operator names their proxy. Express defaults `trust proxy`
   // to false, and that default is what keeps `req.secure` (and therefore the
@@ -329,7 +346,7 @@ export function createApp(options: CreateAppOptions = {}) {
     )
   }
 
-  if (process.env.NODE_ENV === 'production') {
+  if (process.env.NODE_ENV === 'production' && !tlsOptions) {
     log.warn('Ensure HTTPS is configured for production. API keys are transmitted in headers.')
   }
 
@@ -374,5 +391,5 @@ export function createApp(options: CreateAppOptions = {}) {
     closeDatabase()
   }
 
-  return { app, config: serverConfig, gatewayConfig, start, stop }
+  return { app, config: serverConfig, gatewayConfig, tlsOptions, start, stop }
 }
