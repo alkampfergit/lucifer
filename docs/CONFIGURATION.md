@@ -226,7 +226,7 @@ HTTPS. Omit it and the listener stays plain HTTP, as before.
 |---|---|---|
 | `pem` | `certFile`, `keyFile`, optional `caFile` | Certificate and key as separate PEM files. `caFile` holds the intermediates and is appended to `certFile` so clients receive the full chain. |
 | `pfx` | `pfxFile` | PKCS#12 bundle (`.pfx` / `.p12`). Unlock with `LUCIFER_TLS_PASSPHRASE`. |
-| `windows-store` | exactly one of `store.dnsName` / `store.thumbprint` / `store.subject`, optional `store.location` / `store.name` | Windows only. `dnsName` names the certificate by host name (`"pippo.codewrecks.com"`); `thumbprint` takes the SHA-1 (40 hex) or SHA-256 (64 hex) fingerprint; `subject` is a literal substring of the subject DN. The issuing intermediates are read from the store alongside the certificate. The private key must be exportable; `LocalMachine` usually needs elevation. |
+| `windows-store` | exactly one of `store.dnsName` / `store.thumbprint` / `store.subject`, optional `store.location` / `store.name` | Windows only. `dnsName` names the certificate by host name (`"pippo.codewrecks.com"`); `thumbprint` takes the SHA-1 (40 hex) or SHA-256 (64 hex) fingerprint; `subject` is a literal substring of the subject DN. The issuing intermediates are read from the store alongside the certificate. The private key must be exportable; `LocalMachine` usually needs elevation. The store is read through the native Windows CryptoAPI (`crypt32.dll`), so no process is spawned and nothing is written to disk. |
 
 Optional `minVersion` is `TLSv1.2` (default) or `TLSv1.3`. Certificate paths
 are resolved relative to the config file's directory. Certificates are read

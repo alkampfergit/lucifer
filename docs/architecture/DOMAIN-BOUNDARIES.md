@@ -40,7 +40,7 @@ shares the API-key store and (optionally) the Telegram approval channel with
 - **Consumed events**: None yet.
 - **Public API surface**: `/api/health`.
 - **Data ownership**: Process environment, server-generated health metadata, and the TLS certificate material loaded at startup.
-- **Key interfaces**: `loadTlsConfig` / `resolveTlsOptions` / `createHttpServer` turn the optional `tls` block into the listener; `exportCertificateFromWindowsStore` reads a certificate out of the Windows certificate store.
+- **Key interfaces**: `loadTlsConfig` / `resolveTlsOptions` / `createHttpServer` turn the optional `tls` block into the listener; `exportCertificateFromWindowsStore` reads a certificate out of the Windows certificate store through the native CryptoAPI binding in `windows_crypto_api.ts`.
 
 ### command-gateway
 
@@ -71,7 +71,7 @@ shares the API-key store and (optionally) the Telegram approval channel with
 | `command-gateway` | Telegram Bot API | HTTPS (telegraf) | Inline keyboard messages + callback queries |
 | `command-gateway` | SQLite | `better-sqlite3` | `<dataDir>/lucifer.db` (approvals + audit log tables) |
 | `command-gateway` | JSON config | filesystem reads | `lucifer.json`, `api-keys.json`, `command-rules.json` |
-| `platform-api` | JSON config + filesystem / Windows certificate store | filesystem reads, or `powershell.exe` for `source: windows-store` | Optional `tls` block in `lucifer.json`; certificate material is loaded once at startup. Spec: [docs/specs/tls.md](../specs/tls.md) |
+| `platform-api` | JSON config + filesystem / Windows certificate store | filesystem reads, or `crypt32.dll` (Windows CryptoAPI, via koffi) for `source: windows-store` | Optional `tls` block in `lucifer.json`; certificate material is loaded once at startup. Spec: [docs/specs/tls.md](../specs/tls.md) |
 | External caller | `request-proxy` | Transparent HTTP on configured proxy port | `x-api-key` header required; request either forwarded to the upstream, rejected with `401`/`403`, or held pending Telegram approval before forwarding. Spec: [docs/specs/transparent-proxy.md](../specs/transparent-proxy.md) |
 | `request-proxy` | `command-gateway` (API-key store) | In-process read-only reference | Shared `ApiKeyStore` instance; `request-proxy` validates keys but never writes |
 | `request-proxy` | Telegram Bot API | HTTPS via shared `ApprovalChannel` (optional) | Reuses the same Telegram approval channel instance when proxy approval mode is enabled |

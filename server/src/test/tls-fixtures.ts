@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 export interface CertificateFixture {
@@ -78,5 +78,103 @@ export function createCertificateFixture(label: string, passphrase = 'fixture-pa
 }
 
 export function removeCertificateFixture(fixture: CertificateFixture): void {
+  rmSync(fixture.dir, { recursive: true, force: true })
+}
+
+export interface ChainFixture {
+  dir: string
+  /** Self-signed root; never sent to clients. */
+  rootDer: Buffer
+  /** Intermediate that issued the leaf. */
+  intermediateDer: Buffer
+  /** Leaf issued for `leafDnsName`, with `O=Codewrecks` in its subject. */
+  leafDer: Buffer
+  /** A second, expired leaf carrying the same DNS name, as a renewal leaves behind. */
+  supersededLeafDer: Buffer
+  leafDnsName: string
+}
+
+function writeExtensions(dir: string, name: string, lines: string[]): string {
+  const file = join(dir, `${name}.ext`)
+  writeFileSync(file, `${lines.join('\n')}\n`)
+  return file
+}
+
+function toDer(dir: string, name: string): Buffer {
+  const derFile = join(dir, `${name}.der`)
+  runOpenssl(['x509', '-in', join(dir, `${name}.crt`), '-outform', 'DER', '-out', derFile])
+  return readFileSync(derFile)
+}
+
+function issue(
+  dir: string,
+  name: string,
+  subject: string,
+  issuer: string,
+  extensions: string[],
+  days: string,
+): void {
+  runOpenssl([
+    'req', '-new', '-newkey', 'rsa:2048', '-nodes',
+    '-keyout', join(dir, `${name}.key`), '-out', join(dir, `${name}.csr`),
+    '-subj', subject,
+  ])
+  runOpenssl([
+    'x509', '-req', '-in', join(dir, `${name}.csr`),
+    '-CA', join(dir, `${issuer}.crt`), '-CAkey', join(dir, `${issuer}.key`), '-CAcreateserial',
+    '-out', join(dir, `${name}.crt`), '-days', days,
+    '-extfile', writeExtensions(dir, name, extensions),
+  ])
+}
+
+/**
+ * A three-level chain — root, intermediate, leaf — plus a superseded leaf that
+ * shares the leaf's DNS name, which is what a renewal leaves in a real store.
+ * Generated rather than committed for the same reason as the single-cert
+ * fixture: a private key in the repository trips secret scanning.
+ */
+export function createChainFixture(label: string): ChainFixture {
+  const dir = join(process.cwd(), `.test-tls-chain-${label}`)
+  rmSync(dir, { recursive: true, force: true })
+  mkdirSync(dir, { recursive: true })
+
+  const leafDnsName = 'pippo.codewrecks.com'
+
+  runOpenssl([
+    'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
+    '-keyout', join(dir, 'root.key'), '-out', join(dir, 'root.crt'),
+    '-days', '2', '-subj', '/O=Codewrecks/CN=Lucifer Test Root',
+  ])
+
+  const caExtensions = [
+    'basicConstraints=critical,CA:TRUE',
+    'keyUsage=critical,keyCertSign,cRLSign',
+    'subjectKeyIdentifier=hash',
+    'authorityKeyIdentifier=keyid:always',
+  ]
+  issue(dir, 'intermediate', '/O=Codewrecks/CN=Lucifer Test Intermediate', 'root', caExtensions, '2')
+
+  const leafExtensions = [
+    'basicConstraints=critical,CA:FALSE',
+    'keyUsage=critical,digitalSignature,keyEncipherment',
+    `subjectAltName=DNS:${leafDnsName}`,
+    'subjectKeyIdentifier=hash',
+    'authorityKeyIdentifier=keyid:always',
+  ]
+  issue(dir, 'leaf', `/O=Codewrecks/CN=${leafDnsName}`, 'intermediate', leafExtensions, '2')
+  // -days 0 backdates the expiry to now, so this one is outside its window.
+  issue(dir, 'superseded', `/O=Codewrecks/CN=${leafDnsName}`, 'intermediate', leafExtensions, '0')
+
+  return {
+    dir,
+    rootDer: toDer(dir, 'root'),
+    intermediateDer: toDer(dir, 'intermediate'),
+    leafDer: toDer(dir, 'leaf'),
+    supersededLeafDer: toDer(dir, 'superseded'),
+    leafDnsName,
+  }
+}
+
+export function removeChainFixture(fixture: ChainFixture): void {
   rmSync(fixture.dir, { recursive: true, force: true })
 }

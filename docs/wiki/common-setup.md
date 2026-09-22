@@ -227,9 +227,12 @@ certificate out of the certificate store by the host name it was issued for:
 ```
 
 A `thumbprint` (SHA-1 or SHA-256) or a `subject` substring works too; the
-issuing intermediates are read out of the store alongside the certificate. For
-a PEM certificate signed by an intermediate CA, point `caFile` at the chain and
-it is sent to clients during the handshake.
+issuing intermediates are read out of the store alongside the certificate. The
+store is read through the native Windows CryptoAPI, so nothing is spawned and
+no private key is written to disk — but the key must be marked **exportable**,
+and a `LocalMachine` store normally needs an elevated process. For a PEM
+certificate signed by an intermediate CA, point `caFile` at the chain and it is
+sent to clients during the handshake.
 
 The block is read from the file passed to `--config`. `npm run dev` and
 `npm start` take no such flag and fall back to `./config/lucifer.json` when it

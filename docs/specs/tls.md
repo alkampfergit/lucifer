@@ -71,19 +71,32 @@ key, and any chain certificates. Unlock it with `LUCIFER_TLS_PASSPHRASE`.
 
 ### `windows-store`
 
-Windows only. Node has no binding to the Windows certificate store, so
-Lucifer shells out to PowerShell (by absolute path under `%SystemRoot%`, never
-via `PATH`), locates the certificate under `Cert:\<location>\<name>`, and
-reads it — together with the intermediates that issued it, via `X509Chain` —
-and returns the pair as a PKCS#12 blob protected by a single-use password
-generated per start. The bundle comes back base64 on stdout and never touches
-disk. Selector values are passed as environment variables, not interpolated
-into the script, so a crafted `subject` cannot inject PowerShell.
+Windows only. Lucifer calls the **Windows CryptoAPI** in `crypt32.dll`
+directly — `CertOpenStore`, `CertEnumCertificatesInStore`,
+`PFXExportCertStoreEx` — through [koffi](https://koffi.dev/), an FFI layer that
+ships prebuilt binaries per platform, so there is no compiler toolchain
+requirement and no child process. Both `crypt32.dll` and `kernel32.dll` are
+loaded by absolute path under `%SystemRoot%\System32`, so the DLL search order
+cannot be redirected at a library that would then be handed the private key.
 
-The self-signed root is deliberately left out of the bundle: a client has to
-trust it locally anyway and gains nothing from being sent a copy. If the chain
-cannot be built the leaf is served on its own and PowerShell emits a warning,
-rather than the whole startup failing.
+The store under `Cert:\<location>\<name>` is enumerated, each certificate is
+parsed with `node:crypto`, and the selector is applied in TypeScript. The
+chosen certificate and its issuing intermediates are staged in an in-memory
+store and exported as a PKCS#12 blob protected by a single-use password
+generated per start. Nothing touches disk, and no selector value is ever
+interpolated into a script or a command line.
+
+Because the matching runs on parsed certificates rather than on a shell's
+string comparison, it is covered by unit tests on every platform, and the
+Windows CI job additionally boots the real listener from a certificate planted
+in `Cert:\CurrentUser\My`.
+
+Intermediates are looked for in `CA` and `Root` under both `LocalMachine` and
+`CurrentUser`. The self-signed root is deliberately left out of the bundle: a
+client has to trust it locally anyway and gains nothing from being sent a copy.
+If the chain cannot be built the leaf is served on its own and a warning is
+logged, rather than the whole startup failing. A self-signed leaf skips the
+chain search entirely.
 
 Set exactly one of:
 
@@ -91,7 +104,7 @@ Set exactly one of:
 |---|---|
 | `dnsName` | A host name the certificate was issued for, e.g. `pippo.codewrecks.com`. Compared against the certificate's DNS names (its subject alternative names, falling back to the simple subject name when it has none) — the names certmgr shows under *Issued To*. Case-insensitive; a wildcard certificate is named as it appears, `*.codewrecks.com`. Surrounding whitespace is trimmed. |
 | `thumbprint` | The fingerprint, exactly. 40 hex characters are matched against the SHA-1 thumbprint certmgr shows; 64 hex characters are matched against a SHA-256 fingerprint computed from the certificate. Spaces and colons are stripped and case is ignored, so a value pasted from certmgr works unchanged. |
-| `subject` | A **literal** case-insensitive substring of the certificate's full subject DN, e.g. `O=Codewrecks`. `*`, `?` and `[` are matched as themselves, not as wildcards. |
+| `subject` | A **literal** case-insensitive substring of the certificate's subject DN, e.g. `O=Codewrecks`. `*`, `?` and `[` are matched as themselves, not as wildcards. The substring is tried against the subject in each of the renderings tools print it in — one RDN per line, and comma-joined in either RDN order — so a value copied out of certmgr matches. |
 
 Matching nothing is an error. When a `dnsName` or `subject` matches more than
 one certificate — the usual case after a renewal leaves the superseded
@@ -103,10 +116,13 @@ Requirements and limits:
 
 - The private key must be marked **exportable**. Non-exportable keys, and
   CNG/HSM-held keys whose provider refuses to release the key, fail with the
-  underlying PowerShell error.
+  `GetLastError` code reported by CryptoAPI. A native binding does not lift
+  this: Node's TLS stack needs the key bytes, so a key that cannot leave its
+  provider cannot serve a Node listener however it is reached.
 - `LocalMachine` stores normally require an elevated process.
 - On any non-Windows platform, `"source": "windows-store"` fails at startup
-  with a message pointing at `pem`/`pfx`, rather than a confusing spawn error.
+  with a message pointing at `pem`/`pfx`. The FFI library is never loaded on a
+  host that cannot use it.
 
 ## Behaviour
 
@@ -141,6 +157,7 @@ Deliberately not in this version:
 |---|---|
 | `tls` block validation and path resolution | `server/src/domains/platform-api/config/tls_config.ts` |
 | Certificate material → `https.createServer` options | `server/src/domains/platform-api/service/resolve_tls_options.ts` |
-| Windows certificate store read | `server/src/domains/platform-api/service/windows_certificate_store.ts` |
+| Certificate selection and chain assembly for the Windows store | `server/src/domains/platform-api/service/windows_certificate_store.ts` |
+| Native CryptoAPI binding (`crypt32.dll`) | `server/src/domains/platform-api/service/windows_crypto_api.ts` |
 | Listener construction | `server/src/domains/platform-api/service/create_http_server.ts` |
 | Default config path for the flagless entrypoints | `server/src/lib/config_path.ts` |

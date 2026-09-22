@@ -63,7 +63,7 @@ Anti-patterns:
 | Rate limiting | `express-rate-limit` + in-memory auth limiter | Protects execute and admin approval routes |
 | Logging | `pino` | Console logs plus optional JSON file logging |
 | Command execution | Node child process APIs | Timeout, output caps, and concurrency limits enforced in service layer |
-| CI/CD | GitHub Actions | `ci.yml` validates, builds the Docker image, and publishes to npm |
+| CI/CD | GitHub Actions | `ci.yml` validates on an `ubuntu-latest` + `windows-latest` matrix, builds the Docker image, and publishes to npm |
 | Observability | Console logs + Azure Container Apps logs/metrics | Expand to structured telemetry when features grow |
 
 ## Key Architectural Decisions
