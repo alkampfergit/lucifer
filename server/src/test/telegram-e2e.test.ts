@@ -154,8 +154,13 @@ describe('Telegram E2E: approval flow', () => {
     expect(res.body.code).toBe('DENIED');
   }, 20_000);
 
+  // The two commands differ only after the `ls -la` prefix the approval is
+  // cached under. They list `.` and `..` rather than `/tmp` and `/var` so the
+  // targets exist on every platform — there is no `/var` on Windows, where
+  // the second command exited non-zero and reported `failed` even though the
+  // cached approval had been applied correctly.
   it('approves via prefix button and reuses approval for similar command', async () => {
-    const { execPromise, buttons } = await fireAndGetButtons('ls -la /tmp');
+    const { execPromise, buttons } = await fireAndGetButtons('ls -la .');
 
     const prefix8h = buttons.find(b =>
       b.callback_data.startsWith('approve:') && b.callback_data.endsWith(':prefix:8'),
@@ -169,7 +174,7 @@ describe('Telegram E2E: approval flow', () => {
     expect(first.body.status).toBe('completed');
 
     // Second command with same prefix "ls -la" should be auto-approved (cached)
-    const res2 = await fireExecute(ctx, 'ls -la /var');
+    const res2 = await fireExecute(ctx, 'ls -la ..');
 
     expect(res2.status).toBe(200);
     expect(res2.body.status).toBe('completed');
