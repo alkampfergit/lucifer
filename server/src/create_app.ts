@@ -1,7 +1,11 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import express from 'express'
-import { getServerConfig } from './domains/platform-api/config/server_config.js'
+import {
+  getServerConfig,
+  resolveListenerPort,
+  type ServerConfig,
+} from './domains/platform-api/config/server_config.js'
 import { loadTlsConfig } from './domains/platform-api/config/tls_config.js'
 import { resolveTlsOptions } from './domains/platform-api/service/resolve_tls_options.js'
 import type { ResolvedTlsOptions } from './domains/platform-api/types/tls_config.js'
@@ -304,7 +308,16 @@ function resolveListenerTls(configPath: string | undefined): ResolvedTlsOptions 
 }
 
 export function createApp(options: CreateAppOptions = {}) {
-  const serverConfig = getServerConfig()
+  const gatewayConfig = loadGatewayConfig(options.configPath)
+
+  // One port for everything downstream: the listener the entrypoints bind, the
+  // health report, and the proxy collision check. Before this they disagreed —
+  // the check validated against `lucifer.json`'s `port` while the listener
+  // bound `PORT`, so a proxy mapping could take the gateway's own port unseen.
+  const listenerPort = resolveListenerPort(gatewayConfig.port)
+  gatewayConfig.port = listenerPort
+
+  const serverConfig: ServerConfig = { ...getServerConfig(), port: listenerPort }
   const metadataRepository = createRuntimeMetadataRepository()
   const getHealthReport = createHealthReportService(serverConfig, metadataRepository)
   const app = express()
@@ -313,7 +326,6 @@ export function createApp(options: CreateAppOptions = {}) {
   app.use(express.json())
   registerHealthRoutes(app, getHealthReport)
 
-  const gatewayConfig = loadGatewayConfig(options.configPath)
   const paths = resolveConfigPaths(options.configPath)
   const tlsOptions = resolveListenerTls(options.configPath)
 

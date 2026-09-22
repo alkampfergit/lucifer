@@ -92,6 +92,16 @@ export interface ChainFixture {
   /** A second, expired leaf carrying the same DNS name, as a renewal leaves behind. */
   supersededLeafDer: Buffer
   leafDnsName: string
+  /**
+   * A CA key rollover: the root's subject DN reissued under a new key and
+   * signed by the root, carrying no key identifiers. Name comparison alone
+   * cannot tell it from the root, so it exercises signature-verified issuer
+   * matching.
+   */
+  rolloverDer: Buffer
+  /** Leaf issued by `rolloverDer`, for `rolloverLeafDnsName`. */
+  rolloverLeafDer: Buffer
+  rolloverLeafDnsName: string
 }
 
 function writeExtensions(dir: string, name: string, lines: string[]): string {
@@ -165,6 +175,20 @@ export function createChainFixture(label: string): ChainFixture {
   // -days 0 backdates the expiry to now, so this one is outside its window.
   issue(dir, 'superseded', `/O=Codewrecks/CN=${leafDnsName}`, 'intermediate', leafExtensions, '0')
 
+  // The rollover pair. Omitting the key identifiers is what makes
+  // `X509Certificate.checkIssued` fall back to comparing names only, which is
+  // how a self-issued certificate gets mistaken for a self-signed root.
+  const rolloverLeafDnsName = 'rollover.codewrecks.com'
+  issue(dir, 'rollover', '/O=Codewrecks/CN=Lucifer Test Root', 'root', [
+    'basicConstraints=critical,CA:TRUE',
+    'keyUsage=critical,keyCertSign,cRLSign',
+  ], '2')
+  issue(dir, 'rollover-leaf', `/O=Codewrecks/CN=${rolloverLeafDnsName}`, 'rollover', [
+    'basicConstraints=critical,CA:FALSE',
+    'keyUsage=critical,digitalSignature,keyEncipherment',
+    `subjectAltName=DNS:${rolloverLeafDnsName}`,
+  ], '2')
+
   return {
     dir,
     rootDer: toDer(dir, 'root'),
@@ -172,6 +196,9 @@ export function createChainFixture(label: string): ChainFixture {
     leafDer: toDer(dir, 'leaf'),
     supersededLeafDer: toDer(dir, 'superseded'),
     leafDnsName,
+    rolloverDer: toDer(dir, 'rollover'),
+    rolloverLeafDer: toDer(dir, 'rollover-leaf'),
+    rolloverLeafDnsName,
   }
 }
 

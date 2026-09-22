@@ -126,8 +126,33 @@ function isCurrentlyValid(x509: X509Certificate, now: Date): boolean {
   return x509.validFromDate <= now && x509.validToDate > now
 }
 
+/**
+ * Whether `certificate` was really issued by `issuer`.
+ *
+ * `checkIssued` is specified as a comparison of issuer and subject names and
+ * key identifiers, and certificates from one CA share those — a key rollover
+ * reissues the same subject DN under a new key. The signature check makes the
+ * requirement explicit rather than leaving which CA's certificate enters the
+ * chain to depend on how far a given OpenSSL build happens to go.
+ */
+function isIssuedBy(certificate: X509Certificate, issuer: X509Certificate): boolean {
+  if (!certificate.checkIssued(issuer)) return false
+  try {
+    return certificate.verify(issuer.publicKey)
+  } catch {
+    // An issuer whose public key node:crypto cannot read is not one we can
+    // prove signed this certificate.
+    return false
+  }
+}
+
+/**
+ * Self-*signed*, not merely self-issued: a rollover certificate names itself
+ * as its own issuer but is signed by the CA's previous key, and it belongs in
+ * the chain rather than being mistaken for the root and dropped.
+ */
 function isSelfSigned(x509: X509Certificate): boolean {
-  return x509.checkIssued(x509)
+  return isIssuedBy(x509, x509)
 }
 
 /**
@@ -191,7 +216,7 @@ function collectIssuers(
 
   for (let depth = 0; depth < MAX_CHAIN_DEPTH; depth += 1) {
     const issuer = candidates.find(
-      (entry) => !seen.has(entry.x509.fingerprint256) && current.x509.checkIssued(entry.x509),
+      (entry) => !seen.has(entry.x509.fingerprint256) && isIssuedBy(current.x509, entry.x509),
     )
     if (!issuer) {
       warn(`Could not read the issuing chain from the store above ${current.x509.subject.replaceAll('\n', ', ')}.`)

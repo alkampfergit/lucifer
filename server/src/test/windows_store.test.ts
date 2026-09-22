@@ -23,6 +23,14 @@ const certificatePem = process.env.LUCIFER_TEST_WINDOWS_STORE_CERT_PEM
 const enabled =
   process.platform === 'win32' && Boolean(dnsName) && Boolean(thumbprint) && Boolean(certificatePem)
 
+/**
+ * The second CI certificate: a leaf under `root -> intermediate -> leaf`, with
+ * both issuers left in the store containers as public-only copies.
+ */
+const chainDnsName = process.env.LUCIFER_TEST_WINDOWS_STORE_CHAIN_DNS_NAME
+const chainRootPem = process.env.LUCIFER_TEST_WINDOWS_STORE_CHAIN_ROOT_PEM
+const chainEnabled = enabled && Boolean(chainDnsName) && Boolean(chainRootPem)
+
 const cleanups: Array<() => Promise<void> | void> = []
 
 function writeConfig(label: string, store: Record<string, unknown>): string {
@@ -58,15 +66,19 @@ async function boot(configPath: string): Promise<{ port: number; scheme: string 
  * handshake performs the same validation a real client would rather than
  * skipping it.
  */
-function getHealthOverTls(port: number): Promise<{ status: number; body: string }> {
+function getHealthOverTls(
+  port: number,
+  servername: string = dnsName as string,
+  caPath: string = certificatePem as string,
+): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
     const req = https.get(
       {
         host: '127.0.0.1',
         port,
         path: '/api/health',
-        servername: dnsName,
-        ca: readFileSync(certificatePem as string),
+        servername,
+        ca: readFileSync(caPath),
       },
       (res) => {
         let body = ''
@@ -117,5 +129,27 @@ describe.skipIf(!enabled)('gateway listener backed by the Windows certificate st
     expect(() => createApp({ configPath, autoApprove: true })).toThrow(
       /matched the configured selector/,
     )
+  })
+})
+
+describe.skipIf(!chainEnabled)('gateway listener backed by a chained store certificate', () => {
+  it('sends the issuing intermediate so a client holding only the root can validate', async () => {
+    const booted = await boot(
+      writeConfig('chain', { location: 'CurrentUser', name: 'My', dnsName: chainDnsName }),
+    )
+
+    expect(booted.scheme).toBe('https')
+
+    // The client trusts the root and nothing else. It can only build a path to
+    // it if the listener sent the intermediate alongside the leaf — which in
+    // turn means the store export staged a certificate that has no private key.
+    const response = await getHealthOverTls(
+      booted.port,
+      chainDnsName as string,
+      chainRootPem as string,
+    )
+
+    expect(response.status).toBe(200)
+    expect(JSON.parse(response.body)).toMatchObject({ status: 'ok' })
   })
 })
