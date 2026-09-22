@@ -54,8 +54,24 @@ describe('resolveTlsOptions', () => {
     expect(options).not.toHaveProperty('passphrase')
   })
 
-  it('reads an optional ca bundle', () => {
+  it('appends the chain bundle to the certificate so clients actually receive it', () => {
+    // `ca` on a server is the trust store for client certificates and is never
+    // sent to a client; intermediates only travel as part of `cert`.
     const dir = createDir('pem-ca')
+    const options = resolveTlsOptions({
+      source: 'pem',
+      minVersion: 'TLSv1.2',
+      certFile: writeFile(dir, 'server.crt', 'CERT\n'),
+      keyFile: writeFile(dir, 'server.key', 'KEY'),
+      caFile: writeFile(dir, 'chain.pem', 'CHAIN'),
+    })
+
+    expect(options.cert?.toString()).toBe('CERT\nCHAIN')
+    expect(options).not.toHaveProperty('ca')
+  })
+
+  it('separates the chain from a certificate file that does not end in a newline', () => {
+    const dir = createDir('pem-ca-nonewline')
     const options = resolveTlsOptions({
       source: 'pem',
       minVersion: 'TLSv1.2',
@@ -64,7 +80,7 @@ describe('resolveTlsOptions', () => {
       caFile: writeFile(dir, 'chain.pem', 'CHAIN'),
     })
 
-    expect(options.ca?.toString()).toBe('CHAIN')
+    expect(options.cert?.toString()).toBe('CERT\nCHAIN')
   })
 
   it('takes the pfx passphrase from the environment, not from the config file', () => {

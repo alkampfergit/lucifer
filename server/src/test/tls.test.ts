@@ -73,6 +73,28 @@ function getHealthOverTls(
   })
 }
 
+/**
+ * Attempt a handshake capped at `maxVersion` and resolve with the failure. A
+ * successful response is a test failure: the point of `minVersion` is that an
+ * older client is turned away.
+ */
+function expectRefusedHandshake(
+  port: number,
+  fixture: CertificateFixture,
+  maxVersion: 'TLSv1.2',
+): Promise<Error> {
+  return new Promise((resolve, reject) => {
+    const req = https.get(
+      { host: '127.0.0.1', port, path: '/api/health', ca: readFileSync(fixture.certFile), maxVersion },
+      (res) => {
+        res.resume()
+        reject(new Error(`a ${maxVersion} client was served instead of being refused`))
+      },
+    )
+    req.on('error', resolve)
+  })
+}
+
 afterEach(async () => {
   for (const cleanup of cleanups.reverse()) {
     await cleanup()
@@ -126,7 +148,7 @@ describe.skipIf(!hasOpenssl())('gateway listener with a tls block', () => {
     expect(JSON.parse(response.body)).toMatchObject({ status: 'ok' })
   })
 
-  it('refuses TLS 1.1 and below when minVersion is TLSv1.3', async () => {
+  it('negotiates TLS 1.3 and turns a TLS 1.2 client away when minVersion is TLSv1.3', async () => {
     fixture = createCertificateFixture('min-version')
     const booted = await boot(
       writeConfig('min-version', {
@@ -139,6 +161,27 @@ describe.skipIf(!hasOpenssl())('gateway listener with a tls block', () => {
 
     const response = await getHealthOverTls(booted.port, fixture)
     expect(response.protocol).toBe('TLSv1.3')
+
+    const refusal = await expectRefusedHandshake(booted.port, fixture, 'TLSv1.2')
+    expect(refusal.message).toMatch(/version|protocol|EPROTO|alert/i)
+  })
+
+  it('still completes the handshake when a caFile chain is appended to the certificate', async () => {
+    fixture = createCertificateFixture('chain')
+    const chainFile = join(fixture.dir, 'chain.pem')
+    writeFileSync(chainFile, readFileSync(fixture.certFile))
+
+    const booted = await boot(
+      writeConfig('chain', {
+        source: 'pem',
+        certFile: fixture.certFile,
+        keyFile: fixture.keyFile,
+        caFile: chainFile,
+      }),
+    )
+
+    const response = await getHealthOverTls(booted.port, fixture)
+    expect(response.status).toBe(200)
   })
 
   it('fails startup with a descriptive error when the certificate is missing', () => {

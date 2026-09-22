@@ -76,6 +76,40 @@ describe('exportCertificateFromWindowsStore', () => {
     expect(WINDOWS_STORE_EXPORT_SCRIPT).toContain('use a thumbprint to disambiguate')
   })
 
+  it('compares a 64-character thumbprint as a SHA-256 fingerprint, not as Thumbprint', () => {
+    // X509Certificate2.Thumbprint is SHA-1, so a SHA-256 value accepted by the
+    // config validator would otherwise match nothing at all.
+    expect(WINDOWS_STORE_EXPORT_SCRIPT).toContain('if ($wanted.Length -eq 64) {')
+    expect(WINDOWS_STORE_EXPORT_SCRIPT).toContain(
+      '[BitConverter]::ToString($sha256.ComputeHash($_.RawData)).Replace("-", "") -eq $wanted',
+    )
+    expect(WINDOWS_STORE_EXPORT_SCRIPT).toContain('$certs = @($certs | Where-Object { $_.Thumbprint -eq $wanted })')
+  })
+
+  it('matches the subject literally so a wildcard character cannot select another certificate', () => {
+    // -like would read *, ? and [ in an operator-supplied subject as pattern
+    // syntax; IndexOf is a literal comparison.
+    expect(WINDOWS_STORE_EXPORT_SCRIPT).toContain(
+      '$_.Subject.IndexOf($subject, [System.StringComparison]::OrdinalIgnoreCase) -ge 0',
+    )
+    expect(WINDOWS_STORE_EXPORT_SCRIPT).not.toContain('$_.Subject -like')
+  })
+
+  it('reads the issuing intermediates out of the store and leaves the root out', () => {
+    expect(WINDOWS_STORE_EXPORT_SCRIPT).toContain('$chain.Build($cert)')
+    expect(WINDOWS_STORE_EXPORT_SCRIPT).toContain(
+      'if ($issuer.Thumbprint -ne $cert.Thumbprint -and $issuer.Subject -ne $issuer.Issuer) {',
+    )
+    // The bundle, not the bare leaf, is what gets exported.
+    expect(WINDOWS_STORE_EXPORT_SCRIPT).toContain('$bytes = $bundle.Export(')
+  })
+
+  it('serves the leaf alone rather than failing when the chain cannot be read', () => {
+    expect(WINDOWS_STORE_EXPORT_SCRIPT).toContain(
+      'Write-Warning "Could not read the issuing chain from the store: $($_.Exception.Message)"',
+    )
+  })
+
   it('generates a fresh single-use passphrase per export', () => {
     const passphrases: string[] = []
     const deps = {

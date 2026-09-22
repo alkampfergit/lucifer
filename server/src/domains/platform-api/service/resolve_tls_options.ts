@@ -15,6 +15,19 @@ function readCertFile(filePath: string | undefined, key: string): Buffer {
 }
 
 /**
+ * Append a chain bundle to the leaf certificate.
+ *
+ * `https.createServer` does not send its `ca` option to clients — for a server
+ * that option is the trust store used to verify *client* certificates. The
+ * only way to present intermediates is to include them in `cert`, so a
+ * configured `caFile` is concatenated onto the leaf.
+ */
+function appendChain(leaf: Buffer, chain: Buffer): Buffer {
+  const needsSeparator = leaf.length > 0 && leaf.at(-1) !== 0x0a
+  return Buffer.concat(needsSeparator ? [leaf, Buffer.from('\n'), chain] : [leaf, chain])
+}
+
+/**
  * Turn a validated `tls` block into the options handed to
  * `https.createServer`. Certificate material is read once at startup, so a
  * rotated file only takes effect on restart.
@@ -27,13 +40,12 @@ export function resolveTlsOptions(tls: TlsConfig, deps: WindowsStoreDeps = {}): 
   const passphrase = process.env[TLS_PASSPHRASE_ENV]
 
   if (tls.source === 'pem') {
+    const leaf = readCertFile(tls.certFile, 'certFile')
+    const key = readCertFile(tls.keyFile, 'keyFile')
     const options: ResolvedTlsOptions = {
       minVersion: tls.minVersion,
-      cert: readCertFile(tls.certFile, 'certFile'),
-      key: readCertFile(tls.keyFile, 'keyFile'),
-    }
-    if (tls.caFile) {
-      options.ca = readCertFile(tls.caFile, 'caFile')
+      cert: tls.caFile ? appendChain(leaf, readCertFile(tls.caFile, 'caFile')) : leaf,
+      key,
     }
     if (passphrase) {
       options.passphrase = passphrase

@@ -36,20 +36,42 @@ export interface WindowsStoreDeps {
  * certificate was issued for: its subject alternative names, falling back to
  * the simple subject name when the certificate carries no SAN extension. That
  * is the name an operator reads in certmgr, so it is what `dnsName` matches.
+ *
+ * A 40-character `thumbprint` is compared against `X509Certificate2.Thumbprint`
+ * (SHA-1, the value certmgr shows); a 64-character one is compared against a
+ * SHA-256 fingerprint computed from the certificate's DER bytes.
+ *
+ * The bundle carries the issuing intermediates as well, read back out of the
+ * store via `X509Chain`, so the listener can present a complete chain.
  */
 export const WINDOWS_STORE_EXPORT_SCRIPT = [
   "$ErrorActionPreference = 'Stop'",
   String.raw`$path = 'Cert:\' + $env:LUCIFER_TLS_STORE_PATH`,
   '$certs = @(Get-ChildItem -Path $path)',
   'if ($env:LUCIFER_TLS_THUMBPRINT) {',
-  '  $certs = @($certs | Where-Object { $_.Thumbprint -eq $env:LUCIFER_TLS_THUMBPRINT })',
+  '  $wanted = $env:LUCIFER_TLS_THUMBPRINT',
+  '  if ($wanted.Length -eq 64) {',
+  '    # X509Certificate2.Thumbprint is SHA-1, so a SHA-256 fingerprint has to',
+  '    # be computed from the DER bytes instead of compared against it.',
+  '    $sha256 = [System.Security.Cryptography.SHA256]::Create()',
+  '    $certs = @($certs | Where-Object {',
+  '      [BitConverter]::ToString($sha256.ComputeHash($_.RawData)).Replace("-", "") -eq $wanted',
+  '    })',
+  '  } else {',
+  '    $certs = @($certs | Where-Object { $_.Thumbprint -eq $wanted })',
+  '  }',
   '} elseif ($env:LUCIFER_TLS_DNS_NAME) {',
   '  $dnsName = $env:LUCIFER_TLS_DNS_NAME',
   '  $certs = @($certs | Where-Object {',
   '    $_.DnsNameList.Unicode -contains $dnsName -or $_.DnsNameList.Punycode -contains $dnsName',
   '  })',
   '} elseif ($env:LUCIFER_TLS_SUBJECT) {',
-  '  $certs = @($certs | Where-Object { $_.Subject -like "*$($env:LUCIFER_TLS_SUBJECT)*" })',
+  '  # Literal case-insensitive substring. -like would read a *, ? or [ in an',
+  '  # operator-supplied subject as a wildcard and select an unrelated key.',
+  '  $subject = $env:LUCIFER_TLS_SUBJECT',
+  '  $certs = @($certs | Where-Object {',
+  '    $_.Subject.IndexOf($subject, [System.StringComparison]::OrdinalIgnoreCase) -ge 0',
+  '  })',
   '} else {',
   '  throw "No certificate selector was supplied."',
   '}',
@@ -64,7 +86,29 @@ export const WINDOWS_STORE_EXPORT_SCRIPT = [
   'if ($certs.Count -gt 1) { throw "$($certs.Count) certificates in $path matched the configured selector; use a thumbprint to disambiguate." }',
   '$cert = $certs[0]',
   'if (-not $cert.HasPrivateKey) { throw "Certificate $($cert.Thumbprint) has no usable private key in $path." }',
-  '$bytes = $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pfx, $env:LUCIFER_TLS_EXPORT_PASSWORD)',
+  '# Read the issuing certificates out of the store too. Exporting the leaf on',
+  '# its own emits no intermediates, and a client that does not already hold',
+  '# them cannot build a path to the root.',
+  '$bundle = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2Collection',
+  '[void]$bundle.Add($cert)',
+  'try {',
+  '  $chain = New-Object System.Security.Cryptography.X509Certificates.X509Chain',
+  "  $chain.ChainPolicy.RevocationMode = 'NoCheck'",
+  "  $chain.ChainPolicy.VerificationFlags = 'AllowUnknownCertificateAuthority'",
+  '  [void]$chain.Build($cert)',
+  '  foreach ($element in $chain.ChainElements) {',
+  '    $issuer = $element.Certificate',
+  '    # Skip the leaf, already added, and the self-signed root, which a client',
+  '    # has to trust locally anyway and gains nothing from receiving.',
+  '    if ($issuer.Thumbprint -ne $cert.Thumbprint -and $issuer.Subject -ne $issuer.Issuer) {',
+  '      [void]$bundle.Add($issuer)',
+  '    }',
+  '  }',
+  '} catch {',
+  '  # An incomplete chain is not fatal: serve the leaf alone and say so.',
+  '  Write-Warning "Could not read the issuing chain from the store: $($_.Exception.Message)"',
+  '}',
+  '$bytes = $bundle.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pfx, $env:LUCIFER_TLS_EXPORT_PASSWORD)',
   '[Convert]::ToBase64String($bytes)',
 ].join('\n')
 
@@ -110,7 +154,7 @@ function selectorEnv(selector: WindowsStoreSelector, passphrase: string): NodeJS
  * certificate store as an in-memory PKCS#12 bundle.
  *
  * Requires an exportable private key. Keys marked non-exportable, or held in a
- * CNG/HSM key storage provider that refuses export, cannot be used this way —
+ * CNG/HSM key storage provider that refuses the read, cannot be used this way —
  * the PowerShell error is surfaced verbatim so the operator can tell which
  * case they hit. `LocalMachine` stores normally require an elevated process.
  */

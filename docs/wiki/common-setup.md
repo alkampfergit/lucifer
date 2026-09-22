@@ -226,5 +226,12 @@ certificate out of the certificate store by the host name it was issued for:
 }
 ```
 
-A `thumbprint` or a `subject` substring works too. Omit the block and the
-server stays plain HTTP. Full contract: [TLS](../specs/tls.md).
+A `thumbprint` (SHA-1 or SHA-256) or a `subject` substring works too; the
+issuing intermediates are read out of the store alongside the certificate. For
+a PEM certificate signed by an intermediate CA, point `caFile` at the chain and
+it is sent to clients during the handshake.
+
+The block is read from the file passed to `--config`. `npm run dev` and
+`npm start` take no such flag and fall back to `./config/lucifer.json` when it
+exists. Omit the block and the server stays plain HTTP. Full contract:
+[TLS](../specs/tls.md).
