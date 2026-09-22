@@ -1,172 +1,341 @@
 // @vitest-environment node
-import { describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { X509Certificate } from 'node:crypto'
+import { exportCertificateFromWindowsStore } from './windows_certificate_store.js'
+import type {
+  WindowsCryptoApi,
+  WindowsStoreCertificate,
+} from './windows_crypto_api.js'
+import type { WindowsStoreLocation, WindowsStoreSelector } from '../types/tls_config.js'
 import {
-  WINDOWS_STORE_EXPORT_SCRIPT,
-  exportCertificateFromWindowsStore,
-  type PowerShellResult,
-} from './windows_certificate_store.js'
-import type { WindowsStoreSelector } from '../types/tls_config.js'
+  createChainFixture,
+  hasOpenssl,
+  removeChainFixture,
+  type ChainFixture,
+} from '../../../test/tls-fixtures.js'
 
-const thumbprintSelector: WindowsStoreSelector = {
-  location: 'LocalMachine',
-  name: 'My',
-  thumbprint: 'A1B2C3D4E5F60718293A4B5C6D7E8F90A1B2C3D4',
+interface StoredCertificate {
+  der: Buffer
+  hasPrivateKey: boolean
 }
 
-function ok(stdout: string): PowerShellResult {
-  return { status: 0, stdout, stderr: '' }
+type FakeStores = Record<string, StoredCertificate[]>
+
+interface FakeCryptoApi {
+  api: WindowsCryptoApi
+  exported: WindowsStoreCertificate[][]
+  passphrases: string[]
+  releasedHandles: unknown[]
+  openedStores: string[]
+}
+
+function storeKey(location: WindowsStoreLocation, name: string): string {
+  return `${location}/${name}`
+}
+
+/**
+ * Stands in for `crypt32.dll`. Everything the service decides — which
+ * certificate matches, which intermediates travel with it, which handles are
+ * freed — is exercised against real certificates through this double, so the
+ * logic is covered on every platform and not only on Windows.
+ */
+function fakeCryptoApi(stores: FakeStores, pfx = Buffer.from('pkcs12-bytes')): FakeCryptoApi {
+  const exported: WindowsStoreCertificate[][] = []
+  const passphrases: string[] = []
+  const releasedHandles: unknown[] = []
+  const openedStores: string[] = []
+
+  const api: WindowsCryptoApi = {
+    listCertificates(location, name) {
+      const key = storeKey(location, name)
+      openedStores.push(key)
+      const entries = stores[key]
+      if (!entries) {
+        throw new Error(`Cannot open the Windows certificate store "${key}": Windows error 0x80092004`)
+      }
+      return entries.map((entry, index) => ({ ...entry, handle: { key, index } }))
+    },
+    exportPkcs12(certificates, passphrase) {
+      exported.push([...certificates])
+      passphrases.push(passphrase)
+      return pfx
+    },
+    release(certificates) {
+      releasedHandles.push(...certificates.map((certificate) => certificate.handle))
+    },
+  }
+
+  return { api, exported, passphrases, releasedHandles, openedStores }
+}
+
+const WINDOWS = { platform: 'win32' as const }
+
+function selector(overrides: Partial<WindowsStoreSelector>): WindowsStoreSelector {
+  return { location: 'LocalMachine', name: 'My', ...overrides }
+}
+
+function fingerprints(der: Buffer): { sha1: string; sha256: string } {
+  const certificate = new X509Certificate(der)
+  return {
+    sha1: certificate.fingerprint.replaceAll(':', '').toUpperCase(),
+    sha256: certificate.fingerprint256.replaceAll(':', '').toUpperCase(),
+  }
 }
 
 describe('exportCertificateFromWindowsStore', () => {
   it('refuses to run on a non-Windows platform with an actionable message', () => {
     expect(() =>
-      exportCertificateFromWindowsStore(thumbprintSelector, {
+      exportCertificateFromWindowsStore(selector({ thumbprint: 'A'.repeat(40) }), {
         platform: 'linux',
-        runPowerShell: () => ok(''),
+        cryptoApi: fakeCryptoApi({}).api,
       }),
     ).toThrow(/only supported on Windows \(running on linux\)/)
   })
 
-  it('passes the selector through the environment, never the script text', () => {
-    const seen: Array<{ script: string; env: NodeJS.ProcessEnv }> = []
+  it('never touches the certificate store on a non-Windows platform', () => {
+    const fake = fakeCryptoApi({})
+    expect(() =>
+      exportCertificateFromWindowsStore(selector({ dnsName: 'example.test' }), {
+        platform: 'linux',
+        cryptoApi: fake.api,
+      }),
+    ).toThrow()
+    expect(fake.openedStores).toEqual([])
+  })
+})
 
-    const result = exportCertificateFromWindowsStore(thumbprintSelector, {
-      platform: 'win32',
-      runPowerShell: (script, env) => {
-        seen.push({ script, env })
-        return ok(Buffer.from('pkcs12-bytes').toString('base64'))
-      },
+// The chain is generated with openssl rather than committed.
+describe.skipIf(!hasOpenssl())('exportCertificateFromWindowsStore against a real chain', () => {
+  let fixture: ChainFixture
+
+  beforeAll(() => {
+    fixture = createChainFixture('store')
+  })
+
+  afterAll(() => {
+    removeChainFixture(fixture)
+  })
+
+  function populatedStores(overrides: Partial<FakeStores> = {}): FakeStores {
+    return {
+      [storeKey('LocalMachine', 'My')]: [{ der: fixture.leafDer, hasPrivateKey: true }],
+      [storeKey('LocalMachine', 'CA')]: [{ der: fixture.intermediateDer, hasPrivateKey: false }],
+      [storeKey('LocalMachine', 'Root')]: [{ der: fixture.rootDer, hasPrivateKey: false }],
+      [storeKey('CurrentUser', 'CA')]: [],
+      [storeKey('CurrentUser', 'Root')]: [],
+      ...overrides,
+    }
+  }
+
+  it('selects by dnsName and ships the issuing intermediate but not the root', () => {
+    const fake = fakeCryptoApi(populatedStores())
+
+    const result = exportCertificateFromWindowsStore(
+      selector({ dnsName: fixture.leafDnsName }),
+      { ...WINDOWS, cryptoApi: fake.api },
+    )
+
+    expect(result.pfx.toString()).toBe('pkcs12-bytes')
+    expect(fake.exported).toHaveLength(1)
+    const bundle = fake.exported[0].map((certificate) => certificate.der)
+    expect(bundle).toEqual([fixture.leafDer, fixture.intermediateDer])
+    expect(bundle).not.toContainEqual(fixture.rootDer)
+  })
+
+  it('matches a 40-character thumbprint against the SHA-1 fingerprint', () => {
+    const fake = fakeCryptoApi(populatedStores())
+    const { sha1 } = fingerprints(fixture.leafDer)
+
+    const result = exportCertificateFromWindowsStore(
+      selector({ thumbprint: sha1 }),
+      { ...WINDOWS, cryptoApi: fake.api },
+    )
+
+    expect(result.pfx.length).toBeGreaterThan(0)
+    expect(fake.exported[0][0].der).toEqual(fixture.leafDer)
+  })
+
+  it('matches a 64-character thumbprint against the SHA-256 fingerprint', () => {
+    const fake = fakeCryptoApi(populatedStores())
+    const { sha256 } = fingerprints(fixture.leafDer)
+
+    exportCertificateFromWindowsStore(
+      selector({ thumbprint: sha256 }),
+      { ...WINDOWS, cryptoApi: fake.api },
+    )
+
+    expect(fake.exported[0][0].der).toEqual(fixture.leafDer)
+  })
+
+  it('matches a subject substring in the comma-joined rendering certmgr shows', () => {
+    const fake = fakeCryptoApi(populatedStores())
+
+    exportCertificateFromWindowsStore(
+      selector({ subject: `CN=${fixture.leafDnsName}, O=Codewrecks` }),
+      { ...WINDOWS, cryptoApi: fake.api },
+    )
+
+    expect(fake.exported[0][0].der).toEqual(fixture.leafDer)
+  })
+
+  it('treats a wildcard character in a subject as a literal, not as a pattern', () => {
+    const fake = fakeCryptoApi(populatedStores())
+
+    expect(() =>
+      exportCertificateFromWindowsStore(
+        selector({ subject: 'O=Code*' }),
+        { ...WINDOWS, cryptoApi: fake.api },
+      ),
+    ).toThrow(/matched the configured selector/)
+  })
+
+  it('prefers the currently valid certificate when a renewal left the old one behind', () => {
+    const fake = fakeCryptoApi(
+      populatedStores({
+        [storeKey('LocalMachine', 'My')]: [
+          { der: fixture.supersededLeafDer, hasPrivateKey: true },
+          { der: fixture.leafDer, hasPrivateKey: true },
+        ],
+      }),
+    )
+
+    exportCertificateFromWindowsStore(
+      selector({ dnsName: fixture.leafDnsName }),
+      { ...WINDOWS, cryptoApi: fake.api },
+    )
+
+    expect(fake.exported[0][0].der).toEqual(fixture.leafDer)
+  })
+
+  it('asks for a thumbprint when two serviceable certificates share the name', () => {
+    const fake = fakeCryptoApi(
+      populatedStores({
+        [storeKey('LocalMachine', 'My')]: [
+          { der: fixture.leafDer, hasPrivateKey: true },
+          { der: fixture.leafDer, hasPrivateKey: true },
+        ],
+      }),
+    )
+
+    expect(() =>
+      exportCertificateFromWindowsStore(
+        selector({ dnsName: fixture.leafDnsName }),
+        { ...WINDOWS, cryptoApi: fake.api },
+      ),
+    ).toThrow(/2 certificates in Cert:\\LocalMachine\\My .*use a thumbprint to disambiguate/)
+  })
+
+  it('reports a selector that matches nothing', () => {
+    const fake = fakeCryptoApi(populatedStores())
+
+    expect(() =>
+      exportCertificateFromWindowsStore(
+        selector({ dnsName: 'absent.codewrecks.com' }),
+        { ...WINDOWS, cryptoApi: fake.api },
+      ),
+    ).toThrow(/No certificate in Cert:\\LocalMachine\\My matched the configured selector/)
+  })
+
+  it('refuses a match that carries no private key', () => {
+    const fake = fakeCryptoApi(
+      populatedStores({
+        [storeKey('LocalMachine', 'My')]: [{ der: fixture.leafDer, hasPrivateKey: false }],
+      }),
+    )
+
+    expect(() =>
+      exportCertificateFromWindowsStore(
+        selector({ dnsName: fixture.leafDnsName }),
+        { ...WINDOWS, cryptoApi: fake.api },
+      ),
+    ).toThrow(/has no usable private key in Cert:\\LocalMachine\\My/)
+  })
+
+  it('serves the leaf alone and warns when the issuing store cannot be read', () => {
+    const warnings: string[] = []
+    const fake = fakeCryptoApi({
+      [storeKey('LocalMachine', 'My')]: [{ der: fixture.leafDer, hasPrivateKey: true }],
     })
 
-    expect(seen).toHaveLength(1)
-    expect(seen[0].script).toBe(WINDOWS_STORE_EXPORT_SCRIPT)
-    expect(seen[0].env.LUCIFER_TLS_STORE_PATH).toBe('LocalMachine\\My')
-    expect(seen[0].env.LUCIFER_TLS_THUMBPRINT).toBe(thumbprintSelector.thumbprint)
-    expect(seen[0].env.LUCIFER_TLS_DNS_NAME).toBe('')
-    expect(seen[0].env.LUCIFER_TLS_SUBJECT).toBe('')
-    expect(result.pfx.toString()).toBe('pkcs12-bytes')
-  })
-
-  it('matches on the certificate DNS names, not the subject DN, when dnsName is set', () => {
-    let env: NodeJS.ProcessEnv | undefined
     exportCertificateFromWindowsStore(
-      { location: 'LocalMachine', name: 'My', dnsName: 'pippo.codewrecks.com' },
-      {
-        platform: 'win32',
-        runPowerShell: (_script, seenEnv) => {
-          env = seenEnv
-          return ok(Buffer.from('x').toString('base64'))
-        },
-      },
+      selector({ dnsName: fixture.leafDnsName }),
+      { ...WINDOWS, cryptoApi: fake.api, warn: (message) => warnings.push(message) },
     )
 
-    expect(env?.LUCIFER_TLS_DNS_NAME).toBe('pippo.codewrecks.com')
-    expect(env?.LUCIFER_TLS_THUMBPRINT).toBe('')
-    expect(env?.LUCIFER_TLS_SUBJECT).toBe('')
-    expect(WINDOWS_STORE_EXPORT_SCRIPT).toContain('$_.DnsNameList.Unicode -contains $dnsName')
+    expect(fake.exported[0].map((certificate) => certificate.der)).toEqual([fixture.leafDer])
+    expect(warnings.some((message) => message.includes(String.raw`Cert:\LocalMachine\CA`))).toBe(true)
+    expect(warnings.some((message) => message.includes('Could not read the issuing chain'))).toBe(true)
   })
 
-  it('prefers a currently valid certificate when a name matches more than one', () => {
-    // A renewal leaves the superseded certificate in the store, so the script
-    // narrows a multi-match to the ones that could serve traffic today before
-    // it gives up and asks for a thumbprint.
-    expect(WINDOWS_STORE_EXPORT_SCRIPT).toContain(
-      '$usable = @($certs | Where-Object { $_.HasPrivateKey -and $_.NotBefore -le $now -and $_.NotAfter -gt $now })',
+  it('does not go looking for a chain when the certificate is self-signed', () => {
+    const fake = fakeCryptoApi({
+      [storeKey('LocalMachine', 'My')]: [{ der: fixture.rootDer, hasPrivateKey: true }],
+    })
+
+    exportCertificateFromWindowsStore(
+      selector({ subject: 'CN=Lucifer Test Root' }),
+      { ...WINDOWS, cryptoApi: fake.api },
     )
-    expect(WINDOWS_STORE_EXPORT_SCRIPT).toContain('use a thumbprint to disambiguate')
+
+    expect(fake.openedStores).toEqual([storeKey('LocalMachine', 'My')])
+    expect(fake.exported[0]).toHaveLength(1)
   })
 
-  it('compares a 64-character thumbprint as a SHA-256 fingerprint, not as Thumbprint', () => {
-    // X509Certificate2.Thumbprint is SHA-1, so a SHA-256 value accepted by the
-    // config validator would otherwise match nothing at all.
-    expect(WINDOWS_STORE_EXPORT_SCRIPT).toContain('if ($wanted.Length -eq 64) {')
-    expect(WINDOWS_STORE_EXPORT_SCRIPT).toContain(
-      '[BitConverter]::ToString($sha256.ComputeHash($_.RawData)).Replace("-", "") -eq $wanted',
+  it('frees every handle it opened, including the chain containers', () => {
+    const fake = fakeCryptoApi(populatedStores())
+
+    exportCertificateFromWindowsStore(
+      selector({ dnsName: fixture.leafDnsName }),
+      { ...WINDOWS, cryptoApi: fake.api },
     )
-    expect(WINDOWS_STORE_EXPORT_SCRIPT).toContain('$certs = @($certs | Where-Object { $_.Thumbprint -eq $wanted })')
+
+    expect(fake.releasedHandles).toHaveLength(3)
   })
 
-  it('matches the subject literally so a wildcard character cannot select another certificate', () => {
-    // -like would read *, ? and [ in an operator-supplied subject as pattern
-    // syntax; IndexOf is a literal comparison.
-    expect(WINDOWS_STORE_EXPORT_SCRIPT).toContain(
-      '$_.Subject.IndexOf($subject, [System.StringComparison]::OrdinalIgnoreCase) -ge 0',
-    )
-    expect(WINDOWS_STORE_EXPORT_SCRIPT).not.toContain('$_.Subject -like')
-  })
+  it('frees the handles it opened even when the selector matches nothing', () => {
+    const fake = fakeCryptoApi(populatedStores())
 
-  it('reads the issuing intermediates out of the store and leaves the root out', () => {
-    expect(WINDOWS_STORE_EXPORT_SCRIPT).toContain('$chain.Build($cert)')
-    expect(WINDOWS_STORE_EXPORT_SCRIPT).toContain(
-      'if ($issuer.Thumbprint -ne $cert.Thumbprint -and $issuer.Subject -ne $issuer.Issuer) {',
-    )
-    // The bundle, not the bare leaf, is what gets exported.
-    expect(WINDOWS_STORE_EXPORT_SCRIPT).toContain('$bytes = $bundle.Export(')
-  })
+    expect(() =>
+      exportCertificateFromWindowsStore(
+        selector({ dnsName: 'absent.codewrecks.com' }),
+        { ...WINDOWS, cryptoApi: fake.api },
+      ),
+    ).toThrow()
 
-  it('serves the leaf alone rather than failing when the chain cannot be read', () => {
-    expect(WINDOWS_STORE_EXPORT_SCRIPT).toContain(
-      'Write-Warning "Could not read the issuing chain from the store: $($_.Exception.Message)"',
-    )
+    expect(fake.releasedHandles).toHaveLength(1)
   })
 
   it('generates a fresh single-use passphrase per export', () => {
-    const passphrases: string[] = []
-    const deps = {
-      platform: 'win32' as const,
-      runPowerShell: (_script: string, env: NodeJS.ProcessEnv) => {
-        passphrases.push(env.LUCIFER_TLS_EXPORT_PASSWORD ?? '')
-        return ok(Buffer.from('x').toString('base64'))
-      },
-    }
+    const fake = fakeCryptoApi(populatedStores())
+    const deps = { ...WINDOWS, cryptoApi: fake.api }
 
-    const first = exportCertificateFromWindowsStore(thumbprintSelector, deps)
-    const second = exportCertificateFromWindowsStore(thumbprintSelector, deps)
+    const first = exportCertificateFromWindowsStore(selector({ dnsName: fixture.leafDnsName }), deps)
+    const second = exportCertificateFromWindowsStore(selector({ dnsName: fixture.leafDnsName }), deps)
 
-    expect(passphrases[0]).not.toBe(passphrases[1])
-    expect(first.passphrase).toBe(passphrases[0])
-    expect(second.passphrase).toBe(passphrases[1])
+    expect(fake.passphrases[0]).not.toBe(fake.passphrases[1])
+    expect(first.passphrase).toBe(fake.passphrases[0])
+    expect(second.passphrase).toBe(fake.passphrases[1])
   })
 
-  it('sets the subject variable when selecting by subject', () => {
-    let subject: string | undefined
-    exportCertificateFromWindowsStore(
-      { location: 'CurrentUser', name: 'My', subject: 'CN=lucifer' },
-      {
-        platform: 'win32',
-        runPowerShell: (_script, env) => {
-          subject = env.LUCIFER_TLS_SUBJECT
-          return ok(Buffer.from('x').toString('base64'))
-        },
-      },
-    )
-    expect(subject).toBe('CN=lucifer')
-  })
+  it('rejects an empty bundle instead of handing it to the listener', () => {
+    const fake = fakeCryptoApi(populatedStores(), Buffer.alloc(0))
 
-  it('surfaces the PowerShell error output on a non-zero exit', () => {
     expect(() =>
-      exportCertificateFromWindowsStore(thumbprintSelector, {
-        platform: 'win32',
-        runPowerShell: () => ({ status: 1, stdout: '', stderr: 'key not exportable' }),
-      }),
-    ).toThrow(/exit 1\): key not exportable/)
-  })
-
-  it('reports a missing PowerShell binary distinctly from a failed export', () => {
-    expect(() =>
-      exportCertificateFromWindowsStore(thumbprintSelector, {
-        platform: 'win32',
-        runPowerShell: () => ({ status: null, stdout: '', stderr: '', error: new Error('spawn ENOENT') }),
-      }),
-    ).toThrow(/Failed to run PowerShell.*spawn ENOENT/)
-  })
-
-  it('rejects an empty export instead of handing an empty bundle to the listener', () => {
-    expect(() =>
-      exportCertificateFromWindowsStore(thumbprintSelector, {
-        platform: 'win32',
-        runPowerShell: () => ok('  \n '),
-      }),
+      exportCertificateFromWindowsStore(
+        selector({ dnsName: fixture.leafDnsName }),
+        { ...WINDOWS, cryptoApi: fake.api },
+      ),
     ).toThrow(/returned no certificate data/)
+  })
+
+  it('surfaces a store that cannot be opened at all', () => {
+    const fake = fakeCryptoApi({})
+
+    expect(() =>
+      exportCertificateFromWindowsStore(
+        selector({ dnsName: fixture.leafDnsName }),
+        { ...WINDOWS, cryptoApi: fake.api },
+      ),
+    ).toThrow(/Cannot open the Windows certificate store/)
   })
 })

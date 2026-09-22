@@ -664,7 +664,7 @@ decision:
 ## ADR-014: Native TLS on the gateway listener, with the Windows store reached through PowerShell
 
 **Date**: 2026-09-22
-**Status**: Accepted
+**Status**: Accepted, with the PowerShell transport superseded by [ADR-014](#adr-014-read-the-windows-certificate-store-through-the-native-cryptoapi-and-test-it-on-a-windows-runner)
 **Deciders**: alkampfergit
 
 ### Context
@@ -706,7 +706,9 @@ already owns the listener and the app bootstrap), with three sources: `pem`,
   stdout under a single-use password generated per start. Selector values are
   passed as environment variables, not interpolated into the script text, and
   PowerShell is spawned by its absolute path under `%SystemRoot%` rather than
-  resolved through `PATH`.
+  resolved through `PATH`. *(Superseded by ADR-014: the store is now read
+  through the native CryptoAPI and no process is spawned. Everything else in
+  this ADR still holds.)*
 - **The issuing intermediates are read out of the store too.** Exporting the
   leaf on its own emits no chain, and a client that does not already hold the
   intermediates cannot build a path to the root. `X509Chain` walks the store's
@@ -750,7 +752,8 @@ already owns the listener and the app bootstrap), with three sources: `pem`,
   stores normally require elevation.
 - (-) CI runs `ubuntu-latest`, so the `windows-store` path is unit-tested only
   (command construction, platform guard, failure paths). Tracked as the single
-  `partial` story in `USER-JOURNEYS.md` (`J14-S3`).
+  `partial` story in `USER-JOURNEYS.md` (`J14-S3`). *(Closed by ADR-014, which
+  adds a Windows runner to the CI matrix.)*
 - (-) Certificate material is read once at startup, so rotation requires a
   restart.
 
@@ -779,3 +782,102 @@ already owns the listener and the app bootstrap), with three sources: `pem`,
   gateway listener is where API keys are submitted, so it is the one that has
   to be fixed first; per-listener certificates can reuse the same `tls` shape
   when asked for.
+
+---
+
+## ADR-014: Read the Windows certificate store through the native CryptoAPI, and test it on a Windows runner
+
+**Date**: 2026-09-22
+**Status**: Accepted
+**Deciders**: alkampfergit
+
+### Context
+
+ADR-013 reached the Windows certificate store by spawning `powershell.exe` and
+parsing a base64 bundle off its stdout. That worked, but it bought three
+problems: startup paid for a PowerShell process, every selector and every
+diagnostic was a string passed through a shell boundary, and — because the
+matching happened inside a PowerShell script — none of it could be tested
+anywhere except on Windows. CI runs `ubuntu-latest`, so the whole path was
+covered by asserting on the *text of the script*, which proves nothing about
+what the script does.
+
+The owner asked for two things: read the store through the native crypto API,
+and run the build on Windows as well as Linux.
+
+### Decision
+
+**Call CryptoAPI directly.** `server/src/domains/platform-api/service/windows_crypto_api.ts`
+binds `CertOpenStore`, `CertEnumCertificatesInStore`,
+`CertGetCertificateContextProperty`, `CertAddCertificateContextToStore` and
+`PFXExportCertStoreEx` in `crypt32.dll`, using [koffi](https://koffi.dev/) for
+the FFI. No process is spawned and no script text exists.
+
+- **koffi rather than a hand-written N-API addon.** koffi publishes prebuilt
+  binaries per platform as optional dependencies, so `npm install` still needs
+  no C++ toolchain. A compiled addon would have meant MSVC on every Windows
+  install, or a prebuild pipeline of our own, for no additional capability.
+  The project already ships a native dependency (`better-sqlite3`), so this is
+  not a new class of risk.
+- **The library is loaded lazily, and only on Windows.** `require('koffi')`
+  happens inside the `windows-store` path, so a Linux or macOS host never
+  loads it.
+- **`crypt32.dll` and `kernel32.dll` are loaded by absolute path** under
+  `%SystemRoot%\System32`, for the same reason PowerShell was: the search
+  order must not decide which library is handed a private key.
+- **Selection and chain assembly moved into TypeScript.** The FFI layer only
+  enumerates DER bytes and exports a PKCS#12 bundle. Which certificate matches
+  the selector, and which intermediates travel with it, is decided over
+  `node:crypto`'s `X509Certificate` — so it is ordinary, testable code rather
+  than a PowerShell pipeline.
+- **A `subject` substring is tried against every rendering of the DN.**
+  `node:crypto` prints one RDN per line; certmgr and .NET print them
+  comma-joined, in the opposite order. Matching all three keeps the selector
+  working for anyone who configured it against the PowerShell implementation.
+- **CI gains a `windows-latest` leg.** `strategy.matrix.os` covers
+  `ubuntu-latest` and `windows-latest`, with `fail-fast: false` so one
+  platform's failure does not hide the other's. On Windows the job plants a
+  throwaway self-signed certificate in `Cert:\CurrentUser\My` and publishes
+  its name, thumbprint and public half, which turns on an integration test
+  that boots the real listener from the real store and completes a validated
+  handshake against it.
+
+### Consequences
+
+- (+) `windows-store` is now covered end to end: `J14-S3` moves from `partial`
+  to `covered`, and the repository has no debt items left.
+- (+) The selection rules — thumbprint length, DNS-name fallback, the
+  renewal tie-break, literal subject matching, chain assembly, handle release —
+  are unit-tested on Linux against a real openssl-issued root → intermediate →
+  leaf chain, because they are no longer trapped inside a script.
+- (+) No process spawn on startup, and no shell boundary to get quoting wrong
+  at.
+- (+) The Windows leg also catches ordinary cross-platform regressions (path
+  separators, line endings) that ubuntu-only CI never saw.
+- (-) A new runtime dependency, `koffi`, with a per-platform prebuilt binary.
+  Installs on an unsupported architecture would fall back to building it from
+  source.
+- (-) An FFI call site is memory-unsafe by nature: a wrong struct layout is a
+  crash rather than a type error. It is confined to one file with one
+  exported interface, and the Windows CI leg exercises it on every push.
+- (-) **The exportable-key restriction is unchanged.** Node's TLS stack wants
+  the key bytes, so a key a CNG or HSM provider refuses to release still
+  cannot serve the listener. Reaching CryptoAPI natively buys tidiness and
+  testability, not capability — this was stated before the work started and
+  remains true.
+
+### Alternatives Considered
+
+- **Keeping PowerShell.** Rejected on the owner's instruction, and
+  independently weak: its coverage story was asserting on script text.
+- **A hand-written N-API addon over CryptoAPI/CNG.** Rejected: it forces a
+  build toolchain or a prebuild pipeline on every consumer and delivers
+  exactly the same capability as the FFI binding.
+- **`win-ca` or a similar package.** Rejected again, for the reason in
+  ADR-013: it surfaces CA roots only and cannot produce a private key.
+- **Signing through a CNG key handle to support non-exportable keys.**
+  Rejected as impossible within Node: `tls.createSecureContext` exposes no
+  hook for an external signer. It would need a custom TLS engine.
+- **Running only the tests, not the full build, on Windows.** Rejected: the
+  `tsc` and asset-copy steps are exactly where path-separator bugs surface, so
+  the Windows leg runs the same four commands as the Linux one.

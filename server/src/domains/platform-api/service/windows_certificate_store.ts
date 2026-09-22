@@ -1,6 +1,13 @@
-import { spawnSync } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
-import type { WindowsStoreSelector } from '../types/tls_config.js'
+import { randomBytes, X509Certificate } from 'node:crypto'
+import { createChildLogger } from '../../../lib/logger.js'
+import type { WindowsStoreLocation, WindowsStoreSelector } from '../types/tls_config.js'
+import {
+  loadWindowsCryptoApi,
+  type WindowsCryptoApi,
+  type WindowsStoreCertificate,
+} from './windows_crypto_api.js'
+
+const log = createChildLogger('tls')
 
 export interface WindowsStoreExport {
   /** PKCS#12 bundle exported from the store, protected by `passphrase`. */
@@ -9,154 +16,238 @@ export interface WindowsStoreExport {
   passphrase: string
 }
 
-export interface PowerShellResult {
-  status: number | null
-  stdout: string
-  stderr: string
-  error?: Error
-}
-
-export type PowerShellRunner = (script: string, env: NodeJS.ProcessEnv) => PowerShellResult
-
 export interface WindowsStoreDeps {
   platform?: NodeJS.Platform
-  runPowerShell?: PowerShellRunner
+  /** Injected in tests; defaults to the real CryptoAPI binding. */
+  cryptoApi?: WindowsCryptoApi
+  /** Reference time for the validity-window tie-break. */
+  now?: Date
+  warn?: (message: string) => void
+}
+
+/** Containers holding issuing certificates, searched when building the chain. */
+const CHAIN_STORE_NAMES = ['CA', 'Root'] as const
+const CHAIN_LOCATIONS: readonly WindowsStoreLocation[] = ['LocalMachine', 'CurrentUser']
+/** Guards against a cross-signed loop; real chains are three or four deep. */
+const MAX_CHAIN_DEPTH = 10
+/** certmgr and PowerShell render store paths as `Cert:\LocalMachine\My`. */
+const STORE_PATH_SEPARATOR = '\\'
+
+function storePathOf(location: WindowsStoreLocation, name: string): string {
+  return ['Cert:', location, name].join(STORE_PATH_SEPARATOR)
+}
+
+const SHA256_THUMBPRINT_LENGTH = 64
+
+interface StoreEntry {
+  certificate: WindowsStoreCertificate
+  x509: X509Certificate
+}
+
+function normaliseFingerprint(value: string): string {
+  return value.replaceAll(':', '').toUpperCase()
 }
 
 /**
- * Locates one certificate in the Windows store and writes it to stdout as a
- * base64 PKCS#12 blob. The bundle never touches disk, so there is no temp file
- * to leak or clean up.
- *
- * Every operator-supplied value is read from the environment rather than
- * interpolated into the script text, so a crafted `subject` cannot inject
- * PowerShell.
- *
- * `DnsNameList` is the certificate provider's view of the host names a
- * certificate was issued for: its subject alternative names, falling back to
- * the simple subject name when the certificate carries no SAN extension. That
- * is the name an operator reads in certmgr, so it is what `dnsName` matches.
- *
- * A 40-character `thumbprint` is compared against `X509Certificate2.Thumbprint`
- * (SHA-1, the value certmgr shows); a 64-character one is compared against a
- * SHA-256 fingerprint computed from the certificate's DER bytes.
- *
- * The bundle carries the issuing intermediates as well, read back out of the
- * store via `X509Chain`, so the listener can present a complete chain.
+ * Parse what the store handed back. A container can hold an entry Node cannot
+ * read; skipping it is better than failing the boot over a certificate that
+ * was never the one asked for. The handle is still returned to the caller for
+ * release, which is why the raw list is kept separately.
  */
-export const WINDOWS_STORE_EXPORT_SCRIPT = [
-  "$ErrorActionPreference = 'Stop'",
-  String.raw`$path = 'Cert:\' + $env:LUCIFER_TLS_STORE_PATH`,
-  '$certs = @(Get-ChildItem -Path $path)',
-  'if ($env:LUCIFER_TLS_THUMBPRINT) {',
-  '  $wanted = $env:LUCIFER_TLS_THUMBPRINT',
-  '  if ($wanted.Length -eq 64) {',
-  '    # X509Certificate2.Thumbprint is SHA-1, so a SHA-256 fingerprint has to',
-  '    # be computed from the DER bytes instead of compared against it.',
-  '    $sha256 = [System.Security.Cryptography.SHA256]::Create()',
-  '    $certs = @($certs | Where-Object {',
-  '      [BitConverter]::ToString($sha256.ComputeHash($_.RawData)).Replace("-", "") -eq $wanted',
-  '    })',
-  '  } else {',
-  '    $certs = @($certs | Where-Object { $_.Thumbprint -eq $wanted })',
-  '  }',
-  '} elseif ($env:LUCIFER_TLS_DNS_NAME) {',
-  '  $dnsName = $env:LUCIFER_TLS_DNS_NAME',
-  '  $certs = @($certs | Where-Object {',
-  '    $_.DnsNameList.Unicode -contains $dnsName -or $_.DnsNameList.Punycode -contains $dnsName',
-  '  })',
-  '} elseif ($env:LUCIFER_TLS_SUBJECT) {',
-  '  # Literal case-insensitive substring. -like would read a *, ? or [ in an',
-  '  # operator-supplied subject as a wildcard and select an unrelated key.',
-  '  $subject = $env:LUCIFER_TLS_SUBJECT',
-  '  $certs = @($certs | Where-Object {',
-  '    $_.Subject.IndexOf($subject, [System.StringComparison]::OrdinalIgnoreCase) -ge 0',
-  '  })',
-  '} else {',
-  '  throw "No certificate selector was supplied."',
-  '}',
-  'if ($certs.Count -eq 0) { throw "No certificate in $path matched the configured selector." }',
-  'if ($certs.Count -gt 1) {',
-  '  # A renewed certificate leaves the superseded one in the store, so narrow',
-  '  # a name match to the ones that could actually serve traffic today.',
-  '  $now = Get-Date',
-  '  $usable = @($certs | Where-Object { $_.HasPrivateKey -and $_.NotBefore -le $now -and $_.NotAfter -gt $now })',
-  '  if ($usable.Count -gt 0) { $certs = $usable }',
-  '}',
-  'if ($certs.Count -gt 1) { throw "$($certs.Count) certificates in $path matched the configured selector; use a thumbprint to disambiguate." }',
-  '$cert = $certs[0]',
-  'if (-not $cert.HasPrivateKey) { throw "Certificate $($cert.Thumbprint) has no usable private key in $path." }',
-  '# Read the issuing certificates out of the store too. Exporting the leaf on',
-  '# its own emits no intermediates, and a client that does not already hold',
-  '# them cannot build a path to the root.',
-  '$bundle = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2Collection',
-  '[void]$bundle.Add($cert)',
-  'try {',
-  '  $chain = New-Object System.Security.Cryptography.X509Certificates.X509Chain',
-  "  $chain.ChainPolicy.RevocationMode = 'NoCheck'",
-  "  $chain.ChainPolicy.VerificationFlags = 'AllowUnknownCertificateAuthority'",
-  '  [void]$chain.Build($cert)',
-  '  foreach ($element in $chain.ChainElements) {',
-  '    $issuer = $element.Certificate',
-  '    # Skip the leaf, already added, and the self-signed root, which a client',
-  '    # has to trust locally anyway and gains nothing from receiving.',
-  '    if ($issuer.Thumbprint -ne $cert.Thumbprint -and $issuer.Subject -ne $issuer.Issuer) {',
-  '      [void]$bundle.Add($issuer)',
-  '    }',
-  '  }',
-  '} catch {',
-  '  # An incomplete chain is not fatal: serve the leaf alone and say so.',
-  '  Write-Warning "Could not read the issuing chain from the store: $($_.Exception.Message)"',
-  '}',
-  '$bytes = $bundle.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pfx, $env:LUCIFER_TLS_EXPORT_PASSWORD)',
-  '[Convert]::ToBase64String($bytes)',
-].join('\n')
+function parseEntries(certificates: readonly WindowsStoreCertificate[]): StoreEntry[] {
+  const entries: StoreEntry[] = []
+  for (const certificate of certificates) {
+    try {
+      entries.push({ certificate, x509: new X509Certificate(certificate.der) })
+    } catch {
+      continue
+    }
+  }
+  return entries
+}
+
+/** Common names from a subject DN, which `node:crypto` renders one RDN per line. */
+function commonNames(subject: string): string[] {
+  return subject
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.toUpperCase().startsWith('CN='))
+    .map((line) => line.slice(3).trim())
+}
 
 /**
- * Windows ships PowerShell at a fixed location under the system root. Spawning
- * it by absolute path rather than by name keeps the lookup off `PATH`, which a
- * less privileged account may be able to prepend to.
+ * The host names the certificate was issued for: its subject alternative
+ * names, falling back to the common name when it carries no DNS SAN. That is
+ * the list certmgr shows under *Issued To*, so it is what `dnsName` matches.
  */
-const POWERSHELL_RELATIVE_PATH = String.raw`\System32\WindowsPowerShell\v1.0\powershell.exe`
-const DEFAULT_SYSTEM_ROOT = String.raw`C:\Windows`
+function dnsNames(x509: X509Certificate): string[] {
+  const names = (x509.subjectAltName ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.toLowerCase().startsWith('dns:'))
+    .map((entry) => entry.slice(4).trim().replaceAll(/^"|"$/g, ''))
 
-function powerShellPath(): string {
-  return `${process.env.SystemRoot || DEFAULT_SYSTEM_ROOT}${POWERSHELL_RELATIVE_PATH}`
-}
-
-function runWithPowerShell(script: string, env: NodeJS.ProcessEnv): PowerShellResult {
-  const result = spawnSync(
-    powerShellPath(),
-    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
-    { env, encoding: 'utf8', windowsHide: true, maxBuffer: 16 * 1024 * 1024 },
-  )
-  return {
-    status: result.status,
-    stdout: result.stdout ?? '',
-    stderr: result.stderr ?? '',
-    error: result.error,
-  }
-}
-
-function selectorEnv(selector: WindowsStoreSelector, passphrase: string): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
-    LUCIFER_TLS_STORE_PATH: `${selector.location}\\${selector.name}`,
-    LUCIFER_TLS_THUMBPRINT: selector.thumbprint ?? '',
-    LUCIFER_TLS_DNS_NAME: selector.dnsName ?? '',
-    LUCIFER_TLS_SUBJECT: selector.subject ?? '',
-    LUCIFER_TLS_EXPORT_PASSWORD: passphrase,
-  }
+  return names.length > 0 ? names : commonNames(x509.subject)
 }
 
 /**
- * Export the selected certificate (with its private key) from the Windows
- * certificate store as an in-memory PKCS#12 bundle.
+ * The same subject in the three renderings an operator may have copied it
+ * from: the one-per-line form `node:crypto` prints, and the comma-joined form
+ * certmgr and .NET show — which lists the RDNs in the opposite order.
+ */
+function subjectRenderings(subject: string): string[] {
+  const rdns = subject.split('\n').map((line) => line.trim()).filter((line) => line.length > 0)
+  return [subject, rdns.join(', '), [...rdns].reverse().join(', ')]
+}
+
+function matchesSelector(x509: X509Certificate, selector: WindowsStoreSelector): boolean {
+  if (selector.thumbprint) {
+    const actual =
+      selector.thumbprint.length === SHA256_THUMBPRINT_LENGTH ? x509.fingerprint256 : x509.fingerprint
+    return normaliseFingerprint(actual) === selector.thumbprint
+  }
+
+  if (selector.dnsName) {
+    const wanted = selector.dnsName.toLowerCase()
+    return dnsNames(x509).some((name) => name.toLowerCase() === wanted)
+  }
+
+  if (selector.subject) {
+    // Literal substring: a `*`, `?` or `[` in an operator-supplied subject is
+    // matched as itself, never as pattern syntax.
+    const wanted = selector.subject.toLowerCase()
+    return subjectRenderings(x509.subject).some((rendering) => rendering.toLowerCase().includes(wanted))
+  }
+
+  return false
+}
+
+function isCurrentlyValid(x509: X509Certificate, now: Date): boolean {
+  return x509.validFromDate <= now && x509.validToDate > now
+}
+
+function isSelfSigned(x509: X509Certificate): boolean {
+  return x509.checkIssued(x509)
+}
+
+/**
+ * Pick the single certificate the selector names.
  *
- * Requires an exportable private key. Keys marked non-exportable, or held in a
- * CNG/HSM key storage provider that refuses the read, cannot be used this way —
- * the PowerShell error is surfaced verbatim so the operator can tell which
- * case they hit. `LocalMachine` stores normally require an elevated process.
+ * A renewal leaves the superseded certificate in the store, so a name match
+ * commonly hits two. Rather than failing the boot, the match is narrowed to
+ * the certificates that could actually serve traffic today; only if that still
+ * leaves more than one does startup give up and ask for a thumbprint.
+ */
+function selectCertificate(
+  entries: readonly StoreEntry[],
+  selector: WindowsStoreSelector,
+  storePath: string,
+  now: Date,
+): StoreEntry {
+  const matched = entries.filter((entry) => matchesSelector(entry.x509, selector))
+  if (matched.length === 0) {
+    throw new Error(`No certificate in ${storePath} matched the configured selector.`)
+  }
+
+  let usable = matched
+  if (matched.length > 1) {
+    const serviceable = matched.filter(
+      (entry) => entry.certificate.hasPrivateKey && isCurrentlyValid(entry.x509, now),
+    )
+    if (serviceable.length > 0) usable = serviceable
+  }
+  if (usable.length > 1) {
+    throw new Error(
+      `${usable.length} certificates in ${storePath} matched the configured selector; ` +
+      'use a thumbprint to disambiguate.',
+    )
+  }
+
+  const entry = usable[0]
+  if (!entry.certificate.hasPrivateKey) {
+    throw new Error(
+      `Certificate ${normaliseFingerprint(entry.x509.fingerprint)} has no usable private key in ${storePath}.`,
+    )
+  }
+  return entry
+}
+
+/**
+ * Walk from the leaf towards the root, collecting the issuing intermediates.
+ *
+ * Exporting the leaf on its own emits no chain, and a client that does not
+ * already hold the intermediates cannot build a path to the root. The
+ * self-signed root is deliberately left out: a client has to trust it locally
+ * anyway and gains nothing from being sent a copy.
+ */
+function collectIssuers(
+  leaf: StoreEntry,
+  candidates: readonly StoreEntry[],
+  warn: (message: string) => void,
+): WindowsStoreCertificate[] {
+  const chain: WindowsStoreCertificate[] = []
+  const seen = new Set([leaf.x509.fingerprint256])
+  let current = leaf
+
+  for (let depth = 0; depth < MAX_CHAIN_DEPTH; depth += 1) {
+    const issuer = candidates.find(
+      (entry) => !seen.has(entry.x509.fingerprint256) && current.x509.checkIssued(entry.x509),
+    )
+    if (!issuer) {
+      warn(`Could not read the issuing chain from the store above ${current.x509.subject.replaceAll('\n', ', ')}.`)
+      return chain
+    }
+    seen.add(issuer.x509.fingerprint256)
+    if (isSelfSigned(issuer.x509)) {
+      return chain
+    }
+    chain.push(issuer.certificate)
+    current = issuer
+  }
+
+  warn(`Stopped building the certificate chain after ${MAX_CHAIN_DEPTH} issuers.`)
+  return chain
+}
+
+/**
+ * Gather the issuing certificates for `leaf` out of the intermediate and root
+ * containers. A container that cannot be opened is a warning, not a failure:
+ * the leaf can still be served on its own.
+ */
+function chainCandidates(
+  api: WindowsCryptoApi,
+  storeEntries: readonly StoreEntry[],
+  opened: WindowsStoreCertificate[][],
+  warn: (message: string) => void,
+): StoreEntry[] {
+  const candidates = [...storeEntries]
+
+  for (const location of CHAIN_LOCATIONS) {
+    for (const name of CHAIN_STORE_NAMES) {
+      try {
+        const batch = api.listCertificates(location, name)
+        opened.push(batch)
+        candidates.push(...parseEntries(batch))
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err)
+        warn(`Could not read ${storePathOf(location, name)} while building the chain: ${reason}`)
+      }
+    }
+  }
+
+  return candidates
+}
+
+/**
+ * Read the selected certificate, its private key, and its issuing
+ * intermediates out of the Windows certificate store and return them as an
+ * in-memory PKCS#12 bundle.
+ *
+ * The store is read through the native CryptoAPI in `crypt32.dll`; no process
+ * is spawned and nothing touches disk. The private key must still be marked
+ * **exportable** — a key held by a CNG or HSM provider that refuses to release
+ * it cannot be used, because Node's TLS stack needs the key bytes. A
+ * `LocalMachine` store normally requires an elevated process.
  */
 export function exportCertificateFromWindowsStore(
   selector: WindowsStoreSelector,
@@ -170,25 +261,30 @@ export function exportCertificateFromWindowsStore(
     )
   }
 
-  const passphrase = randomBytes(32).toString('base64')
-  const runner = deps.runPowerShell ?? runWithPowerShell
+  const api = deps.cryptoApi ?? loadWindowsCryptoApi()
+  const warn = deps.warn ?? ((message: string) => log.warn(message))
+  const storePath = storePathOf(selector.location, selector.name)
+  const opened: WindowsStoreCertificate[][] = []
 
-  const result = runner(WINDOWS_STORE_EXPORT_SCRIPT, selectorEnv(selector, passphrase))
+  try {
+    const storeCertificates = api.listCertificates(selector.location, selector.name)
+    opened.push(storeCertificates)
+    const storeEntries = parseEntries(storeCertificates)
 
-  if (result.error) {
-    throw new Error(
-      `Failed to run PowerShell to read the Windows certificate store: ${result.error.message}`,
-    )
+    const leaf = selectCertificate(storeEntries, selector, storePath, deps.now ?? new Date())
+    const issuers = isSelfSigned(leaf.x509)
+      ? []
+      : collectIssuers(leaf, chainCandidates(api, storeEntries, opened, warn), warn)
+
+    const passphrase = randomBytes(32).toString('base64')
+    const pfx = api.exportPkcs12([leaf.certificate, ...issuers], passphrase)
+    if (pfx.length === 0) {
+      throw new Error('Windows certificate store export returned no certificate data.')
+    }
+    return { pfx, passphrase }
+  } finally {
+    for (const batch of opened) {
+      api.release(batch)
+    }
   }
-  if (result.status !== 0) {
-    const detail = result.stderr.trim() || 'no error output'
-    throw new Error(`Windows certificate store export failed (exit ${result.status}): ${detail}`)
-  }
-
-  const encoded = result.stdout.replaceAll(/\s/g, '')
-  if (encoded.length === 0) {
-    throw new Error('Windows certificate store export returned no certificate data.')
-  }
-
-  return { pfx: Buffer.from(encoded, 'base64'), passphrase }
 }
