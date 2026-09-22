@@ -1,7 +1,7 @@
 {
   "remoteType": "gh",
   "issueDiscoveryTechnique": "label",
-  "issueDiscoveryValue": "automated",
+  "issueDiscoveryValue": "ready",
   "claudeSystemPrompt": "claude-system-prompt.md",
   "doWork": {
     "baseBranch": "master",
