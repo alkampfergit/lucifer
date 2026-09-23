@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import request from 'supertest';
 import { createApp } from './create_app.js';
+import { loadGatewayConfig } from './domains/command-gateway/config/gateway_config.js';
 import { TSX_ENTRY } from './test/tsx_entry.js';
 
 const CLI_PATH = resolve(__dirname, 'cli.ts');
@@ -218,8 +219,11 @@ describe('CLI smoke tests', () => {
       const apiKeysConfig = JSON.parse(readFileSync(join(configDir, 'api-keys.json'), 'utf-8'));
       const rulesConfig = JSON.parse(readFileSync(join(configDir, 'command-rules.json'), 'utf-8'));
 
-      // lucifer.json has required fields
-      expect(luciferConfig.port).toBe(3001);
+      // `port` is deliberately omitted so the built-in default applies, and so
+      // a `tls` block added later moves the listener to 443 without the
+      // generated file silently pinning it back to 3001.
+      expect(luciferConfig.port).toBeUndefined();
+      expect(loadGatewayConfig(join(configDir, 'lucifer.json')).port).toBe(3001);
       expect(luciferConfig.approvalTimeoutSeconds).toBeGreaterThan(0);
       expect(luciferConfig.executionTimeoutSeconds).toBeGreaterThan(0);
       expect(luciferConfig.dataDir).toBeDefined();
