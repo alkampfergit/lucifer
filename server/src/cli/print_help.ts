@@ -9,13 +9,20 @@ Usage:
   lucifer-gate pair [--config <path>] Pair a Telegram chat for approvals
   lucifer-gate log [--limit N]        Query audit log
   lucifer-gate stats                  Show approval statistics
+  lucifer-gate --version              Print the installed version
 
 Server options:
   --config <path>    Path to lucifer.json (default: ./config/lucifer.json)
-  --port <number>    Server port (default: 3001, or PORT env var)
-  --data-dir <path>  Directory for SQLite database (default: ./data)
+  --port <number>    Server port (--port, then PORT, then lucifer.json, then 3001)
   --auto-approve     Auto-approve all commands (dev mode, no Telegram needed)
-  --help             Show this help
+
+Audit query options ('log' and 'stats'):
+  --data-dir <path>  Directory holding the SQLite database (default: ./data)
+  --limit <number>   Number of audit entries to print ('log' only, default: 50)
+
+Anywhere:
+  --help, -h         Show this help
+  --version, -v      Print the installed version and exit
 
 Environment variables:
   LUCIFER_TELEGRAM_TOKEN   Telegram bot token (required for production)

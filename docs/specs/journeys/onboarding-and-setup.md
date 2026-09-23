@@ -15,12 +15,13 @@
 | J1-S3 | As an Operator, I start the server so that the API is available for agents | `lucifer-gate start --config <path>` boots Express, loads config, enables configured approval channels, and responds to `/api/health`. `lucifer-gate --config <path>` with no subcommand behaves identically (backwards-compatible implicit form) | `covered` — `create_app.test.ts`, `create_health_report.test.ts`, `cli.test.ts` |
 | J1-S4 | As an Operator, I complete the full onboarding journey (init, configure Telegram, start, submit, approve, verify) end-to-end | The entire chain from `--init` through a Telegram-approved command execution completes successfully | `covered` — `telegram-e2e.test.ts` ("first onboarding journey") |
 | J1-S5 | As an Operator, I run `pair` before any chat has messaged the bot so that I can complete pairing without restarting the command | If no chats exist, the flow prints guidance and polls until a chat appears (CTRL+C to cancel) instead of crashing with a stack trace | `covered` — `telegram_pairing.test.ts` ("waits for chats when waitForChats is true") |
-| J1-S6 | As an Operator, I run one-shot commands (`--help`, `--init`, `pair`, `log`, `stats`) so that they exit on their own without CTRL+C | Each non-server subcommand returns process exit code 0 as soon as it finishes; only `start` keeps the event loop alive | `covered` — `cli.test.ts` ("exits cleanly") |
+| J1-S6 | As an Operator, I run one-shot commands (`--help`, `--version`, `--init`, `pair`, `log`, `stats`) so that they exit on their own without CTRL+C | Each non-server subcommand returns process exit code 0 as soon as it finishes; only `start` keeps the event loop alive | `covered` — `cli.test.ts` ("exits cleanly") |
+| J1-S7 | As an Operator, I run `--version` so that I can confirm which build is installed | `lucifer-gate --version` (or `-v`) prints the installed version on stdout and exits 0 from any directory, including one with no `config/lucifer.json`; an unrecognised option is rejected with a named error instead of starting the server | `covered` — `cli.test.ts` ("--version"), `package_version.test.ts`, `args.test.ts` |
 
 ## Section Summary
 
 | Status | Count |
 |---|---|
-| `covered` | 6 |
+| `covered` | 7 |
 | `partial` | 0 |
 | `uncovered` | 0 |

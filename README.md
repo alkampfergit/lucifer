@@ -91,6 +91,7 @@ lucifer-gate --config <path>           Start server with config
 lucifer-gate --auto-approve            Dev mode (no Telegram)
 lucifer-gate log [--limit N]           Query audit log
 lucifer-gate stats                     Show approval statistics
+lucifer-gate --version                 Print the installed version
 ```
 
 ## Configuration, logging, Docker, env vars
