@@ -112,9 +112,22 @@ export interface AliasesConfig {
  * `iat` and may keep doing so until `exp`", and nothing more.
  */
 export interface AdminSessionAssertion {
-  /** Payload schema version. Bumped when the claim set changes shape. */
+  /**
+   * Payload schema version. Bumped when the claim set changes shape, once a
+   * shape has shipped: `aud` was added to an unreleased `v: 1`, and cookies
+   * carrying the older shape cannot open anyway because the key that sealed
+   * them is now resolved from a differently named keychain entry.
+   */
   v: 1;
   sub: 'admin';
+  /**
+   * Deployment this session belongs to, derived from the instance's database
+   * path. A sealer opens only its own audience, so one Lucifer instance cannot
+   * be authenticated with a cookie another instance minted — browsers do not
+   * scope cookies by port, and two instances on the same host may hold
+   * different admin secrets while sharing a `LUCIFER_ADMIN_COOKIE_KEY`.
+   */
+  aud: string;
   /** Issued-at, seconds since epoch. */
   iat: number;
   /** Absolute expiry, seconds since epoch. Never extended on use. */

@@ -1,14 +1,17 @@
 import type Database from 'better-sqlite3';
 import { createRequire } from 'node:module';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import { resolve } from 'node:path';
 import { createChildLogger } from '../../../lib/logger.js';
 
 const log = createChildLogger('admin-session-key');
 
-/** Row key in `server_secrets` and entry name in the OS keychain. */
+/** Row key in `server_secrets`. Scoped by the database file it lives in. */
 const SECRET_NAME = 'admin_session_key';
 /** Service name presented to the OS keychain. */
 const KEYCHAIN_SERVICE = 'lucifer-gate';
+/** Hex characters of the instance digest kept in identifiers. 64 bits of collision space. */
+const INSTANCE_ID_LENGTH = 16;
 /** AES-256-GCM key length. Kept local so `repository` does not import `service`. */
 const KEY_BYTES = 32;
 
@@ -33,6 +36,26 @@ export class AdminSessionKeyConfigError extends Error {
 export interface AdminSessionKeyResolution {
   key: Buffer;
   source: AdminSessionKeySource;
+}
+
+/**
+ * Stable identifier for one Lucifer deployment, derived from its database path.
+ *
+ * Two instances on the same host share an OS account and, since browsers do not
+ * scope cookies by port, a cookie jar as well. Without a per-instance
+ * identifier they would draw the same key out of the OS keychain and a session
+ * minted against one admin secret would authenticate against the other. The
+ * database path is the natural discriminator: instances that share it share a
+ * `dataDir` and are by definition the same deployment, and it survives
+ * restarts, upgrades and container rebuilds that keep the same volume.
+ */
+export function deriveInstanceId(databasePath: string): string {
+  return createHash('sha256').update(resolve(databasePath)).digest('hex').slice(0, INSTANCE_ID_LENGTH);
+}
+
+/** Keychain account name for one deployment's sealing key. */
+function keychainAccount(instanceId: string): string {
+  return `${SECRET_NAME}:${instanceId}`;
 }
 
 export interface AdminSessionKeyOptions {
@@ -122,6 +145,7 @@ function readFromEnv(): Buffer | undefined {
 function readOrCreateInKeychain(
   load: () => KeyringModule | undefined,
   entryOptions: KeyringEntryOptions | undefined,
+  instanceId: string,
 ): Buffer | undefined {
   const keyring = load();
   if (!keyring) {
@@ -130,7 +154,7 @@ function readOrCreateInKeychain(
   }
 
   try {
-    const entry = new keyring.Entry(KEYCHAIN_SERVICE, SECRET_NAME, entryOptions);
+    const entry = new keyring.Entry(KEYCHAIN_SERVICE, keychainAccount(instanceId), entryOptions);
     const existing = entry.getPassword();
     if (existing) {
       const key = parseHexKey(existing);
@@ -175,21 +199,27 @@ function readOrCreateInDatabase(db: Database.Database): Buffer {
  * Resolution order, first hit wins:
  * 1. `LUCIFER_ADMIN_COOKIE_KEY` — operator-managed, 64 hex characters.
  * 2. OS keychain (Windows Credential Manager / macOS Keychain / Linux Secret
- *    Service) via the optional `@napi-rs/keyring` native module. On Linux the
- *    entry is pinned to the Secret Service so a host without one falls through
- *    to step 3 instead of landing in the volatile kernel keyring.
- * 3. The `server_secrets` table in `lucifer.db`.
+ *    Service) via the optional `@napi-rs/keyring` native module, under an entry
+ *    scoped to `instanceId` so co-located deployments do not share a key. On
+ *    Linux the entry is pinned to the Secret Service so a host without one
+ *    falls through to step 3 instead of landing in the volatile kernel keyring.
+ * 3. The `server_secrets` table in `lucifer.db`, which is already per-instance.
  *
  * Step 3 stores the key beside the data it protects, which makes `lucifer.db`
  * the trust boundary — weaker than a keychain, but the only option that works
  * on a headless box, and the alternative (no session cookie at all) is what the
  * operator is trying to avoid.
  *
+ * Step 1 is deliberately *not* scoped: an operator naming one key for several
+ * instances is naming one key. Cross-instance authentication is prevented there
+ * by the `aud` claim the sealer binds to the same `instanceId`.
+ *
  * Throws `AdminSessionKeyConfigError` only when `LUCIFER_ADMIN_COOKIE_KEY` is
  * set but unusable; every other failure degrades to the next step.
  */
 export function resolveAdminSessionKey(
   db: Database.Database,
+  instanceId: string,
   options: AdminSessionKeyOptions = {},
 ): AdminSessionKeyResolution {
   const fromEnv = readFromEnv();
@@ -201,6 +231,7 @@ export function resolveAdminSessionKey(
   const fromKeychain = readOrCreateInKeychain(
     options.loadKeyringModule ?? loadKeyring,
     keychainEntryOptions(options.platform),
+    instanceId,
   );
   if (fromKeychain) {
     log.info('Admin session key loaded from the OS keychain');

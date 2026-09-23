@@ -89,8 +89,10 @@ describe('register_approval_routes — cookie sessions', () => {
 
   /**
    * Distinct source IP per expected-401 test. `checkAdminAuth` keys its failure
-   * counter off `X-Forwarded-For`, so this keeps unauthorised cases from
-   * accumulating into a lockout that would break unrelated tests.
+   * counter off `req.ip`, so this keeps unauthorised cases from accumulating
+   * into a lockout that would break unrelated tests. It only works because the
+   * app below trusts forwarding headers; on an untrusted app the header is
+   * ignored, which is the point of the `req.ip` change.
    */
   let nextFailureIp = 0;
   function freshIp(): string {
@@ -116,6 +118,9 @@ describe('register_approval_routes — cookie sessions', () => {
     sealer = createAdminSessionSealer(randomBytes(32));
 
     app = express();
+    // Model a deployment behind a trusted reverse proxy, which is what makes
+    // `freshIp()` above able to isolate each expected-401 from the lockout.
+    app.set('trust proxy', true);
     app.use(express.json());
     registerApprovalRoutes({
       router: app,
@@ -189,7 +194,19 @@ describe('register_approval_routes — cookie sessions', () => {
       // `trust proxy` is off on this app, so the header is a client's claim and
       // nothing more. Honouring it would hand a plain-HTTP browser a `Secure`
       // cookie it can never send back — a session that silently never works.
-      const res = await request(app)
+      const untrusted = express();
+      untrusted.use(express.json());
+      registerApprovalRoutes({
+        router: untrusted,
+        adminSecretHash: ADMIN_HASH,
+        adminSecretSalt: ADMIN_SALT,
+        webChannel,
+        approvalStore: createApprovalStore(db),
+        auditLog: createAuditLog(db),
+        adminSession: sealer,
+      });
+
+      const res = await request(untrusted)
         .post('/api/v1/admin/approvals/session')
         .set('Authorization', `Bearer ${ADMIN_SECRET}`)
         .set('X-Forwarded-Proto', 'https')
@@ -263,10 +280,12 @@ describe('register_approval_routes — cookie sessions', () => {
 
     it('getHistory_sessionCookieOnly_authenticates', async () => {
 
-      await request(app)
+      const res = await request(app)
         .get('/api/v1/admin/approvals/history')
-        .set('Cookie', session.cookieHeader)
-        .expect(200);
+        .set('Cookie', session.cookieHeader);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('history');
     });
 
     it('getPending_tamperedSessionCookie_returns401', async () => {
@@ -284,33 +303,56 @@ describe('register_approval_routes — cookie sessions', () => {
     it('getPending_cookieSealedWithAnotherKey_returns401', async () => {
       const foreign = createAdminSessionSealer(randomBytes(32)).seal();
 
-      await request(app)
+      const res = await request(app)
         .get('/api/v1/admin/approvals/pending')
         .set('X-Forwarded-For', freshIp())
-        .set('Cookie', `${SESSION_COOKIE}=${encodeURIComponent(foreign.cookie)}`)
-        .expect(401);
+        .set('Cookie', `${SESSION_COOKIE}=${encodeURIComponent(foreign.cookie)}`);
+
+      expect(res.status).toBe(401);
+      expect(res.body.code).toBe('UNAUTHORIZED');
+    });
+
+    it('getPending_cookieSealedForAnotherInstanceWithTheSameKey_returns401', async () => {
+      // Two instances on one host sharing LUCIFER_ADMIN_COOKIE_KEY: same key,
+      // different deployment. The `aud` claim is what keeps them apart, since
+      // browsers do not scope cookies by port and the admin secrets may differ.
+      const sharedKey = randomBytes(32);
+      const neighbour = createAdminSessionSealer(sharedKey, { audience: 'another-instance' }).seal();
+      const ours = createAdminSessionSealer(sharedKey);
+
+      expect(ours.open(neighbour.cookie)).toBeUndefined();
+
+      const res = await request(app)
+        .get('/api/v1/admin/approvals/pending')
+        .set('X-Forwarded-For', freshIp())
+        .set('Cookie', `${SESSION_COOKIE}=${encodeURIComponent(neighbour.cookie)}`);
+
+      expect(res.status).toBe(401);
     });
 
     it('getPending_expiredSessionCookie_returns401', async () => {
-      const expired = createAdminSessionSealer(randomBytes(32), -1).seal();
+      const expired = createAdminSessionSealer(randomBytes(32), { ttlSeconds: -1 }).seal();
 
-      await request(app)
+      const res = await request(app)
         .get('/api/v1/admin/approvals/pending')
         .set('X-Forwarded-For', freshIp())
-        .set('Cookie', `${SESSION_COOKIE}=${encodeURIComponent(expired.cookie)}`)
-        .expect(401);
+        .set('Cookie', `${SESSION_COOKIE}=${encodeURIComponent(expired.cookie)}`);
+
+      expect(res.status).toBe(401);
     });
 
     it('getPending_wrongBearerSecretWithValidCookie_stillReturns401', async () => {
 
       // An Authorization header is a deliberate bearer attempt; it is decided on
       // its own so the per-IP lockout keeps counting failed logins.
-      await request(app)
+      const res = await request(app)
         .get('/api/v1/admin/approvals/pending')
         .set('X-Forwarded-For', freshIp())
         .set('Authorization', 'Bearer wrong-secret')
-        .set('Cookie', session.cookieHeader)
-        .expect(401);
+        .set('Cookie', session.cookieHeader);
+
+      expect(res.status).toBe(401);
+      expect(res.body.code).toBe('UNAUTHORIZED');
     });
   });
 
@@ -367,11 +409,13 @@ describe('register_approval_routes — cookie sessions', () => {
       const requestId = 'csrf-bearer-1';
       submitPendingRequest(webChannel, requestId);
 
-      await request(app)
+      const res = await request(app)
         .post(`/api/v1/admin/approvals/${requestId}/decide`)
         .set('Authorization', `Bearer ${ADMIN_SECRET}`)
-        .send({ action: 'deny' })
-        .expect(200);
+        .send({ action: 'deny' });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ ok: true, decision: 'denied' });
     });
 
     it('postStreamTicket_cookieAuthWithoutCsrfHeader_returns403', async () => {
@@ -396,26 +440,30 @@ describe('register_approval_routes — cookie sessions', () => {
     });
 
     it('postStreamTicket_bearerAuthWithoutCsrfHeader_isUnaffected', async () => {
-      await request(app)
+      const res = await request(app)
         .post('/api/v1/admin/approvals/stream-ticket')
-        .set('Authorization', `Bearer ${ADMIN_SECRET}`)
-        .expect(200);
+        .set('Authorization', `Bearer ${ADMIN_SECRET}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.ticket).toBeTypeOf('string');
     });
 
     it('postDecide_repeatedCsrfFailures_doNotTriggerTheAuthLockout', async () => {
 
       for (let i = 0; i < 6; i++) {
-        await request(app)
+        const rejected = await request(app)
           .post('/api/v1/admin/approvals/stream-ticket')
-          .set('Cookie', session.cookieHeader)
-          .expect(403);
+          .set('Cookie', session.cookieHeader);
+
+        expect(rejected.status).toBe(403);
       }
 
       // A CSRF failure is a wiring problem, not a password guess.
-      await request(app)
+      const res = await request(app)
         .get('/api/v1/admin/approvals/pending')
-        .set('Cookie', session.cookieHeader)
-        .expect(200);
+        .set('Cookie', session.cookieHeader);
+
+      expect(res.status).toBe(200);
     });
   });
 
@@ -438,17 +486,21 @@ describe('register_approval_routes — cookie sessions', () => {
 
     it('deleteSession_cookieAuthWithoutCsrfHeader_returns403', async () => {
 
-      await request(app)
+      const res = await request(app)
         .delete('/api/v1/admin/approvals/session')
-        .set('Cookie', session.cookieHeader)
-        .expect(403);
+        .set('Cookie', session.cookieHeader);
+
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('CSRF_INVALID');
     });
 
     it('deleteSession_unauthenticated_returns401', async () => {
-      await request(app)
+      const res = await request(app)
         .delete('/api/v1/admin/approvals/session')
-        .set('X-Forwarded-For', freshIp())
-        .expect(401);
+        .set('X-Forwarded-For', freshIp());
+
+      expect(res.status).toBe(401);
+      expect(res.body.code).toBe('UNAUTHORIZED');
     });
   });
 });
@@ -487,24 +539,27 @@ describe('register_approval_routes — cookie sessions disabled', () => {
   });
 
   it('postSession_sealerNotWired_routeIsNotRegistered', async () => {
-    await request(app)
+    const res = await request(app)
       .post('/api/v1/admin/approvals/session')
-      .set('Authorization', `Bearer ${ADMIN_SECRET}`)
-      .expect(404);
+      .set('Authorization', `Bearer ${ADMIN_SECRET}`);
+
+    expect(res.status).toBe(404);
   });
 
   it('getPending_sealerNotWired_cookiesAreIgnoredAndBearerStillWorks', async () => {
     const foreign = createAdminSessionSealer(randomBytes(32)).seal();
 
-    await request(app)
+    const withCookie = await request(app)
       .get('/api/v1/admin/approvals/pending')
       .set('X-Forwarded-For', '10.1.0.1')
-      .set('Cookie', `${SESSION_COOKIE}=${encodeURIComponent(foreign.cookie)}`)
-      .expect(401);
+      .set('Cookie', `${SESSION_COOKIE}=${encodeURIComponent(foreign.cookie)}`);
 
-    await request(app)
+    expect(withCookie.status).toBe(401);
+
+    const withBearer = await request(app)
       .get('/api/v1/admin/approvals/pending')
-      .set('Authorization', `Bearer ${ADMIN_SECRET}`)
-      .expect(200);
+      .set('Authorization', `Bearer ${ADMIN_SECRET}`);
+
+    expect(withBearer.status).toBe(200);
   });
 });

@@ -23,10 +23,20 @@ function restrictToOwner(filePath: string): void {
   }
 }
 
+/**
+ * Absolute path of the SQLite file for a data directory.
+ *
+ * Exported because it doubles as the deployment's identity: `deriveInstanceId`
+ * hashes it to scope the admin session key and cookie audience.
+ */
+export function resolveDatabasePath(dataDir: string): string {
+  return resolve(dataDir, 'lucifer.db');
+}
+
 export function getDatabase(dataDir: string): Database.Database {
   if (db) return db;
 
-  const dbPath = resolve(dataDir, 'lucifer.db');
+  const dbPath = resolveDatabasePath(dataDir);
   mkdirSync(dirname(dbPath), { recursive: true });
 
   log.info({ dbPath }, 'Opening SQLite database');
