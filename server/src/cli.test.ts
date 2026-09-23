@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import request from 'supertest';
 import { createApp } from './create_app.js';
@@ -14,8 +15,17 @@ const CLI_PATH = resolve(__dirname, 'cli.ts');
  * output and detecting that the command has finished writing.
  */
 function runCli(...args: string[]): Promise<{ stdout: string; stderr: string; code: number | null }> {
+  return runCliIn(process.cwd(), ...args);
+}
+
+/** Same as {@link runCli}, but from a chosen working directory. */
+function runCliIn(
+  cwd: string,
+  ...args: string[]
+): Promise<{ stdout: string; stderr: string; code: number | null }> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [TSX_ENTRY, CLI_PATH, ...args], {
+      cwd,
       env: { ...process.env, LUCIFER_TELEGRAM_TOKEN: 'skip' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -103,6 +113,52 @@ describe('CLI smoke tests', () => {
     expect(stderr).toContain('Unknown command');
     expect(code).toBe(1);
   }, 15_000);
+
+  it('rejects unknown options instead of starting the server', async () => {
+    const { stderr, code } = await runCli('--versoin');
+    expect(stderr).toContain('Unknown option: --versoin');
+    expect(stderr).not.toContain('Fatal error');
+    expect(code).toBe(1);
+  }, 15_000);
+
+  describe('--version', () => {
+    let tmpDir: string;
+
+    beforeEach(() => {
+      tmpDir = mkdtempSync(join(tmpdir(), 'lucifer-cli-version-'));
+    });
+
+    afterEach(() => {
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('prints the installed version and exits cleanly', async () => {
+      const manifest: unknown = JSON.parse(
+        readFileSync(resolve(__dirname, '../../package.json'), 'utf-8'),
+      );
+      const { stdout, code } = await runCli('--version');
+
+      expect(stdout.trim()).toBe((manifest as { version: string }).version);
+      expect(code).toBe(0);
+    }, 15_000);
+
+    it('-v is accepted as the short form', async () => {
+      const { stdout, code } = await runCli('-v');
+      expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+      expect(code).toBe(0);
+    }, 15_000);
+
+    // The reported bug: run from a directory with no ./config/lucifer.json and
+    // --version fell through to server startup, so it answered with a config
+    // stack trace instead of the version.
+    it('answers from a directory that has no config file', async () => {
+      const { stdout, stderr, code } = await runCliIn(tmpDir, '--version');
+
+      expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+      expect(stderr).toBe('');
+      expect(code).toBe(0);
+    }, 15_000);
+  });
 
   describe('--init', () => {
     let tmpDir: string;

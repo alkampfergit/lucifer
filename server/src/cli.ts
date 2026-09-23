@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
-import { getArgValue } from './cli/args.js';
+import { findUnknownOption, getArgValue } from './cli/args.js';
 import { DEFAULT_CONFIG_PATH } from './lib/config_path.js';
 import { printHelp } from './cli/print_help.js';
+import { printVersion } from './cli/print_version.js';
 import { initConfig } from './cli/init_config.js';
 import { runLog } from './cli/run_log.js';
 import { runStats } from './cli/run_stats.js';
@@ -14,6 +15,13 @@ const args = process.argv.slice(2);
 async function main() {
   if (args.includes('--help') || args.includes('-h')) {
     printHelp();
+    process.exit(0);
+  }
+
+  // Answered before anything reads a config file: asking which build is
+  // installed must work from any directory, including one with no config.
+  if (args.includes('--version') || args.includes('-v')) {
+    printVersion();
     process.exit(0);
   }
 
@@ -45,6 +53,19 @@ async function main() {
   const first = args[0];
   if (first && first !== 'start' && !first.startsWith('-')) {
     console.error(`Unknown command: ${first}`);
+    console.error(`Run 'lucifer-gate --help' for usage.`);
+    process.exit(1);
+  }
+
+  // An unrecognised option is an error for the same reason: otherwise a typo
+  // starts the server, and a missing config turns that into a stack trace that
+  // says nothing about the option the operator actually got wrong.
+  const unknownOption = findUnknownOption(args, {
+    valueFlags: ['--config', '--port'],
+    booleanFlags: ['--auto-approve'],
+  });
+  if (unknownOption) {
+    console.error(`Unknown option: ${unknownOption}`);
     console.error(`Run 'lucifer-gate --help' for usage.`);
     process.exit(1);
   }
