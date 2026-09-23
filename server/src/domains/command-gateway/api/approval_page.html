@@ -144,7 +144,7 @@ function clearCookieMarker() {
 
 /** Bearer header when we hold the secret; otherwise the session cookie carries auth. */
 function authHeaders(extra) {
-  const headers = { ...(extra || {}) };
+  const headers = { ...extra };
   if (secret) headers['Authorization'] = 'Bearer ' + secret;
   return headers;
 }
@@ -160,7 +160,7 @@ function writeHeaders(extra) {
 }
 
 function apiFetch(path, init) {
-  return fetch(path, { credentials: 'same-origin', ...(init || {}) });
+  return fetch(path, { credentials: 'same-origin', ...init });
 }
 
 function showLogin() {
@@ -474,7 +474,8 @@ async function decide(requestId, action, matchType, duration) {
 /**
  * Entry point. A named function rather than an async IIFE so it can be awaited
  * from a DOM test; this is a classic script (the inline `onclick` handlers need
- * these functions on `window`), so top-level `await` is not available here.
+ * these functions on `window`), so top-level `await` is not available here and
+ * the page is started from `DOMContentLoaded` instead of a bare top-level call.
  */
 async function init() {
   // Enter key on login
@@ -489,7 +490,7 @@ async function init() {
   }
 }
 
-init();
+document.addEventListener('DOMContentLoaded', init);
 </script>
 </body>
 </html>
