@@ -585,7 +585,10 @@ at the deployment level (`"adminCookieSession": { "enabled": false }` in
   Mitigated by `chmod 0600` on the database file *and its `-wal`/`-shm`
   sidecars* (in WAL mode every secret write lands in the sidecar first) and by
   documenting the env-var and keychain alternatives; it is not keychain-grade,
-  and that is the price of running headless.
+  and that is the price of running headless. The `chmod` is best-effort: on
+  Windows there is no POSIX mode to set, so the file keeps the ACL it inherits
+  from `dataDir` and operators have to restrict that directory themselves.
+  Surfaced by the Windows CI leg added in ADR-015.
 - (-) Cookie auth reintroduces a CSRF surface that bearer-only auth was immune
   to. Mitigated by `SameSite=Strict` plus the session-bound header above.
 - (-) Rotating or losing the key invalidates every outstanding session. That is
