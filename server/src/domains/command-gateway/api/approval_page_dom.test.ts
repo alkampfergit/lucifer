@@ -60,8 +60,9 @@ interface LoadedPage {
 /**
  * Load the page with a stubbed network, running its scripts for real.
  *
- * `init()` starts during construction, so `settle()` is awaited before the
- * handle is returned: every assertion sees the page as a user would find it.
+ * The page starts itself on `DOMContentLoaded`, which jsdom fires while the
+ * document is constructed, so `settle()` is awaited before the handle is
+ * returned: every assertion sees the page as a user would find it.
  */
 async function loadPage(options: { route?: Route; cookie?: string } = {}): Promise<LoadedPage> {
   const route = options.route ?? happyRoutes;
