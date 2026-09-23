@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import express from 'express'
 import {
+  DEFAULT_HTTPS_PORT,
   getServerConfig,
   resolveListenerPort,
   type ServerConfig,
@@ -308,7 +309,11 @@ function resolveListenerTls(configPath: string | undefined): ResolvedTlsOptions 
 }
 
 export function createApp(options: CreateAppOptions = {}) {
-  const gatewayConfig = loadGatewayConfig(options.configPath)
+  const tlsOptions = resolveListenerTls(options.configPath)
+  const gatewayConfig = loadGatewayConfig(
+    options.configPath,
+    tlsOptions ? DEFAULT_HTTPS_PORT : undefined,
+  )
 
   // One port for everything downstream: the listener the entrypoints bind, the
   // health report, and the proxy collision check. Before this they disagreed —
@@ -327,7 +332,6 @@ export function createApp(options: CreateAppOptions = {}) {
   registerHealthRoutes(app, getHealthReport)
 
   const paths = resolveConfigPaths(options.configPath)
-  const tlsOptions = resolveListenerTls(options.configPath)
 
   // Off unless the operator names their proxy. Express defaults `trust proxy`
   // to false, and that default is what keeps `req.secure` (and therefore the

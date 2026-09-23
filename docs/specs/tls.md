@@ -153,6 +153,9 @@ Requirements and limits:
 - With `tls` set, the port speaks HTTPS **only**. There is no companion
   plain-HTTP port and no redirect, so a client that forgets the scheme fails
   loudly instead of sending its API key in clear text.
+- When `port` is omitted from `lucifer.json`, the HTTPS listener defaults to
+  port `443`. An explicit `port`, `PORT` environment variable, or CLI `--port`
+  overrides that default.
 - The startup log line records `scheme` (`http` or `https`); the
   "Ensure HTTPS is configured for production" warning is suppressed when TLS
   is on.

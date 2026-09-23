@@ -23,7 +23,6 @@ export function initConfig(targetDir: string) {
   const { secret: adminSecret, salt: adminSalt, secretHash: adminHash } = generateAdminSecret();
 
   writeFileSync(luciferJsonPath, JSON.stringify({
-    port: 3001,
     adminSecretHash: adminHash,
     adminSecretSalt: adminSalt,
     approvalTimeoutSeconds: 300,

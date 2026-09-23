@@ -276,9 +276,14 @@ function exportPkcs12(
     // the size, once to fill it.
     const sizing: CryptDataBlob = { cbData: 0, pbData: null }
     if (!api.pfxExportCertStoreEx(memoryStore, sizing, passphrase, null, PFX_EXPORT_FLAGS)) {
+      const error = lastErrorText(api)
+      const detail = error === 'Windows error 0x8009000B'
+        ? ' The key is in a state that prevents PFX export; private-key read permission does not imply export permission.'
+        : error === 'Windows error 0x80090010'
+          ? ' Access to the private key was denied; check the key ACL and the identity running the process.'
+          : ''
       throw new Error(
-        `Windows certificate store export failed: ${lastErrorText(api)}. The private key must be ` +
-        'marked exportable, and a LocalMachine store normally requires an elevated process.',
+        `Windows certificate store export failed: ${error}.${detail}`,
       )
     }
     if (sizing.cbData === 0) {
