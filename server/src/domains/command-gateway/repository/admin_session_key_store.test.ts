@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import {
   AdminSessionKeyConfigError,
+  deriveInstanceId,
   keychainEntryOptions,
   resolveAdminSessionKey,
   type KeyringEntryOptions,
@@ -23,8 +24,14 @@ function createTestDatabase(): Database.Database {
 /** A keychain that is simply not installed on this machine. */
 const noKeyring = () => undefined;
 
+/** Stands in for the deployment under test. */
+const INSTANCE = deriveInstanceId('/srv/lucifer/data/lucifer.db');
+
 /** Entry options handed to the fake keychain, newest last. */
 const seenEntryOptions: Array<KeyringEntryOptions | undefined> = [];
+
+/** `service:account` pairs the fake keychain was asked for, newest last. */
+const seenEntryIds: string[] = [];
 
 /** An in-memory stand-in for the OS keychain, so the branch is deterministic. */
 function fakeKeyring(store: Map<string, string>, behaviour: 'ok' | 'throws' = 'ok'): () => KeyringModule {
@@ -36,6 +43,7 @@ function fakeKeyring(store: Map<string, string>, behaviour: 'ok' | 'throws' = 'o
         options?: KeyringEntryOptions,
       ) {
         seenEntryOptions.push(options);
+        seenEntryIds.push(`${service}:${account}`);
         if (behaviour === 'throws') throw new Error('Secret Service unavailable (no D-Bus)');
       }
       private get id() { return `${this.service}:${this.account}`; }
@@ -59,6 +67,7 @@ describe('admin_session_key_store', () => {
   beforeEach(() => {
     db = createTestDatabase();
     seenEntryOptions.length = 0;
+    seenEntryIds.length = 0;
     delete process.env.LUCIFER_ADMIN_COOKIE_KEY;
   });
 
@@ -74,7 +83,7 @@ describe('admin_session_key_store', () => {
       process.env.LUCIFER_ADMIN_COOKIE_KEY = hex;
       const keychain = new Map<string, string>();
 
-      const result = resolveAdminSessionKey(db, { loadKeyringModule: fakeKeyring(keychain) });
+      const result = resolveAdminSessionKey(db, INSTANCE, { loadKeyringModule: fakeKeyring(keychain) });
 
       expect(result.source).toBe('env');
       expect(result.key.toString('hex')).toBe(hex);
@@ -85,7 +94,7 @@ describe('admin_session_key_store', () => {
     it('resolveAdminSessionKey_envKeySurroundedByWhitespace_isAccepted', () => {
       process.env.LUCIFER_ADMIN_COOKIE_KEY = `  ${'b'.repeat(64)}\n`;
 
-      const result = resolveAdminSessionKey(db, { loadKeyringModule: noKeyring });
+      const result = resolveAdminSessionKey(db, INSTANCE, { loadKeyringModule: noKeyring });
 
       expect(result.source).toBe('env');
       expect(result.key).toHaveLength(32);
@@ -98,7 +107,7 @@ describe('admin_session_key_store', () => {
     ])('resolveAdminSessionKey_envKeyMalformed_%s_throwsInsteadOfSilentlyFallingBack', (_label, value) => {
       process.env.LUCIFER_ADMIN_COOKIE_KEY = value;
 
-      expect(() => resolveAdminSessionKey(db, { loadKeyringModule: noKeyring }))
+      expect(() => resolveAdminSessionKey(db, INSTANCE, { loadKeyringModule: noKeyring }))
         .toThrow(/LUCIFER_ADMIN_COOKIE_KEY must be 64 hex characters/);
     });
 
@@ -107,7 +116,7 @@ describe('admin_session_key_store', () => {
 
       // The composition root reads this type to tell an operator's configuration
       // mistake apart from the fallbacks it is supposed to swallow.
-      expect(() => resolveAdminSessionKey(db, { loadKeyringModule: noKeyring }))
+      expect(() => resolveAdminSessionKey(db, INSTANCE, { loadKeyringModule: noKeyring }))
         .toThrow(AdminSessionKeyConfigError);
     });
   });
@@ -116,36 +125,36 @@ describe('admin_session_key_store', () => {
     it('resolveAdminSessionKey_keychainEmpty_generatesAndStoresThere', () => {
       const keychain = new Map<string, string>();
 
-      const result = resolveAdminSessionKey(db, { loadKeyringModule: fakeKeyring(keychain) });
+      const result = resolveAdminSessionKey(db, INSTANCE, { loadKeyringModule: fakeKeyring(keychain) });
 
       expect(result.source).toBe('keychain');
       expect(result.key).toHaveLength(32);
-      expect(keychain.get('lucifer-gate:admin_session_key')).toBe(result.key.toString('hex'));
+      expect(keychain.get(`lucifer-gate:admin_session_key:${INSTANCE}`)).toBe(result.key.toString('hex'));
       // The database must stay clean when the keychain answered.
       expect(readStoredKey(db)).toBeUndefined();
     });
 
     it('resolveAdminSessionKey_keychainHoldsAKey_returnsTheSameKeyAcrossRestarts', () => {
       const keychain = new Map<string, string>();
-      const first = resolveAdminSessionKey(db, { loadKeyringModule: fakeKeyring(keychain) });
+      const first = resolveAdminSessionKey(db, INSTANCE, { loadKeyringModule: fakeKeyring(keychain) });
 
-      const second = resolveAdminSessionKey(createTestDatabase(), { loadKeyringModule: fakeKeyring(keychain) });
+      const second = resolveAdminSessionKey(createTestDatabase(), INSTANCE, { loadKeyringModule: fakeKeyring(keychain) });
 
       expect(second.source).toBe('keychain');
       expect(second.key.toString('hex')).toBe(first.key.toString('hex'));
     });
 
     it('resolveAdminSessionKey_keychainHoldsGarbage_replacesItWithAValidKey', () => {
-      const keychain = new Map<string, string>([['lucifer-gate:admin_session_key', 'not-a-key']]);
+      const keychain = new Map<string, string>([[`lucifer-gate:admin_session_key:${INSTANCE}`, 'not-a-key']]);
 
-      const result = resolveAdminSessionKey(db, { loadKeyringModule: fakeKeyring(keychain) });
+      const result = resolveAdminSessionKey(db, INSTANCE, { loadKeyringModule: fakeKeyring(keychain) });
 
       expect(result.source).toBe('keychain');
-      expect(keychain.get('lucifer-gate:admin_session_key')).toBe(result.key.toString('hex'));
+      expect(keychain.get(`lucifer-gate:admin_session_key:${INSTANCE}`)).toBe(result.key.toString('hex'));
     });
 
     it('resolveAdminSessionKey_keychainThrows_fallsBackToTheDatabase', () => {
-      const result = resolveAdminSessionKey(db, { loadKeyringModule: fakeKeyring(new Map(), 'throws') });
+      const result = resolveAdminSessionKey(db, INSTANCE, { loadKeyringModule: fakeKeyring(new Map(), 'throws') });
 
       expect(result.source).toBe('database');
       expect(readStoredKey(db)).toBe(result.key.toString('hex'));
@@ -156,7 +165,7 @@ describe('admin_session_key_store', () => {
     // success while silently invalidating every session at the next restart, so the
     // entry is pinned and its absence is allowed to throw into the database fallback.
     it('resolveAdminSessionKey_onLinux_pinsTheEntryToSecretServiceRatherThanTheKernelKeyring', () => {
-      resolveAdminSessionKey(db, { loadKeyringModule: fakeKeyring(new Map()), platform: 'linux' });
+      resolveAdminSessionKey(db, INSTANCE, { loadKeyringModule: fakeKeyring(new Map()), platform: 'linux' });
 
       expect(seenEntryOptions).toEqual([{ linux: { store: 'secret-service' } }]);
     });
@@ -164,7 +173,7 @@ describe('admin_session_key_store', () => {
     it.each(['darwin', 'win32'] as const)(
       'resolveAdminSessionKey_on_%s_passesNoLinuxOnlyOptions',
       (platform) => {
-        resolveAdminSessionKey(db, { loadKeyringModule: fakeKeyring(new Map()), platform });
+        resolveAdminSessionKey(db, INSTANCE, { loadKeyringModule: fakeKeyring(new Map()), platform });
 
         expect(seenEntryOptions).toEqual([undefined]);
       },
@@ -173,11 +182,54 @@ describe('admin_session_key_store', () => {
     it('keychainEntryOptions_defaultsToTheCurrentPlatform', () => {
       expect(keychainEntryOptions()).toEqual(keychainEntryOptions(process.platform));
     });
+
+    it('resolveAdminSessionKey_twoInstancesOnOneHost_doNotShareTheKeychainEntry', () => {
+      // Same OS account, same keychain, different deployments. A shared entry
+      // would give both the same sealing key, and since browsers do not scope
+      // cookies by port, a session minted against one admin secret would open
+      // on the instance that uses the other.
+      const keychain = new Map<string, string>();
+      const other = deriveInstanceId('/srv/lucifer-staging/data/lucifer.db');
+
+      const first = resolveAdminSessionKey(db, INSTANCE, { loadKeyringModule: fakeKeyring(keychain) });
+      const second = resolveAdminSessionKey(createTestDatabase(), other, { loadKeyringModule: fakeKeyring(keychain) });
+
+      expect(seenEntryIds).toEqual([
+        `lucifer-gate:admin_session_key:${INSTANCE}`,
+        `lucifer-gate:admin_session_key:${other}`,
+      ]);
+      expect(second.key.toString('hex')).not.toBe(first.key.toString('hex'));
+    });
+  });
+
+  describe('deriveInstanceId', () => {
+    it('deriveInstanceId_sameDatabasePath_isStableAcrossRestarts', () => {
+      expect(deriveInstanceId('/srv/lucifer/data/lucifer.db'))
+        .toBe(deriveInstanceId('/srv/lucifer/data/lucifer.db'));
+    });
+
+    it('deriveInstanceId_equivalentRelativePath_resolvesToTheSameId', () => {
+      expect(deriveInstanceId('/srv/lucifer/data/../data/lucifer.db'))
+        .toBe(deriveInstanceId('/srv/lucifer/data/lucifer.db'));
+    });
+
+    it('deriveInstanceId_differentDatabasePaths_differ', () => {
+      expect(deriveInstanceId('/srv/a/lucifer.db')).not.toBe(deriveInstanceId('/srv/b/lucifer.db'));
+    });
+
+    it('deriveInstanceId_anyPath_leaksNothingReadableAboutIt', () => {
+      // The id lands in logs and in the sealed `aud` claim, so it must not carry
+      // the filesystem layout with it.
+      const id = deriveInstanceId('/srv/lucifer/data/lucifer.db');
+
+      expect(id).toMatch(/^[0-9a-f]{16}$/);
+      expect(id).not.toContain('lucifer');
+    });
   });
 
   describe('database branch', () => {
     it('resolveAdminSessionKey_noEnvAndNoKeychain_generatesAndPersistsInTheDatabase', () => {
-      const result = resolveAdminSessionKey(db, { loadKeyringModule: noKeyring });
+      const result = resolveAdminSessionKey(db, INSTANCE, { loadKeyringModule: noKeyring });
 
       expect(result.source).toBe('database');
       expect(result.key).toHaveLength(32);
@@ -185,9 +237,9 @@ describe('admin_session_key_store', () => {
     });
 
     it('resolveAdminSessionKey_calledTwice_reusesTheStoredKeySoSessionsSurviveRestart', () => {
-      const first = resolveAdminSessionKey(db, { loadKeyringModule: noKeyring });
+      const first = resolveAdminSessionKey(db, INSTANCE, { loadKeyringModule: noKeyring });
 
-      const second = resolveAdminSessionKey(db, { loadKeyringModule: noKeyring });
+      const second = resolveAdminSessionKey(db, INSTANCE, { loadKeyringModule: noKeyring });
 
       expect(second.key.toString('hex')).toBe(first.key.toString('hex'));
     });
@@ -196,7 +248,7 @@ describe('admin_session_key_store', () => {
       db.prepare('INSERT INTO server_secrets (name, value, created_at) VALUES (?, ?, ?)')
         .run('admin_session_key', 'corrupted', new Date().toISOString());
 
-      const result = resolveAdminSessionKey(db, { loadKeyringModule: noKeyring });
+      const result = resolveAdminSessionKey(db, INSTANCE, { loadKeyringModule: noKeyring });
 
       expect(result.key).toHaveLength(32);
       expect(readStoredKey(db)).toBe(result.key.toString('hex'));

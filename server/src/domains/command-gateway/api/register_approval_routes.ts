@@ -95,8 +95,18 @@ function isSecureRequest(req: Request): boolean {
   return req.secure;
 }
 
+/**
+ * The address the per-IP auth lockout is counted against.
+ *
+ * `req.ip` rather than a raw `X-Forwarded-For` read: Express resolves it
+ * through the configured `trust proxy` policy (see `trustProxy` in
+ * `lucifer.json`), so the header is honoured only from a proxy the operator
+ * named. Reading it unconditionally would let a direct client rotate the header
+ * to sidestep the five-failure lockout entirely, or pin the lockout on somebody
+ * else's address.
+ */
 function clientIp(req: Request): string {
-  return (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.socket.remoteAddress ?? 'unknown';
+  return req.ip ?? req.socket.remoteAddress ?? 'unknown';
 }
 
 function rejectUnauthorized(ip: string, res: Response): undefined {

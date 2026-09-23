@@ -93,6 +93,10 @@ visit. Use **Sign out** in the header to drop it.
 - Cookie-authenticated writes must carry the `lucifer_admin_csrf` cookie value
   in an `X-Lucifer-CSRF` header; the page does this for you. Direct API callers
   using `Authorization: Bearer` are unaffected.
+- A session belongs to the Lucifer instance that issued it. If you run two on
+  one machine, signing into one does not sign you into the other — and because
+  browsers share cookies across ports, signing into the second one signs you out
+  of the first. Use different hostnames if you need both at once.
 
 The feature is on by default. To require the secret every time, put this in
 `lucifer.json`:
@@ -106,7 +110,8 @@ The feature is on by default. To require the secret every time, put this in
 Key storage and rotation: [`docs/CONFIGURATION.md`](../CONFIGURATION.md#admin-cookie-sessions).
 
 If a reverse proxy terminates TLS in front of Lucifer, set `trustProxy` in
-`lucifer.json` so the cookies get the `Secure` flag — see
+`lucifer.json` so the cookies get the `Secure` flag — and so the failed-login
+lockout counts the caller's real address rather than the proxy's. See
 [Running behind a TLS-terminating proxy](../CONFIGURATION.md#running-behind-a-tls-terminating-proxy).
 
 ## Security notes

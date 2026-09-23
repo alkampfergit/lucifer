@@ -144,7 +144,7 @@ function clearCookieMarker() {
 
 /** Bearer header when we hold the secret; otherwise the session cookie carries auth. */
 function authHeaders(extra) {
-  const headers = Object.assign({}, extra || {});
+  const headers = { ...(extra || {}) };
   if (secret) headers['Authorization'] = 'Bearer ' + secret;
   return headers;
 }
@@ -160,7 +160,7 @@ function writeHeaders(extra) {
 }
 
 function apiFetch(path, init) {
-  return fetch(path, Object.assign({ credentials: 'same-origin' }, init || {}));
+  return fetch(path, { credentials: 'same-origin', ...(init || {}) });
 }
 
 function showLogin() {
@@ -471,8 +471,12 @@ async function decide(requestId, action, matchType, duration) {
   }
 }
 
-// Initialize
-(async function init() {
+/**
+ * Entry point. A named function rather than an async IIFE so it can be awaited
+ * from a DOM test; this is a classic script (the inline `onclick` handlers need
+ * these functions on `window`), so top-level `await` is not available here.
+ */
+async function init() {
   // Enter key on login
   document.getElementById('secret-input').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') doLogin();
@@ -483,7 +487,9 @@ async function decide(requestId, action, matchType, duration) {
   } else {
     showLogin();
   }
-})();
+}
+
+init();
 </script>
 </body>
 </html>

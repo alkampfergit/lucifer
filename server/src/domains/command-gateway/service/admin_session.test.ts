@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createCipheriv, randomBytes } from 'node:crypto';
 import {
+  ADMIN_SESSION_DEFAULT_AUDIENCE,
   ADMIN_SESSION_KEY_BYTES,
   ADMIN_SESSION_TTL_SECONDS,
   createAdminSessionSealer,
@@ -83,6 +84,7 @@ describe('admin_session', () => {
       expect(assertion).toBeDefined();
       expect(assertion!.v).toBe(1);
       expect(assertion!.sub).toBe('admin');
+      expect(assertion!.aud).toBe(ADMIN_SESSION_DEFAULT_AUDIENCE);
       expect(assertion!.csrf).toBe(sealed.csrf);
       expect(assertion!.exp - assertion!.iat).toBe(ADMIN_SESSION_TTL_SECONDS);
     });
@@ -106,7 +108,7 @@ describe('admin_session', () => {
     it('open_expiredAssertion_returnsUndefined', () => {
       const key = makeKey();
       // A sealer whose TTL already elapsed the moment it minted the cookie.
-      const expired = createAdminSessionSealer(key, -1).seal();
+      const expired = createAdminSessionSealer(key, { ttlSeconds: -1 }).seal();
 
       expect(createAdminSessionSealer(key).open(expired.cookie)).toBeUndefined();
     });
@@ -131,7 +133,7 @@ describe('admin_session', () => {
 
     it('open_forgedAssertionWithinTheConfiguredTtl_isStillAccepted', () => {
       const key = makeKey();
-      const forged = forgeCookie(key, { v: 1, sub: 'admin', iat: now(), exp: now() + 60, csrf: 'x' });
+      const forged = forgeCookie(key, { v: 1, sub: 'admin', aud: ADMIN_SESSION_DEFAULT_AUDIENCE, iat: now(), exp: now() + 60, csrf: 'x' });
 
       // The baseline: a leaked key does yield a session. The tests below bound it.
       expect(createAdminSessionSealer(key).open(forged)).toBeDefined();
@@ -140,7 +142,7 @@ describe('admin_session', () => {
     it('open_forgedAssertionWithDistantExpiry_isRejectedInsteadOfLastingForever', () => {
       const key = makeKey();
       const century = ADMIN_SESSION_TTL_SECONDS * 1200;
-      const forged = forgeCookie(key, { v: 1, sub: 'admin', iat: now(), exp: now() + century, csrf: 'x' });
+      const forged = forgeCookie(key, { v: 1, sub: 'admin', aud: ADMIN_SESSION_DEFAULT_AUDIENCE, iat: now(), exp: now() + century, csrf: 'x' });
 
       expect(createAdminSessionSealer(key).open(forged)).toBeUndefined();
     });
@@ -150,7 +152,7 @@ describe('admin_session', () => {
       // `exp` is inside a 30-day window measured from an ancient `iat`, so a
       // naive `exp - iat <= ttl` check without the freshness bound would pass.
       const iat = now() - ADMIN_SESSION_TTL_SECONDS * 10;
-      const forged = forgeCookie(key, { v: 1, sub: 'admin', iat, exp: iat + ADMIN_SESSION_TTL_SECONDS * 10, csrf: 'x' });
+      const forged = forgeCookie(key, { v: 1, sub: 'admin', aud: ADMIN_SESSION_DEFAULT_AUDIENCE, iat, exp: iat + ADMIN_SESSION_TTL_SECONDS * 10, csrf: 'x' });
 
       expect(createAdminSessionSealer(key).open(forged)).toBeUndefined();
     });
@@ -158,7 +160,7 @@ describe('admin_session', () => {
     it('open_forgedAssertionIssuedInTheFuture_isRejected', () => {
       const key = makeKey();
       const iat = now() + 3600;
-      const forged = forgeCookie(key, { v: 1, sub: 'admin', iat, exp: iat + 60, csrf: 'x' });
+      const forged = forgeCookie(key, { v: 1, sub: 'admin', aud: ADMIN_SESSION_DEFAULT_AUDIENCE, iat, exp: iat + 60, csrf: 'x' });
 
       expect(createAdminSessionSealer(key).open(forged)).toBeUndefined();
     });
@@ -167,7 +169,7 @@ describe('admin_session', () => {
       const key = makeKey();
       // A modest clock step across a restart must not sign every admin out.
       const iat = now() + 30;
-      const forged = forgeCookie(key, { v: 1, sub: 'admin', iat, exp: iat + 60, csrf: 'x' });
+      const forged = forgeCookie(key, { v: 1, sub: 'admin', aud: ADMIN_SESSION_DEFAULT_AUDIENCE, iat, exp: iat + 60, csrf: 'x' });
 
       expect(createAdminSessionSealer(key).open(forged)).toBeDefined();
     });
@@ -175,20 +177,36 @@ describe('admin_session', () => {
     // Hand-written JSON: `1e999` parses to Infinity and would sail past every
     // numeric bound, and JSON.stringify cannot express it for us.
     it.each([
-      ['exp overflows to Infinity', '{"v":1,"sub":"admin","iat":0,"exp":1e999,"csrf":"x"}'],
-      ['exp is beyond the safe integer range', '{"v":1,"sub":"admin","iat":0,"exp":1e30,"csrf":"x"}'],
-      ['exp is fractional', '{"v":1,"sub":"admin","iat":0,"exp":1.5,"csrf":"x"}'],
-      ['exp is a numeric string', '{"v":1,"sub":"admin","iat":0,"exp":"99999999999","csrf":"x"}'],
-      ['csrf is empty', '{"v":1,"sub":"admin","iat":0,"exp":1e999,"csrf":""}'],
+      ['exp overflows to Infinity', '{"v":1,"sub":"admin","aud":"lucifer","iat":0,"exp":1e999,"csrf":"x"}'],
+      ['exp is beyond the safe integer range', '{"v":1,"sub":"admin","aud":"lucifer","iat":0,"exp":1e30,"csrf":"x"}'],
+      ['exp is fractional', '{"v":1,"sub":"admin","aud":"lucifer","iat":0,"exp":1.5,"csrf":"x"}'],
+      ['exp is a numeric string', '{"v":1,"sub":"admin","aud":"lucifer","iat":0,"exp":"99999999999","csrf":"x"}'],
+      ['csrf is empty', '{"v":1,"sub":"admin","aud":"lucifer","iat":0,"exp":1e999,"csrf":""}'],
     ])('open_forgedAssertionWithNonTimestampClaims_%s_isRejected', (_label, json) => {
       const key = makeKey();
 
       expect(createAdminSessionSealer(key).open(forgeRawCookie(key, json))).toBeUndefined();
     });
 
+    it('open_forgedAssertionForAnotherAudience_isRejected', () => {
+      // A leaked key shared between two instances on one host must not let a
+      // session minted for one of them open on the other.
+      const key = makeKey();
+      const forged = forgeCookie(key, { v: 1, sub: 'admin', aud: 'another-instance', iat: now(), exp: now() + 60, csrf: 'x' });
+
+      expect(createAdminSessionSealer(key).open(forged)).toBeUndefined();
+    });
+
+    it('open_forgedAssertionWithNoAudienceClaim_isRejected', () => {
+      const key = makeKey();
+      const forged = forgeCookie(key, { v: 1, sub: 'admin', iat: now(), exp: now() + 60, csrf: 'x' });
+
+      expect(createAdminSessionSealer(key).open(forged)).toBeUndefined();
+    });
+
     it('open_forgedAssertionWithAnotherSubject_isRejected', () => {
       const key = makeKey();
-      const forged = forgeCookie(key, { v: 1, sub: 'root', iat: now(), exp: now() + 60, csrf: 'x' });
+      const forged = forgeCookie(key, { v: 1, sub: 'root', aud: ADMIN_SESSION_DEFAULT_AUDIENCE, iat: now(), exp: now() + 60, csrf: 'x' });
 
       expect(createAdminSessionSealer(key).open(forged)).toBeUndefined();
     });

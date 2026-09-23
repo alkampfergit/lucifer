@@ -284,15 +284,41 @@ describe('register_approval_routes', () => {
   // 4. Auth lockout after 5 failures
   // ------------------------------------------------------------------
   describe('auth lockout', () => {
-    // Use a separate app instance so the shared auth rate-limit map does not
-    // pollute other tests. The rate-limit map is module-level, so we drive
-    // lockout via a distinct forwarded IP.
+    /**
+     * A throwaway app that trusts forwarding headers, so the lockout can be
+     * driven against an address no other test in this file uses. The failure
+     * counter is module-level and keyed by `req.ip`; locking the loopback
+     * address instead would poison every later test.
+     *
+     * The companion case — a *direct* client rotating `X-Forwarded-For` to
+     * evade the lockout — lives in `register_approval_routes.lockout.test.ts`,
+     * which needs a test file of its own precisely because it does lock the
+     * loopback address.
+     */
+    function lockoutApp(): express.Express {
+      const isolated = express();
+      isolated.set('trust proxy', true);
+      isolated.use(express.json());
+      registerApprovalRoutes({
+        router: isolated,
+        adminSecretHash: ADMIN_HASH,
+        adminSecretSalt: ADMIN_SALT,
+        webChannel,
+        approvalStore,
+        auditLog,
+      });
+      return isolated;
+    }
+
     it('returns 429 RATE_LIMITED after 5 failed auth attempts from same IP', async () => {
+      // Behind a proxy the operator trusts, so the forwarded address is the
+      // client's real one and each test can use a distinct value.
+      const proxied = lockoutApp();
       const lockoutIp = '10.99.99.99';
 
       // 5 failures
       for (let i = 0; i < 5; i++) {
-        const res = await request(app)
+        const res = await request(proxied)
           .get('/api/v1/admin/approvals/pending')
           .set('Authorization', 'Bearer wrong')
           .set('X-Forwarded-For', lockoutIp);
@@ -301,7 +327,7 @@ describe('register_approval_routes', () => {
       }
 
       // 6th attempt should be locked out
-      const lockedRes = await request(app)
+      const lockedRes = await request(proxied)
         .get('/api/v1/admin/approvals/pending')
         .set('Authorization', `Bearer ${ADMIN_SECRET}`)
         .set('X-Forwarded-For', lockoutIp);

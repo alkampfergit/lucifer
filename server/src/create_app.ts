@@ -6,8 +6,8 @@ import { registerHealthRoutes } from './domains/platform-api/api/register_health
 import { createRuntimeMetadataRepository } from './domains/platform-api/repository/runtime_metadata_repository.js'
 import { createHealthReportService } from './domains/platform-api/service/create_health_report.js'
 import { loadGatewayConfig } from './domains/command-gateway/config/gateway_config.js'
-import { getDatabase, closeDatabase } from './domains/command-gateway/repository/database.js'
-import { resolveAdminSessionKey, AdminSessionKeyConfigError } from './domains/command-gateway/repository/admin_session_key_store.js'
+import { getDatabase, closeDatabase, resolveDatabasePath } from './domains/command-gateway/repository/database.js'
+import { resolveAdminSessionKey, deriveInstanceId, AdminSessionKeyConfigError } from './domains/command-gateway/repository/admin_session_key_store.js'
 import { createApprovalStore } from './domains/command-gateway/repository/approval_store.js'
 import { createAuditLog } from './domains/command-gateway/repository/audit_log.js'
 import { createApiKeyStore } from './domains/command-gateway/repository/api_key_store.js'
@@ -54,6 +54,10 @@ interface GatewayDeps {
  * feature off. A key that cannot be resolved is not fatal: the web channel
  * still works, callers just have to re-enter the admin secret each time.
  *
+ * Both the stored key and the sealed audience are scoped to this deployment's
+ * database path, so a second instance on the same host cannot be signed into
+ * with the first one's cookie.
+ *
  * The one exception is a malformed `LUCIFER_ADMIN_COOKIE_KEY`. That is the
  * operator saying "use *this* key", so degrading to bearer-only would hide a
  * configuration mistake behind a feature that merely looks switched off — the
@@ -68,10 +72,15 @@ function initAdminSessionSealer(
     return undefined
   }
 
+  // One identifier for both halves of the scoping: the keychain entry that
+  // holds the key, and the `aud` claim that says which deployment a session
+  // belongs to. They must agree, so they are derived once here.
+  const instanceId = deriveInstanceId(resolveDatabasePath(gatewayConfig.dataDir))
+
   try {
-    const { key, source } = resolveAdminSessionKey(db)
-    log.info({ source }, 'Admin cookie sessions enabled')
-    return createAdminSessionSealer(key)
+    const { key, source } = resolveAdminSessionKey(db, instanceId)
+    log.info({ source, instanceId }, 'Admin cookie sessions enabled')
+    return createAdminSessionSealer(key, { audience: instanceId })
   } catch (err) {
     if (err instanceof AdminSessionKeyConfigError) throw err
     log.error({ err }, 'Could not resolve the admin session key; admin auth stays bearer-only')

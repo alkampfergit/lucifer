@@ -40,12 +40,15 @@
 
 | ID | Story | Acceptance Criteria | Coverage |
 |---|---|---|---|
-| J4-S1 | As an Approver, I open `/admin/approvals` and see pending requests streamed via SSE | Page loads, authenticates via admin secret, and displays pending command requests in real time | `covered` — `register_approval_routes.test.ts` (SSE real-time events: new_request + request_decided) |
+| J4-S1 | As an Approver, I open `/admin/approvals` and see pending requests streamed via SSE | Page loads, authenticates with the admin secret (or an existing session cookie, see J4-S7), and displays pending command requests in real time | `covered` — `register_approval_routes.test.ts` (SSE real-time events: new_request + request_decided), `approval_page_dom.test.ts` |
 | J4-S2 | As an Approver, I approve a command via the web admin so that it executes | Admin POST to approve endpoint transitions the request to executing → completed | `covered` — `web_approval_channel.test.ts` |
 | J4-S3 | As an Approver, I deny a command via the web admin so that it is rejected | Admin POST to deny endpoint transitions the request to denied | `covered` — `web_approval_channel.test.ts` |
 | J4-S4 | As an Approver, I reopen the web admin and see recent command calls so that completed requests are not lost from view | After authentication, the page lists the 20 most recent authenticated command submissions from the persistent audit log, newest first | `covered` — `audit_log.test.ts`, `register_approval_routes.test.ts`, `approval_page_asset.test.ts` |
 | J4-S5 | As an Approver, I use the admin page menu to navigate available browser pages | The menu lists server-delivered browser pages only, marks the current approvals page as active, and can accommodate future pages without exposing API or SSE endpoints | `covered` — `approval_page_asset.test.ts` |
 | J4-S6 | As an Approver, I see recent calls update without reopening the admin page | The history refreshes once per minute and when an approval request is received or decided through the web admin | `covered` — `approval_page_asset.test.ts`, `register_approval_routes.test.ts` |
+| J4-S7 | As an Approver, I tick "Remember me on this device" so that reloading the admin page does not ask for the admin secret again | `POST /api/v1/admin/approvals/session` exchanges the secret for a sealed `HttpOnly` cookie valid 30 days (absolute, never extended) plus a readable CSRF companion; the page then authenticates by cookie, sends `X-Lucifer-CSRF` on every write, and stops holding the secret | `covered` — `register_approval_routes.session.test.ts`, `admin_session.test.ts`, `approval_page_dom.test.ts` |
+| J4-S8 | As an Approver, I sign out so that this device stops being remembered | `DELETE /api/v1/admin/approvals/session` expires both cookies and the page returns to the login form | `covered` — `register_approval_routes.session.test.ts`, `approval_page_dom.test.ts` |
+| J4-S9 | As an Approver, I am returned to the login form — not locked out — when my remembered session no longer works | An expired, tampered, or foreign-instance cookie yields `401` and the page falls back to the login form; a visit with no session marker sends no probe at all, so reloads never consume the five-failure lockout | `covered` — `register_approval_routes.session.test.ts`, `admin_session.test.ts`, `approval_page_dom.test.ts` |
 
 ## J5: Multi-Channel Approval
 
@@ -62,6 +65,6 @@
 
 | Status | Count |
 |---|---|
-| `covered` | 18 |
+| `covered` | 21 |
 | `partial` | 0 |
 | `uncovered` | 0 |

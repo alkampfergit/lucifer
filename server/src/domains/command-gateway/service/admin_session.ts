@@ -14,6 +14,14 @@ export const ADMIN_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
 /** Bytes of key material AES-256-GCM needs. */
 export const ADMIN_SESSION_KEY_BYTES = 32;
 
+/**
+ * Audience used when no deployment identifier is supplied.
+ *
+ * Only tests and ad-hoc callers land here; the composition root always passes
+ * the instance's own identifier (see `deriveInstanceId`).
+ */
+export const ADMIN_SESSION_DEFAULT_AUDIENCE = 'lucifer';
+
 const FORMAT_VERSION = 'v1';
 const ASSERTION_VERSION = 1;
 const IV_BYTES = 12;
@@ -38,13 +46,24 @@ function b64url(buf: Buffer): string {
  * seal a payload — a leaked key, a sealer bug — could mint a session with an
  * arbitrarily distant `exp`, which contradicts the "compromise yields only an
  * expiring session" guarantee this design rests on. A genuine cookie always
- * satisfies these bounds, so the cap costs honest callers nothing.
+ * satisfies these bounds, so the cap costs honest callers nothing. The audience
+ * is checked for the same reason: authenticity proves the payload came from a
+ * holder of the key, not that it was meant for *this* deployment.
  */
-function isAssertion(value: unknown, nowSeconds: number, ttlSeconds: number): value is AdminSessionAssertion {
+function isAssertion(
+  value: unknown,
+  nowSeconds: number,
+  ttlSeconds: number,
+  audience: string,
+): value is AdminSessionAssertion {
   if (typeof value !== 'object' || value === null) return false;
   const a = value as Record<string, unknown>;
   if (a.v !== ASSERTION_VERSION) return false;
   if (a.sub !== 'admin') return false;
+  // Refuse a session minted for another deployment even when both were sealed
+  // with the same key — which is exactly what a shared LUCIFER_ADMIN_COOKIE_KEY
+  // produces for two instances on the same host.
+  if (a.aud !== audience) return false;
   // Safe integers only: NaN, Infinity and fractional seconds are not timestamps
   // this sealer ever produces, and `Infinity` would sail past every bound below.
   if (!Number.isSafeInteger(a.iat) || !Number.isSafeInteger(a.exp)) return false;
@@ -66,6 +85,16 @@ export interface SealedAdminSession {
   maxAgeSeconds: number;
 }
 
+export interface AdminSessionSealerOptions {
+  /** Session lifetime in seconds. Defaults to `ADMIN_SESSION_TTL_SECONDS`. */
+  ttlSeconds?: number;
+  /**
+   * Deployment identifier sealed into the `aud` claim and required on open.
+   * Defaults to `ADMIN_SESSION_DEFAULT_AUDIENCE`.
+   */
+  audience?: string;
+}
+
 export interface AdminSessionSealer {
   /** Mint a fresh assertion sealed with the configured key. */
   seal(): SealedAdminSession;
@@ -80,25 +109,29 @@ export interface AdminSessionSealer {
  *
  * The cookie is self-contained — `v1.<iv>.<ciphertext>.<tag>`, all base64url —
  * so no server-side session table is needed and sessions survive a restart. The
- * sealed payload is an assertion (`{ v, sub, iat, exp, csrf }`), never the raw
- * admin secret: a leaked key therefore yields a forgeable, expiring session
+ * sealed payload is an assertion (`{ v, sub, aud, iat, exp, csrf }`), never the
+ * raw admin secret: a leaked key therefore yields a forgeable, expiring session
  * rather than a reusable bearer credential.
  *
  * Defends against: tampering and forgery (GCM auth tag), replay past `exp`,
  * and cross-site request forgery (via the sealed `csrf` claim, checked by the
  * caller). `open` additionally bounds the lifetime claims by `ttlSeconds`, so
- * even a sealed payload cannot claim a session longer than the configured one.
+ * even a sealed payload cannot claim a session longer than the configured one,
+ * and rejects an assertion minted for a different `audience`.
  * Does NOT defend against: theft of the cookie itself from a browser, or
  * disclosure of the sealing key — either one is a session compromise, capped at
  * `ttlSeconds` from the moment of forgery.
  */
 export function createAdminSessionSealer(
   key: Buffer,
-  ttlSeconds: number = ADMIN_SESSION_TTL_SECONDS,
+  options: AdminSessionSealerOptions = {},
 ): AdminSessionSealer {
   if (key.length !== ADMIN_SESSION_KEY_BYTES) {
     throw new Error(`Admin session key must be exactly ${ADMIN_SESSION_KEY_BYTES} bytes, got ${key.length}`);
   }
+
+  const ttlSeconds = options.ttlSeconds ?? ADMIN_SESSION_TTL_SECONDS;
+  const audience = options.audience ?? ADMIN_SESSION_DEFAULT_AUDIENCE;
 
   return {
     seal(): SealedAdminSession {
@@ -107,6 +140,7 @@ export function createAdminSessionSealer(
       const assertion: AdminSessionAssertion = {
         v: ASSERTION_VERSION,
         sub: 'admin',
+        aud: audience,
         iat: nowSeconds,
         exp: nowSeconds + ttlSeconds,
         csrf,
@@ -142,7 +176,7 @@ export function createAdminSessionSealer(
 
         const parsed: unknown = JSON.parse(plaintext);
         const nowSeconds = Math.floor(Date.now() / 1000);
-        return isAssertion(parsed, nowSeconds, ttlSeconds) ? parsed : undefined;
+        return isAssertion(parsed, nowSeconds, ttlSeconds, audience) ? parsed : undefined;
       } catch {
         // Bad base64, wrong key, tampered ciphertext, or non-JSON payload —
         // all mean the same thing to the caller: this cookie is not a session.

@@ -142,6 +142,20 @@ Resolved once at startup, first hit wins:
    session — at the next reboot.
 3. The `server_secrets` table in `lucifer.db`, created on first use.
 
+Steps 2 and 3 are scoped to one deployment: the keychain entry is named
+`admin_session_key:<instance id>` under the `lucifer-gate` service, and the
+database row lives in that instance's own `lucifer.db`. The instance id is a
+short digest of the absolute database path, so it is stable across restarts and
+upgrades and is not configurable. Without it two instances run by the same OS
+account would draw the same key out of the keychain, and — because browsers do
+not scope cookies by port — a session created against one admin secret would
+authenticate against the other.
+
+Step 1 is deliberately *not* scoped: naming one `LUCIFER_ADMIN_COOKIE_KEY` for
+several instances is a decision, not an accident. Those instances still cannot
+be signed into with each other's cookies, because the same instance id is sealed
+into the assertion's `aud` claim and checked on every request.
+
 Step 3 stores the key beside the data it protects, so `lucifer.db` becomes the
 trust boundary for admin sessions. Lucifer sets the database file **and its
 `-wal` / `-shm` sidecars** to mode `0600` on open — the sidecars matter because
@@ -170,6 +184,12 @@ setting, so a hop count (`1`), a boolean, a named range (`"loopback"`), or an
 explicit list of addresses/subnets all work. Leave it unset when Lucifer is
 reached directly — that is the safe default, and it is what keeps forwarding
 headers unspoofable.
+
+`trustProxy` also decides which address the admin auth lockout counts against:
+it is keyed on `req.ip`, which Express derives from `X-Forwarded-For` only for
+peers this setting trusts. Set it when Lucifer sits behind a proxy, or every
+client will share the proxy's address and one attacker's five failed guesses
+will lock everybody out.
 
 Without it behind an HTTPS proxy the cookies still work; they just lack the
 `Secure` flag. `SameSite=Strict` and `HttpOnly` apply either way.

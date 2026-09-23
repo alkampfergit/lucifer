@@ -639,3 +639,22 @@ decision above:
   Probing blind spent a real login attempt per visit, so five reloads before
   signing in — or any visit at all with the feature disabled — tripped the
   per-IP lockout and answered the correct secret with `429`.
+
+**2026-09-23 (PR #59, second review round).** Two more, still within the
+decision:
+
+- **Sessions are scoped to one deployment.** Each instance derives an identifier
+  from the absolute path of its `lucifer.db`; it names the keychain entry that
+  holds the sealing key and is sealed into a new `aud` claim, checked on open.
+  Fixed identifiers meant two instances run by the same OS account shared a key,
+  and browsers do not scope cookies by port — so a session minted against one
+  admin secret authenticated against another instance's. The assertion's `v`
+  stays `1`: no `v1` cookie has ever been released, and the previous shape is
+  already unopenable because the key derivation changed with it.
+- **The auth lockout is keyed on `req.ip`, not a raw `X-Forwarded-For` read.**
+  Express resolves `req.ip` through `trust proxy`, so the header counts only
+  from a proxy the operator named in `trustProxy`. Reading it unconditionally
+  let a direct client rotate the header for a fresh identity per guess, which
+  made the five-failure lockout unreachable — and let them pin a lockout on
+  somebody else's address. This restores the guarantee the first round's
+  authentication-order note depends on.
