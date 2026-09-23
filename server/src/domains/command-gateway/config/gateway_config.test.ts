@@ -120,6 +120,29 @@ describe('loadGatewayConfig', () => {
     expect(config.port).toBe(3001);
   });
 
+  // The caller passes 443 when a `tls` block is present, so an HTTPS listener
+  // lands on the standard port instead of 3001 when the file names no port.
+  it('applies the caller-supplied default port when the file names none', () => {
+    vi.stubEnv('PORT', '');
+    const dir = createTempDir();
+    const filePath = writeConfig(dir, { dataDir: './data' });
+
+    expect(loadGatewayConfig(filePath, 443).port).toBe(443);
+  });
+
+  it('applies the caller-supplied default port when there is no config file', () => {
+    vi.stubEnv('PORT', '');
+    expect(loadGatewayConfig(undefined, 443).port).toBe(443);
+  });
+
+  it('keeps an explicit port in the file over the caller-supplied default', () => {
+    vi.stubEnv('PORT', '');
+    const dir = createTempDir();
+    const filePath = writeConfig(dir, { port: 4000 });
+
+    expect(loadGatewayConfig(filePath, 443).port).toBe(4000);
+  });
+
   it('loads a valid aliases map with bash and elf entries', () => {
     const dir = createTempDir();
     const buildPath = join(tmpdir(), 'scripts', 'build.sh');

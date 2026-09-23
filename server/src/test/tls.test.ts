@@ -7,6 +7,7 @@ import type { AddressInfo } from 'node:net'
 import type { TLSSocket } from 'node:tls'
 import { createApp } from '../create_app.js'
 import { createHttpServer, listenerScheme } from '../domains/platform-api/service/create_http_server.js'
+import { DEFAULT_HTTPS_PORT, DEFAULT_PORT } from '../domains/platform-api/config/server_config.js'
 import {
   createCertificateFixture,
   hasOpenssl,
@@ -21,8 +22,13 @@ interface BootedServer {
 
 const cleanups: Array<() => Promise<void> | void> = []
 const originalPassphrase = process.env.LUCIFER_TLS_PASSPHRASE
+const originalPort = process.env.PORT
 
-function writeConfig(label: string, tls: unknown): string {
+/**
+ * Writes a `lucifer.json`. `port` is pinned to 0 — an ephemeral port — unless
+ * `omitPort` is set, which leaves the key out so the built-in default applies.
+ */
+function writeConfig(label: string, tls: unknown, omitPort = false): string {
   const testDir = join(process.cwd(), `.test-tls-app-${label}`)
   const configDir = join(testDir, 'config')
   mkdirSync(configDir, { recursive: true })
@@ -30,7 +36,11 @@ function writeConfig(label: string, tls: unknown): string {
   cleanups.push(() => rmSync(testDir, { recursive: true, force: true }))
 
   const configPath = join(configDir, 'lucifer.json')
-  writeFileSync(configPath, JSON.stringify({ port: 0, dataDir: '../data', ...(tls ? { tls } : {}) }))
+  writeFileSync(configPath, JSON.stringify({
+    ...(omitPort ? {} : { port: 0 }),
+    dataDir: '../data',
+    ...(tls ? { tls } : {}),
+  }))
   return configPath
 }
 
@@ -105,12 +115,71 @@ afterEach(async () => {
   } else {
     process.env.LUCIFER_TLS_PASSPHRASE = originalPassphrase
   }
+  if (originalPort === undefined) {
+    delete process.env.PORT
+  } else {
+    process.env.PORT = originalPort
+  }
 })
 
 describe('gateway listener without a tls block', () => {
   it('stays plain HTTP', async () => {
     const booted = await boot(writeConfig('plain', undefined))
     expect(booted.scheme).toBe('http')
+  })
+})
+
+/**
+ * The port is resolved before the listener binds, so these assert on the
+ * resolved value rather than binding: 443 needs privileges CI does not have.
+ */
+describe('default listener port', () => {
+  it('stays on 3001 when no tls block is configured', () => {
+    delete process.env.PORT
+    const { config, stop } = createApp({
+      configPath: writeConfig('default-http', undefined, true),
+      autoApprove: true,
+    })
+    cleanups.push(stop)
+
+    expect(config.port).toBe(DEFAULT_PORT)
+  })
+
+  it.skipIf(!hasOpenssl())('moves to 443 when a tls block is configured', () => {
+    delete process.env.PORT
+    const fixture = createCertificateFixture('https-default-port')
+    cleanups.push(() => removeCertificateFixture(fixture))
+
+    const { config, stop } = createApp({
+      configPath: writeConfig('default-https', {
+        source: 'pem',
+        certFile: fixture.certFile,
+        keyFile: fixture.keyFile,
+      }, true),
+      autoApprove: true,
+    })
+    cleanups.push(stop)
+
+    expect(config.port).toBe(DEFAULT_HTTPS_PORT)
+  })
+
+  it.skipIf(!hasOpenssl())('honours an explicit port over the HTTPS default', () => {
+    delete process.env.PORT
+    const fixture = createCertificateFixture('https-explicit-port')
+    cleanups.push(() => removeCertificateFixture(fixture))
+
+    const { config, stop } = createApp({
+      configPath: writeConfig('explicit-https-port', {
+        source: 'pem',
+        certFile: fixture.certFile,
+        keyFile: fixture.keyFile,
+      }),
+      autoApprove: true,
+    })
+    cleanups.push(stop)
+
+    // writeConfig pins "port": 0, which must survive the TLS default.
+    expect(config.port).toBe(0)
   })
 })
 

@@ -43,7 +43,8 @@ npx lucifer-gate --config ./config/lucifer.json
 curl http://localhost:3001/api/health
 ```
 
-The default HTTP port is `3001`. The server must have at least one approval
+The default HTTP port is `3001`; with a `tls` block configured the listener
+defaults to `443` instead. The server must have at least one approval
 channel configured; continue with the [Telegram scenario](telegram-approval.md)
 or [Admin UI scenario](admin-ui-approval.md).
 
