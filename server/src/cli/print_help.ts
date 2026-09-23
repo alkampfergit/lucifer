@@ -13,7 +13,7 @@ Usage:
 
 Server options:
   --config <path>    Path to lucifer.json (default: ./config/lucifer.json)
-  --port <number>    Server port (--port, then PORT, then lucifer.json, then 3001)
+  --port <number>    Server port (--port, then PORT, then lucifer.json; defaults to 3001 HTTP / 443 HTTPS)
   --auto-approve     Auto-approve all commands (dev mode, no Telegram needed)
 
 Audit query options ('log' and 'stats'):
@@ -27,7 +27,7 @@ Anywhere:
 Environment variables:
   LUCIFER_TELEGRAM_TOKEN   Telegram bot token (required for production)
   LUCIFER_TELEGRAM_CHAT_ID Telegram chat ID for approvals (or use 'pair' command)
-  PORT                     Server port (default: 3001)
+  PORT                     Server port (default: 3001 HTTP / 443 HTTPS)
   LOG_LEVEL                Log level: debug, info, warn, error (default: debug / info in production)
 `);
 }

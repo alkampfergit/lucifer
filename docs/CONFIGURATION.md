@@ -57,7 +57,7 @@ The port the gateway binds is resolved once, in this order:
 1. `--port` on the CLI, which sets `PORT`.
 2. The `PORT` environment variable.
 3. `"port"` in `lucifer.json`.
-4. `3001`.
+4. `443` when a `tls` block is configured; otherwise `3001`.
 
 The same resolved port is what `proxy-config.json` mappings are checked
 against for collisions, so a mapping can never quietly claim the port the

@@ -99,9 +99,9 @@ function normalizeToolsPath(toolsPath: string[], configDir: string): string[] {
   return toolsPath.map((p) => resolve(configDir, p));
 }
 
-export function loadGatewayConfig(configPath?: string): LuciferConfig {
+export function loadGatewayConfig(configPath?: string, defaultPort = defaults.port): LuciferConfig {
   if (!configPath) {
-    return { ...defaults };
+    return { ...defaults, port: defaultPort };
   }
 
   const resolvedPath = resolve(configPath);
@@ -111,7 +111,7 @@ export function loadGatewayConfig(configPath?: string): LuciferConfig {
   const result: LuciferConfig = {
     ...defaults,
     ...loaded,
-    port: loaded.port ?? defaults.port,
+    port: loaded.port ?? defaultPort,
     dataDir: loaded.dataDir ?? defaults.dataDir,
   };
   // Only set `aliases`/`toolsPath` when present so the config shape for

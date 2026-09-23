@@ -6,6 +6,8 @@ export interface ServerConfig {
 
 /** Bound when neither `PORT` nor `lucifer.json` names a port. */
 export const DEFAULT_PORT = 3001
+/** Bound when TLS is enabled and neither `PORT` nor `lucifer.json` names a port. */
+export const DEFAULT_HTTPS_PORT = 443
 
 function parsePort(value: string | undefined): number | undefined {
   if (value === undefined || value.length === 0) return undefined
