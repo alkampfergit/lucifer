@@ -176,6 +176,14 @@ trust boundary for admin sessions. Lucifer sets the database file **and its
 in WAL mode every write reaches them first. Use step 1 or 2 when you need the
 key outside that boundary.
 
+**On Windows this tightening does nothing.** Windows has no POSIX mode, and
+`chmod` there only toggles the read-only flag, so the database keeps whatever
+ACL it inherits from `dataDir`. Lucifer treats that as best-effort rather than
+a startup failure. If step 3 holds your sealing key on Windows, restrict the
+data directory yourself — for example
+`icacls <dataDir> /inheritance:r /grant:r "%USERNAME%:(OI)(CI)F"` — or set
+`LUCIFER_ADMIN_COOKIE_KEY` (step 1) so the key never lands in the database.
+
 Losing or rotating the key invalidates every outstanding session; operators and
 users just log in again.
 

@@ -88,7 +88,8 @@ On by default; disable with `"adminCookieSession": { "enabled": false }` in
   `@napi-rs/keyring`, pinned to the Secret Service on Linux so a host without
   one falls through rather than landing in the volatile kernel keyring) →
   `server_secrets` table in `lucifer.db`, whose file and WAL sidecars are set to
-  mode `0600`. Only the keychain entry is scoped by instance; an operator who
+  mode `0600` on POSIX — Windows has no POSIX mode, so there the database keeps
+  the ACL it inherits from `dataDir`. Only the keychain entry is scoped by instance; an operator who
   names one `LUCIFER_ADMIN_COOKIE_KEY` for several instances is naming one key
   on purpose, and the `aud` claim keeps their sessions apart regardless. A
   malformed `LUCIFER_ADMIN_COOKIE_KEY` is a startup error; every
