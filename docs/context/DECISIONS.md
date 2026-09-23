@@ -664,7 +664,7 @@ decision:
 ## ADR-014: Native TLS on the gateway listener, with the Windows store reached through PowerShell
 
 **Date**: 2026-09-22
-**Status**: Accepted, with the PowerShell transport superseded by [ADR-014](#adr-014-read-the-windows-certificate-store-through-the-native-cryptoapi-and-test-it-on-a-windows-runner)
+**Status**: Accepted, with the PowerShell transport superseded by [ADR-015](#adr-015-read-the-windows-certificate-store-through-the-native-cryptoapi-and-test-it-on-a-windows-runner)
 **Deciders**: alkampfergit
 
 ### Context
@@ -706,7 +706,7 @@ already owns the listener and the app bootstrap), with three sources: `pem`,
   stdout under a single-use password generated per start. Selector values are
   passed as environment variables, not interpolated into the script text, and
   PowerShell is spawned by its absolute path under `%SystemRoot%` rather than
-  resolved through `PATH`. *(Superseded by ADR-014: the store is now read
+  resolved through `PATH`. *(Superseded by ADR-015: the store is now read
   through the native CryptoAPI and no process is spawned. Everything else in
   this ADR still holds.)*
 - **The issuing intermediates are read out of the store too.** Exporting the
@@ -752,7 +752,7 @@ already owns the listener and the app bootstrap), with three sources: `pem`,
   stores normally require elevation.
 - (-) CI runs `ubuntu-latest`, so the `windows-store` path is unit-tested only
   (command construction, platform guard, failure paths). Tracked as the single
-  `partial` story in `USER-JOURNEYS.md` (`J14-S3`). *(Closed by ADR-014, which
+  `partial` story in `USER-JOURNEYS.md` (`J14-S3`). *(Closed by ADR-015, which
   adds a Windows runner to the CI matrix.)*
 - (-) Certificate material is read once at startup, so rotation requires a
   restart.
@@ -785,7 +785,7 @@ already owns the listener and the app bootstrap), with three sources: `pem`,
 
 ---
 
-## ADR-014: Read the Windows certificate store through the native CryptoAPI, and test it on a Windows runner
+## ADR-015: Read the Windows certificate store through the native CryptoAPI, and test it on a Windows runner
 
 **Date**: 2026-09-22
 **Status**: Accepted
@@ -793,7 +793,7 @@ already owns the listener and the app bootstrap), with three sources: `pem`,
 
 ### Context
 
-ADR-013 reached the Windows certificate store by spawning `powershell.exe` and
+ADR-014 reached the Windows certificate store by spawning `powershell.exe` and
 parsing a base64 bundle off its stdout. That worked, but it bought three
 problems: startup paid for a PowerShell process, every selector and every
 diagnostic was a string passed through a shell boundary, and — because the
@@ -874,7 +874,7 @@ the FFI. No process is spawned and no script text exists.
   build toolchain or a prebuild pipeline on every consumer and delivers
   exactly the same capability as the FFI binding.
 - **`win-ca` or a similar package.** Rejected again, for the reason in
-  ADR-013: it surfaces CA roots only and cannot produce a private key.
+  ADR-014: it surfaces CA roots only and cannot produce a private key.
 - **Signing through a CNG key handle to support non-exportable keys.**
   Rejected as impossible within Node: `tls.createSecureContext` exposes no
   hook for an external signer. It would need a custom TLS engine.
