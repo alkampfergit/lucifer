@@ -225,6 +225,102 @@ describe.skipIf(!hasOpenssl())('exportCertificateFromWindowsStore against a real
     ).toThrow(/2 certificates in Cert:\\LocalMachine\\My .*use a thumbprint to disambiguate/)
   })
 
+  it('selects a wildcard certificate by a host name it covers', () => {
+    const fake = fakeCryptoApi(
+      populatedStores({
+        [storeKey('LocalMachine', 'My')]: [{ der: fixture.wildcardLeafDer, hasPrivateKey: true }],
+      }),
+    )
+
+    exportCertificateFromWindowsStore(
+      selector({ dnsName: 'Pluto.Codewrecks.com' }),
+      { ...WINDOWS, cryptoApi: fake.api },
+    )
+
+    expect(fake.exported[0].map((certificate) => certificate.der)).toEqual([
+      fixture.wildcardLeafDer,
+      fixture.intermediateDer,
+    ])
+  })
+
+  it('still selects a wildcard certificate by its literal name', () => {
+    const fake = fakeCryptoApi(
+      populatedStores({
+        [storeKey('LocalMachine', 'My')]: [{ der: fixture.wildcardLeafDer, hasPrivateKey: true }],
+      }),
+    )
+
+    exportCertificateFromWindowsStore(
+      selector({ dnsName: '*.codewrecks.com' }),
+      { ...WINDOWS, cryptoApi: fake.api },
+    )
+
+    expect(fake.exported[0][0].der).toEqual(fixture.wildcardLeafDer)
+  })
+
+  it('prefers the certificate issued for the exact host over a covering wildcard', () => {
+    const fake = fakeCryptoApi(
+      populatedStores({
+        [storeKey('LocalMachine', 'My')]: [
+          { der: fixture.wildcardLeafDer, hasPrivateKey: true },
+          { der: fixture.leafDer, hasPrivateKey: true },
+        ],
+      }),
+    )
+
+    exportCertificateFromWindowsStore(
+      selector({ dnsName: fixture.leafDnsName }),
+      { ...WINDOWS, cryptoApi: fake.api },
+    )
+
+    expect(fake.exported[0][0].der).toEqual(fixture.leafDer)
+  })
+
+  it.each([
+    ['the bare parent domain', 'codewrecks.com'],
+    ['a host two labels below the wildcard', 'a.pippo.codewrecks.com'],
+    ['a host under a different domain', 'pippo.example.com'],
+  ])('does not let a wildcard cover %s', (_label, dnsName) => {
+    const fake = fakeCryptoApi(
+      populatedStores({
+        [storeKey('LocalMachine', 'My')]: [{ der: fixture.wildcardLeafDer, hasPrivateKey: true }],
+      }),
+    )
+
+    expect(() =>
+      exportCertificateFromWindowsStore(selector({ dnsName }), { ...WINDOWS, cryptoApi: fake.api }),
+    ).toThrow(/matched the configured selector/)
+  })
+
+  it('warns when the only matching certificate is outside its validity window', () => {
+    const warnings: string[] = []
+    const fake = fakeCryptoApi(
+      populatedStores({
+        [storeKey('LocalMachine', 'My')]: [{ der: fixture.supersededLeafDer, hasPrivateKey: true }],
+      }),
+    )
+
+    exportCertificateFromWindowsStore(
+      selector({ dnsName: fixture.leafDnsName }),
+      { ...WINDOWS, cryptoApi: fake.api, warn: (message) => warnings.push(message) },
+    )
+
+    expect(fake.exported[0][0].der).toEqual(fixture.supersededLeafDer)
+    expect(warnings.some((message) => message.includes('outside its validity window'))).toBe(true)
+  })
+
+  it('does not warn about validity for a current certificate', () => {
+    const warnings: string[] = []
+    const fake = fakeCryptoApi(populatedStores())
+
+    exportCertificateFromWindowsStore(
+      selector({ dnsName: fixture.leafDnsName }),
+      { ...WINDOWS, cryptoApi: fake.api, warn: (message) => warnings.push(message) },
+    )
+
+    expect(warnings.some((message) => message.includes('validity window'))).toBe(false)
+  })
+
   it('reports a selector that matches nothing', () => {
     const fake = fakeCryptoApi(populatedStores())
 

@@ -63,6 +63,10 @@ The same resolved port is what `proxy-config.json` mappings are checked
 against for collisions, so a mapping can never quietly claim the port the
 gateway itself is about to bind.
 
+If the port cannot be bound — `EACCES` for a privileged port such as `443`
+run without elevation, `EADDRINUSE` when another process holds it — startup
+exits with code 1 and a log line naming the port and the settings above.
+
 ## Logging
 
 Lucifer logs to **both console and file** by default.

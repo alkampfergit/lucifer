@@ -182,6 +182,20 @@ function lastErrorText(api: Crypt32Bindings): string {
   return `Windows error 0x${(code >>> 0).toString(16).toUpperCase().padStart(8, '0')}`
 }
 
+/** Operator-facing hints for the export failures that have a known cause. */
+const EXPORT_FAILURE_HINTS: Readonly<Record<string, string>> = {
+  'Windows error 0x8009000B':
+    ' The key is in a state that prevents PFX export; private-key read permission does not imply export permission.',
+  'Windows error 0x80090010':
+    ' Access to the private key was denied; check the key ACL and the identity running the process.',
+}
+
+/** Both `PFXExportCertStoreEx` calls fail the same ways, so they share one message. */
+function exportFailure(api: Crypt32Bindings): Error {
+  const error = lastErrorText(api)
+  return new Error(`Windows certificate store export failed: ${error}.${EXPORT_FAILURE_HINTS[error] ?? ''}`)
+}
+
 function systemStoreFlags(location: WindowsStoreLocation): number {
   const root =
     location === 'CurrentUser' ? CERT_SYSTEM_STORE_CURRENT_USER : CERT_SYSTEM_STORE_LOCAL_MACHINE
@@ -227,16 +241,28 @@ function listCertificates(
     // CertEnumCertificatesInStore frees the context it was handed, so every
     // certificate worth keeping is duplicated before the next iteration.
     let context = api.certEnumCertificatesInStore(store, null)
-    while (context) {
-      const handle = api.certDuplicateCertificateContext(context)
-      if (handle) {
-        certificates.push({
-          der: readDer(api, context),
-          hasPrivateKey: hasKeyProviderInfo(api, context),
-          handle,
-        })
+    try {
+      while (context) {
+        const handle = api.certDuplicateCertificateContext(context)
+        if (handle) {
+          try {
+            certificates.push({
+              der: readDer(api, context),
+              hasPrivateKey: hasKeyProviderInfo(api, context),
+              handle,
+            })
+          } catch (err) {
+            // Not yet on the list, so the release below would miss it.
+            api.certFreeCertificateContext(handle)
+            throw err
+          }
+        }
+        context = api.certEnumCertificatesInStore(store, context)
       }
-      context = api.certEnumCertificatesInStore(store, context)
+    } catch (err) {
+      // Enumeration was abandoned mid-walk: the current context is ours to free.
+      if (context) api.certFreeCertificateContext(context)
+      throw err
     }
   } catch (err) {
     release(certificates)
@@ -276,15 +302,7 @@ function exportPkcs12(
     // the size, once to fill it.
     const sizing: CryptDataBlob = { cbData: 0, pbData: null }
     if (!api.pfxExportCertStoreEx(memoryStore, sizing, passphrase, null, PFX_EXPORT_FLAGS)) {
-      const error = lastErrorText(api)
-      const detail = error === 'Windows error 0x8009000B'
-        ? ' The key is in a state that prevents PFX export; private-key read permission does not imply export permission.'
-        : error === 'Windows error 0x80090010'
-          ? ' Access to the private key was denied; check the key ACL and the identity running the process.'
-          : ''
-      throw new Error(
-        `Windows certificate store export failed: ${error}.${detail}`,
-      )
+      throw exportFailure(api)
     }
     if (sizing.cbData === 0) {
       throw new Error('Windows certificate store export returned no certificate data.')
@@ -296,7 +314,7 @@ function exportPkcs12(
     try {
       const blob: CryptDataBlob = { cbData: sizing.cbData, pbData: buffer }
       if (!api.pfxExportCertStoreEx(memoryStore, blob, passphrase, null, PFX_EXPORT_FLAGS)) {
-        throw new Error(`Windows certificate store export failed: ${lastErrorText(api)}`)
+        throw exportFailure(api)
       }
       return Buffer.from(new Uint8Array(api.koffi.view(buffer, blob.cbData)))
     } finally {
