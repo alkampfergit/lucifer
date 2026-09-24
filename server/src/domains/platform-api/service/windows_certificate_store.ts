@@ -100,6 +100,37 @@ function subjectRenderings(subject: string): string[] {
   return [subject, rdns.join(', '), [...rdns].reverse().join(', ')]
 }
 
+/**
+ * RFC 6125 §6.4.3 wildcard matching, restricted to the one form public CAs
+ * still issue: a `*` that is the entire left-most label covers exactly one
+ * label of the host name. `*.codewrecks.com` covers `pippo.codewrecks.com`,
+ * but neither `codewrecks.com` nor `a.pippo.codewrecks.com`, and partial-label
+ * wildcards such as `f*.codewrecks.com` never match.
+ */
+function wildcardCovers(pattern: string, host: string): boolean {
+  if (!pattern.startsWith('*.')) return false
+  const suffix = pattern.slice(1)
+  if (suffix.includes('*') || suffix.split('.').length < 3) return false
+  if (!host.endsWith(suffix)) return false
+  const label = host.slice(0, -suffix.length)
+  return label.length > 0 && !label.includes('.')
+}
+
+type DnsNameMatch = 'exact' | 'wildcard' | 'none'
+
+/**
+ * How a certificate relates to the configured `dnsName`. The name typed
+ * literally (a wildcard included) is an exact match; a wildcard certificate
+ * covering the host name is a weaker one, used only when nothing matches
+ * exactly.
+ */
+function dnsNameMatch(x509: X509Certificate, dnsName: string): DnsNameMatch {
+  const wanted = dnsName.toLowerCase()
+  const names = dnsNames(x509).map((name) => name.toLowerCase())
+  if (names.includes(wanted)) return 'exact'
+  return names.some((name) => wildcardCovers(name, wanted)) ? 'wildcard' : 'none'
+}
+
 function matchesSelector(x509: X509Certificate, selector: WindowsStoreSelector): boolean {
   if (selector.thumbprint) {
     const actual =
@@ -108,8 +139,7 @@ function matchesSelector(x509: X509Certificate, selector: WindowsStoreSelector):
   }
 
   if (selector.dnsName) {
-    const wanted = selector.dnsName.toLowerCase()
-    return dnsNames(x509).some((name) => name.toLowerCase() === wanted)
+    return dnsNameMatch(x509, selector.dnsName) !== 'none'
   }
 
   if (selector.subject) {
@@ -168,10 +198,20 @@ function selectCertificate(
   selector: WindowsStoreSelector,
   storePath: string,
   now: Date,
+  warn: (message: string) => void,
 ): StoreEntry {
-  const matched = entries.filter((entry) => matchesSelector(entry.x509, selector))
+  let matched = entries.filter((entry) => matchesSelector(entry.x509, selector))
   if (matched.length === 0) {
     throw new Error(`No certificate in ${storePath} matched the configured selector.`)
+  }
+
+  // A certificate issued for the exact host outranks a wildcard that merely
+  // covers it, so adding a dedicated certificate next to a wildcard one does
+  // not turn a working selector into an ambiguous one.
+  const { dnsName } = selector
+  if (dnsName) {
+    const exact = matched.filter((entry) => dnsNameMatch(entry.x509, dnsName) === 'exact')
+    if (exact.length > 0) matched = exact
   }
 
   let usable = matched
@@ -192,6 +232,14 @@ function selectCertificate(
   if (!entry.certificate.hasPrivateKey) {
     throw new Error(
       `Certificate ${normaliseFingerprint(entry.x509.fingerprint)} has no usable private key in ${storePath}.`,
+    )
+  }
+  if (!isCurrentlyValid(entry.x509, now)) {
+    // Served anyway — a clock skew should not stop the gateway — but every
+    // client handshake is about to fail, and this is the only place that knows why.
+    warn(
+      `Certificate ${normaliseFingerprint(entry.x509.fingerprint)} in ${storePath} is outside its ` +
+      `validity window (${entry.x509.validFrom} to ${entry.x509.validTo}); clients will reject it.`,
     )
   }
   return entry
@@ -296,7 +344,7 @@ export function exportCertificateFromWindowsStore(
     opened.push(storeCertificates)
     const storeEntries = parseEntries(storeCertificates)
 
-    const leaf = selectCertificate(storeEntries, selector, storePath, deps.now ?? new Date())
+    const leaf = selectCertificate(storeEntries, selector, storePath, deps.now ?? new Date(), warn)
     const issuers = isSelfSigned(leaf.x509)
       ? []
       : collectIssuers(leaf, chainCandidates(api, storeEntries, opened, warn), warn)

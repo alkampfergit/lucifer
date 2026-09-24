@@ -117,7 +117,7 @@ Set exactly one of:
 
 | Selector | Matches |
 |---|---|
-| `dnsName` | A host name the certificate was issued for, e.g. `pippo.codewrecks.com`. Compared against the certificate's DNS names (its subject alternative names, falling back to the simple subject name when it has none) — the names certmgr shows under *Issued To*. Case-insensitive; a wildcard certificate is named as it appears, `*.codewrecks.com`. Surrounding whitespace is trimmed. |
+| `dnsName` | A host name the certificate was issued for, e.g. `pippo.codewrecks.com`. Compared against the certificate's DNS names (its subject alternative names, falling back to the simple subject name when it has none) — the names certmgr shows under *Issued To*. Case-insensitive; surrounding whitespace is trimmed. A wildcard certificate is selected either by its literal name, `*.codewrecks.com`, or by any host it covers under RFC 6125: a `*` that is the whole left-most label covers exactly one label, so `*.codewrecks.com` covers `pippo.codewrecks.com` but not `codewrecks.com` or `a.pippo.codewrecks.com`. A certificate issued for the exact host outranks a wildcard that merely covers it. |
 | `thumbprint` | The fingerprint, exactly. 40 hex characters are matched against the SHA-1 thumbprint certmgr shows; 64 hex characters are matched against a SHA-256 fingerprint computed from the certificate. Spaces and colons are stripped and case is ignored, so a value pasted from certmgr works unchanged. |
 | `subject` | A **literal** case-insensitive substring of the certificate's subject DN, e.g. `O=Codewrecks`. `*`, `?` and `[` are matched as themselves, not as wildcards. The substring is tried against the subject in each of the renderings tools print it in — one RDN per line, and comma-joined in either RDN order — so a value copied out of certmgr matches. |
 
@@ -126,6 +126,11 @@ one certificate — the usual case after a renewal leaves the superseded
 certificate in the store — the match is narrowed to certificates that have a
 private key and are inside their validity window. If that still leaves more
 than one, startup fails and asks for a `thumbprint`.
+
+A single selected certificate that is outside its validity window (expired,
+or not yet valid) is still served, so a skewed clock does not stop the
+gateway, but startup logs a warning naming its thumbprint and validity dates:
+every client handshake against it will fail.
 
 Requirements and limits:
 
@@ -155,7 +160,10 @@ Requirements and limits:
   loudly instead of sending its API key in clear text.
 - When `port` is omitted from `lucifer.json`, the HTTPS listener defaults to
   port `443`. An explicit `port`, `PORT` environment variable, or CLI `--port`
-  overrides that default.
+  overrides that default. Binding `443` normally needs elevated privileges;
+  a failed bind (`EACCES`, `EADDRINUSE`, …) stops startup with exit code 1
+  and a message naming the port and the settings that move it, instead of an
+  uncaught stack trace.
 - The startup log line records `scheme` (`http` or `https`); the
   "Ensure HTTPS is configured for production" warning is suppressed when TLS
   is on.

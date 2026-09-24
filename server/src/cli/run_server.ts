@@ -1,5 +1,9 @@
 import { createApp } from '../create_app.js';
-import { createHttpServer, listenerScheme } from '../domains/platform-api/service/create_http_server.js';
+import {
+  createHttpServer,
+  listenerScheme,
+  listenFailureMessage,
+} from '../domains/platform-api/service/create_http_server.js';
 import { logger } from '../lib/logger.js';
 
 export interface RunServerOptions {
@@ -19,6 +23,11 @@ export async function runServer(options: RunServerOptions) {
   });
 
   const server = createHttpServer(app, tlsOptions);
+
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    logger.fatal({ port: config.port, code: err.code }, listenFailureMessage(err, config.port));
+    process.exit(1);
+  });
 
   server.listen(config.port, async () => {
     logger.info(
