@@ -1,21 +1,39 @@
 import pino from 'pino';
+import pretty from 'pino-pretty';
 
 const isProduction = process.env.NODE_ENV === 'production';
 
-// Resolve console stream: use pino-pretty for human-readable output in dev,
-// fall back to plain JSON when pino-pretty is unavailable (e.g. npx installs).
-let consoleStream: pino.DestinationStream = process.stdout;
+export const LOG_FORMATS = ['pretty', 'json'] as const;
+export type LogFormat = (typeof LOG_FORMATS)[number];
 
-if (!isProduction) {
-  try {
-    const mod = await import('pino-pretty');
-    const build = typeof mod.default === 'function' ? mod.default : (mod as unknown as { build: (opts: Record<string, unknown>) => pino.DestinationStream }).build;
-    consoleStream = build({ colorize: true }) as unknown as pino.DestinationStream;
-  } catch {
-    // pino-pretty is a devDependency — unavailable when installed via npx or in production.
-    // Falls back to structured JSON on console, which is still fully functional.
-  }
+/** Returns the format named by `value`, or `undefined` when it is not one. */
+export function parseLogFormat(value: string | undefined): LogFormat | undefined {
+  return LOG_FORMATS.find((format) => format === value);
 }
+
+/**
+ * Build the console stream for a format. `pretty` renders one line per entry,
+ * e.g. `[07:49:54] INFO: (app) Command gateway initialized`, colourised only
+ * when stdout is a TTY; `json` writes pino's structured lines unchanged.
+ */
+export function createConsoleStream(format: LogFormat): pino.DestinationStream {
+  if (format === 'json') return process.stdout;
+  return pretty({
+    colorize: process.stdout.isTTY === true,
+    translateTime: 'SYS:HH:MM:ss',
+    ignore: 'pid,hostname,module',
+    messageFormat: '{if module}({module}) {end}{msg}',
+    sync: true,
+  });
+}
+
+// The console format can be chosen after this module has loaded (the CLI
+// parses `--log-format` after its imports run), so the multistream writes to
+// a forwarding stream whose target can be swapped.
+let consoleTarget = createConsoleStream(parseLogFormat(process.env.LOG_FORMAT) ?? 'pretty');
+const consoleStream: pino.DestinationStream = {
+  write: (chunk: string) => consoleTarget.write(chunk),
+};
 
 const streams = pino.multistream([
   { level: 'info' as const, stream: consoleStream },
@@ -24,6 +42,16 @@ const streams = pino.multistream([
 export const logger = pino({
   level: process.env.LOG_LEVEL ?? (isProduction ? 'info' : 'debug'),
 }, streams);
+
+const unknownFormat = process.env.LOG_FORMAT;
+if (unknownFormat && !parseLogFormat(unknownFormat)) {
+  logger.warn({ LOG_FORMAT: unknownFormat }, `Unknown LOG_FORMAT, expected one of: ${LOG_FORMATS.join(', ')}; using pretty`);
+}
+
+/** Switch the console between human-readable and JSON output. */
+export function setConsoleFormat(format: LogFormat): void {
+  consoleTarget = createConsoleStream(format);
+}
 
 /**
  * Add a log file destination. Logs are written as structured JSON (one object

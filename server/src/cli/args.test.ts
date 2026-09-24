@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { findUnknownOption, getArgValue } from './args.js';
 
 const SERVER_OPTIONS = {
-  valueFlags: ['--config', '--port'],
+  valueFlags: ['--config', '--port', '--log-format', '--log-file'],
   booleanFlags: ['--auto-approve'],
 } as const;
 
@@ -19,7 +19,7 @@ describe('getArgValue', () => {
 
 describe('findUnknownOption', () => {
   it('accepts every documented server option', () => {
-    const args = ['start', '--config', './config/lucifer.json', '--port', '3999', '--auto-approve'];
+    const args = ['start', '--config', './config/lucifer.json', '--port', '3999', '--auto-approve', '--log-format', 'json', '--log-file', './gate.log'];
 
     expect(findUnknownOption(args, SERVER_OPTIONS)).toBeUndefined();
   });
