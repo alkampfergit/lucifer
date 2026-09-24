@@ -9,6 +9,7 @@ import { runLog } from './cli/run_log.js';
 import { runStats } from './cli/run_stats.js';
 import { runPair } from './cli/run_pair.js';
 import { runServer } from './cli/run_server.js';
+import { LOG_FORMATS, parseLogFormat } from './lib/logger.js';
 
 const args = process.argv.slice(2);
 
@@ -61,7 +62,7 @@ async function main() {
   // starts the server, and a missing config turns that into a stack trace that
   // says nothing about the option the operator actually got wrong.
   const unknownOption = findUnknownOption(args, {
-    valueFlags: ['--config', '--port'],
+    valueFlags: ['--config', '--port', '--log-format', '--log-file'],
     booleanFlags: ['--auto-approve'],
   });
   if (unknownOption) {
@@ -70,10 +71,19 @@ async function main() {
     process.exit(1);
   }
 
+  const logFormatArg = getArgValue(args, '--log-format');
+  const logFormat = parseLogFormat(logFormatArg);
+  if (logFormatArg !== undefined && !logFormat) {
+    console.error(`Invalid --log-format: ${logFormatArg} (expected one of: ${LOG_FORMATS.join(', ')})`);
+    process.exit(1);
+  }
+
   await runServer({
     configPath: getArgValue(args, '--config') ?? DEFAULT_CONFIG_PATH,
     port: getArgValue(args, '--port'),
     autoApprove: args.includes('--auto-approve'),
+    logFormat,
+    logFile: getArgValue(args, '--log-file'),
   });
 }
 

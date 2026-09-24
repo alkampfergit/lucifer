@@ -46,6 +46,8 @@ export interface CreateAppOptions {
   configPath?: string
   autoApprove?: boolean
   telegramApiRoot?: string
+  /** JSON-lines log file from `--log-file`; overrides `logFile` in lucifer.json. Resolved against the working directory. */
+  logFile?: string
 }
 
 interface GatewayDeps {
@@ -228,9 +230,15 @@ function resolveConfigPaths(configPath: string | undefined): ConfigPaths {
   }
 }
 
-function enableFileLoggingIfConfigured(gatewayConfig: ReturnType<typeof loadGatewayConfig>, resolvedDataDir: string) {
-  if (!gatewayConfig.logFile) return
-  const logPath = path.resolve(resolvedDataDir, gatewayConfig.logFile)
+function enableFileLogging(
+  gatewayConfig: ReturnType<typeof loadGatewayConfig>,
+  resolvedDataDir: string,
+  logFileOverride: string | undefined,
+) {
+  const logPath = logFileOverride
+    ? path.resolve(logFileOverride)
+    : gatewayConfig.logFile && path.resolve(resolvedDataDir, gatewayConfig.logFile)
+  if (!logPath) return
   addLogFile(logPath)
   log.info({ logFile: logPath }, 'File logging enabled')
 }
@@ -344,7 +352,7 @@ export function createApp(options: CreateAppOptions = {}) {
   // Resolve dataDir relative to config directory
   gatewayConfig.dataDir = path.resolve(paths.configDir, gatewayConfig.dataDir)
 
-  enableFileLoggingIfConfigured(gatewayConfig, gatewayConfig.dataDir)
+  enableFileLogging(gatewayConfig, gatewayConfig.dataDir, options.logFile)
 
   let approvalChannel: ApprovalChannel | undefined
   let cleanupInterval: ReturnType<typeof setInterval> | undefined

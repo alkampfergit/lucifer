@@ -17,6 +17,8 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV PORT=3001
+# Structured console output for log shippers; override with -e LOG_FORMAT=pretty
+ENV LOG_FORMAT=json
 
 # better-sqlite3 native module needs these at runtime
 RUN apk add --no-cache libstdc++

@@ -48,7 +48,8 @@ matching contract.
 | `LUCIFER_TLS_PASSPHRASE` | No | Passphrase for a PKCS#12 bundle or an encrypted PEM key referenced by the `tls` block. Never read from `lucifer.json`. See [specs/tls.md](specs/tls.md). |
 | `PORT` | No | Server port. Set by the CLI's `--port` flag, and takes precedence over `"port"` in `lucifer.json`. See [Listener port](#listener-port). |
 | `LOG_LEVEL` | No | `debug`, `info`, `warn`, `error`. Default `debug` in dev, `info` when `NODE_ENV=production`. |
-| `NODE_ENV` | No | Set to `production` for production defaults (info log level, no pretty-printing). |
+| `LOG_FORMAT` | No | Console log format: `pretty` (default) or `json`. `--log-format` takes precedence. The Docker image sets `json`. |
+| `NODE_ENV` | No | Set to `production` for production defaults (info log level). It no longer affects the console format. |
 
 ## Listener port
 
@@ -71,13 +72,15 @@ exits with code 1 and a log line naming the port and the settings above.
 
 Lucifer logs to **both console and file** by default.
 
-- **Console** output is human-readable (colourised) when `pino-pretty` is on
-  the path, and falls back to structured JSON otherwise. `pino-pretty` is a
-  dev-time dependency only — `npx lucifer-gate` produces JSON console output,
-  which is expected and fully functional.
-- **File** output is always structured JSON (one object per line), written
-  to `data/lucifer.log` by default. Each line is a complete JSON object, so
-  it can be searched, filtered, and fed into log aggregators directly.
+- **Console** output is human-readable by default, one line per entry:
+  `[07:49:54] INFO: (app) Command gateway initialized`, with structured fields
+  indented underneath. Colour is used only when stdout is a TTY. Pass
+  `--log-format json` (or set `LOG_FORMAT=json`) to get structured JSON on the
+  console instead, e.g. for a log shipper. The Docker image defaults to `json`.
+- **File** output is always structured JSON (one object per line), whatever
+  the console format, written to `data/lucifer.log` by default. Each line is a
+  complete JSON object, so it can be searched, filtered, and fed into log
+  aggregators directly.
 
 File logging is controlled from `lucifer.json`:
 
@@ -91,6 +94,10 @@ File logging is controlled from `lucifer.json`:
 The `logFile` path is resolved relative to `dataDir` (default
 `data/lucifer.log`). Remove the key to disable file logging. `--init`
 generates the config with file logging enabled.
+
+`--log-file <path>` on the CLI writes the JSON log to `<path>` instead,
+resolved against the working directory. It replaces the `logFile` setting
+rather than adding a second file.
 
 ## Docker
 

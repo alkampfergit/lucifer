@@ -4,15 +4,21 @@ import {
   listenerScheme,
   listenFailureMessage,
 } from '../domains/platform-api/service/create_http_server.js';
-import { logger } from '../lib/logger.js';
+import { logger, setConsoleFormat, type LogFormat } from '../lib/logger.js';
 
 export interface RunServerOptions {
   configPath: string;
   port?: string;
   autoApprove: boolean;
+  logFormat?: LogFormat;
+  logFile?: string;
 }
 
 export async function runServer(options: RunServerOptions) {
+  if (options.logFormat) {
+    setConsoleFormat(options.logFormat);
+  }
+
   if (options.port) {
     process.env.PORT = options.port;
   }
@@ -20,6 +26,7 @@ export async function runServer(options: RunServerOptions) {
   const { app, config, tlsOptions, start, stop } = createApp({
     configPath: options.configPath,
     autoApprove: options.autoApprove,
+    logFile: options.logFile,
   });
 
   const server = createHttpServer(app, tlsOptions);

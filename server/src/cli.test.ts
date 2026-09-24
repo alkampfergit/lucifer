@@ -19,15 +19,31 @@ function runCli(...args: string[]): Promise<{ stdout: string; stderr: string; co
   return runCliIn(process.cwd(), ...args);
 }
 
+/** Same as {@link runCli}, with extra environment variables for the child. */
+function runCliWithEnv(
+  env: NodeJS.ProcessEnv,
+  ...args: string[]
+): Promise<{ stdout: string; stderr: string; code: number | null }> {
+  return spawnCli(process.cwd(), env, args);
+}
+
 /** Same as {@link runCli}, but from a chosen working directory. */
 function runCliIn(
   cwd: string,
   ...args: string[]
 ): Promise<{ stdout: string; stderr: string; code: number | null }> {
+  return spawnCli(cwd, {}, args);
+}
+
+function spawnCli(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  args: string[],
+): Promise<{ stdout: string; stderr: string; code: number | null }> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [TSX_ENTRY, CLI_PATH, ...args], {
       cwd,
-      env: { ...process.env, LUCIFER_TELEGRAM_TOKEN: 'skip' },
+      env: { ...process.env, LUCIFER_TELEGRAM_TOKEN: 'skip', ...env },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -121,6 +137,55 @@ describe('CLI smoke tests', () => {
     expect(stderr).not.toContain('Fatal error');
     expect(code).toBe(1);
   }, 15_000);
+
+  it('rejects an unsupported --log-format value', async () => {
+    const { stderr, code } = await runCli('--log-format', 'xml');
+    expect(stderr).toContain('Invalid --log-format: xml');
+    expect(code).toBe(1);
+  }, 15_000);
+
+  describe('console log format', () => {
+    let tmpDir: string;
+    let configPath: string;
+
+    beforeEach(async () => {
+      tmpDir = mkdtempSync(join(tmpdir(), 'lucifer-cli-logs-'));
+      await runCli('--init', tmpDir);
+      configPath = join(tmpDir, 'config', 'lucifer.json');
+    });
+
+    afterEach(() => {
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    function freePort() {
+      return String(40_000 + Math.floor(Math.random() * 10_000));
+    }
+
+    it('prints human-readable lines by default', async () => {
+      const { stdout } = await runCliWithEnv({ LOG_FORMAT: '' },
+        'start', '--config', configPath, '--port', freePort(), '--auto-approve');
+
+      expect(stdout).toMatch(/^\[\d{2}:\d{2}:\d{2}\] INFO: \(app\) /m);
+      expect(stdout).toContain('Lucifer listening');
+      expect(stdout).not.toMatch(/^\{"level"/m);
+    }, 20_000);
+
+    it('prints JSON with --log-format json and writes --log-file as JSON lines', async () => {
+      const logFile = join(tmpDir, 'custom', 'gate.log');
+      const { stdout } = await runCliWithEnv({ LOG_FORMAT: '' },
+        'start', '--config', configPath, '--port', freePort(), '--auto-approve',
+        '--log-format', 'json', '--log-file', logFile);
+
+      const consoleLines = stdout.trim().split('\n').map((line) => JSON.parse(line) as { msg: string });
+      expect(consoleLines.some((line) => line.msg === 'Lucifer listening')).toBe(true);
+
+      const fileLines = readFileSync(logFile, 'utf-8').trim().split('\n').map((line) => JSON.parse(line) as { msg: string });
+      expect(fileLines.some((line) => line.msg === 'File logging enabled')).toBe(true);
+      // --log-file replaces the configured logFile rather than adding a second one
+      expect(existsSync(join(tmpDir, 'data', 'lucifer.log'))).toBe(false);
+    }, 20_000);
+  });
 
   describe('--version', () => {
     let tmpDir: string;

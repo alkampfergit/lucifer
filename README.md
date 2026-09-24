@@ -132,5 +132,5 @@ These are conscious pre-1.0 trade-offs, not bugs. If any of them is a blocker fo
 - SQLite (better-sqlite3) for approvals + audit log
 - Telegraf for Telegram bot
 - Optional server-delivered web approval UI with SSE updates
-- Pino for structured logging (pino-pretty for human-readable dev console)
+- Pino for structured logging (pino-pretty for the human-readable console; `--log-format json` for JSON)
 - Vitest for testing
