@@ -12,6 +12,8 @@
 | J8-S1 | As an Operator, I run `lucifer-gate log` so that I see recent command activity | CLI reads the SQLite audit log and prints recent entries | `covered` — `cli.test.ts` ("Log and stats journey") |
 | J8-S2 | As an Operator, I run `lucifer-gate stats` so that I see aggregate usage metrics | CLI reads the SQLite store and prints summary statistics | `covered` — `cli.test.ts` ("Log and stats journey") |
 | J8-S3 | As an Operator, I check `/api/health` so that I verify the server is running | Health endpoint returns environment, name, node version, status, timestamp | `covered` — `create_health_report.test.ts`, `create_app.test.ts` |
+| J8-S4 | As an Operator, I start the server in a console so that I read human-readable log lines | Console prints `[HH:MM:ss] LEVEL: (module) message` by default, regardless of `NODE_ENV`; `--log-format json` or `LOG_FORMAT=json` prints JSON instead; an invalid or missing flag value exits 1 | `covered` — `cli.test.ts` ("console log format", "--log-format"), `logger.test.ts` |
+| J8-S5 | As an Operator, I pass `--log-file <path>` so that full-detail JSON logs land where I choose | JSON lines are written to `<path>`, replacing `logFile` from `lucifer.json`, whatever the console format | `covered` — `cli.test.ts` ("console log format") |
 
 ## J9: Auto-Approve (Development Mode)
 
@@ -57,6 +59,6 @@
 
 | Status | Count |
 |---|---|
-| `covered` | 13 |
+| `covered` | 15 |
 | `partial` | 0 |
 | `uncovered` | 0 |

@@ -53,12 +53,19 @@ function spawnCli(
     let gotOutput = false;
     let idleTimer: ReturnType<typeof setTimeout> | undefined;
 
+    // Resolve only once the killed child has exited: on Windows its open
+    // handles (e.g. the SQLite database) block temp-dir cleanup until then.
     function finish() {
       if (settled) return;
       settled = true;
       clearTimeout(idleTimer);
+      const code = child.exitCode;
+      if (child.exitCode !== null || child.signalCode !== null) {
+        resolve({ stdout, stderr, code });
+        return;
+      }
+      child.once('exit', () => resolve({ stdout, stderr, code }));
       child.kill('SIGTERM');
-      resolve({ stdout, stderr, code: child.exitCode });
     }
 
     // Once we have received at least one chunk, wait for output to stop
@@ -138,6 +145,18 @@ describe('CLI smoke tests', () => {
     expect(code).toBe(1);
   }, 15_000);
 
+  it.each(['--log-format', '--log-file'])('rejects %s without a value', async (flag) => {
+    const { stderr, code } = await runCli('start', flag);
+    expect(stderr).toContain(`Missing value for ${flag}`);
+    expect(code).toBe(1);
+  }, 15_000);
+
+  it('keeps --version output bare when LOG_FORMAT is invalid', async () => {
+    const { stdout, code } = await runCliWithEnv({ LOG_FORMAT: 'bogus' }, '--version');
+    expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+\S*$/);
+    expect(code).toBe(0);
+  }, 15_000);
+
   it('rejects an unsupported --log-format value', async () => {
     const { stderr, code } = await runCli('--log-format', 'xml');
     expect(stderr).toContain('Invalid --log-format: xml');
@@ -155,7 +174,7 @@ describe('CLI smoke tests', () => {
     });
 
     afterEach(() => {
-      rmSync(tmpDir, { recursive: true, force: true });
+      rmSync(tmpDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
     });
 
     function freePort() {

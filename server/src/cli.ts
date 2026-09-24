@@ -71,6 +71,17 @@ async function main() {
     process.exit(1);
   }
 
+  // A value flag given as the last argument has no value; reject it rather
+  // than silently starting with the default.
+  const missingValue = ['--log-format', '--log-file'].find(
+    (flag) => args.includes(flag) && getArgValue(args, flag) === undefined,
+  );
+  if (missingValue) {
+    console.error(`Missing value for ${missingValue}`);
+    console.error(`Run 'lucifer-gate --help' for usage.`);
+    process.exit(1);
+  }
+
   const logFormatArg = getArgValue(args, '--log-format');
   const logFormat = parseLogFormat(logFormatArg);
   if (logFormatArg !== undefined && !logFormat) {

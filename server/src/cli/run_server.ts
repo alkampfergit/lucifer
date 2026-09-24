@@ -4,7 +4,7 @@ import {
   listenerScheme,
   listenFailureMessage,
 } from '../domains/platform-api/service/create_http_server.js';
-import { logger, setConsoleFormat, type LogFormat } from '../lib/logger.js';
+import { logger, setConsoleFormat, warnOnUnknownLogFormatEnv, type LogFormat } from '../lib/logger.js';
 
 export interface RunServerOptions {
   configPath: string;
@@ -17,6 +17,8 @@ export interface RunServerOptions {
 export async function runServer(options: RunServerOptions) {
   if (options.logFormat) {
     setConsoleFormat(options.logFormat);
+  } else {
+    warnOnUnknownLogFormatEnv();
   }
 
   if (options.port) {
