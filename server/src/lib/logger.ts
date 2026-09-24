@@ -43,9 +43,15 @@ export const logger = pino({
   level: process.env.LOG_LEVEL ?? (isProduction ? 'info' : 'debug'),
 }, streams);
 
-const unknownFormat = process.env.LOG_FORMAT;
-if (unknownFormat && !parseLogFormat(unknownFormat)) {
-  logger.warn({ LOG_FORMAT: unknownFormat }, `Unknown LOG_FORMAT, expected one of: ${LOG_FORMATS.join(', ')}; using pretty`);
+/**
+ * Warn when `LOG_FORMAT` names an unsupported format. Called on server start
+ * rather than at import time, so one-shot commands such as `--version` keep
+ * their output clean.
+ */
+export function warnOnUnknownLogFormatEnv(value: string | undefined = process.env.LOG_FORMAT): void {
+  if (value && !parseLogFormat(value)) {
+    logger.warn({ LOG_FORMAT: value }, `Unknown LOG_FORMAT, expected one of: ${LOG_FORMATS.join(', ')}; using pretty`);
+  }
 }
 
 /** Switch the console between human-readable and JSON output. */

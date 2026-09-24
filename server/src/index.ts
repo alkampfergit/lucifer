@@ -5,7 +5,9 @@ import {
   listenFailureMessage,
 } from './domains/platform-api/service/create_http_server.js'
 import { resolveDefaultConfigPath } from './lib/config_path.js'
-import { logger } from './lib/logger.js'
+import { logger, warnOnUnknownLogFormatEnv } from './lib/logger.js'
+
+warnOnUnknownLogFormatEnv()
 
 const configPath = resolveDefaultConfigPath()
 

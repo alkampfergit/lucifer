@@ -31,6 +31,20 @@
 - Enables file logging when `logFile` is configured.
 - Enables approval channels based on env vars and flags.
 
+### Console and file logs
+
+- `--log-format pretty|json` picks the console format (env `LOG_FORMAT`;
+  the flag wins). `pretty` is the default and prints one line per entry, e.g.
+  `[07:49:54] INFO: (app) Command gateway initialized`; `json` prints pino's
+  structured lines. The Docker image sets `LOG_FORMAT=json`.
+- An invalid `--log-format`, or `--log-format`/`--log-file` with no value,
+  exits with code 1 before the server starts. An invalid `LOG_FORMAT` logs a
+  warning at server start and falls back to `pretty`; one-shot commands such
+  as `--version` stay silent about it.
+- `--log-file <path>` writes JSON lines to `<path>` (resolved against the
+  working directory), replacing `logFile` from `lucifer.json`. The file is
+  always JSON, whatever the console format.
+
 ## Report The Installed Version
 
 `lucifer-gate --version` (short form `-v`)
@@ -45,7 +59,8 @@
 
 ## Unknown Options Are Rejected
 
-Server mode accepts `--config`, `--port`, and `--auto-approve` (plus `--help`
+Server mode accepts `--config`, `--port`, `--auto-approve`, `--log-format`,
+and `--log-file` (plus `--help`
 and `--version`, which are handled anywhere). Anything else exits with code 1
 and `Unknown option: <option>`, mirroring the existing `Unknown command`
 behaviour for positionals.

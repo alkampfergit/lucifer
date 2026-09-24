@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { createConsoleStream, parseLogFormat } from './logger.js';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { createConsoleStream, logger, parseLogFormat, warnOnUnknownLogFormatEnv } from './logger.js';
 
 describe('parseLogFormat', () => {
   it('accepts the supported console formats', () => {
@@ -21,5 +21,24 @@ describe('createConsoleStream', () => {
 
   it('wraps stdout in a pretty printer for the pretty format', () => {
     expect(createConsoleStream('pretty')).not.toBe(process.stdout);
+  });
+});
+
+describe('warnOnUnknownLogFormatEnv', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('stays quiet for a supported or unset LOG_FORMAT', () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    warnOnUnknownLogFormatEnv('json');
+    warnOnUnknownLogFormatEnv(undefined);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('warns and names the value for an unsupported LOG_FORMAT', () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    warnOnUnknownLogFormatEnv('xml');
+    expect(warn).toHaveBeenCalledWith({ LOG_FORMAT: 'xml' }, expect.stringContaining('Unknown LOG_FORMAT'));
   });
 });
