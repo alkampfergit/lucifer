@@ -49,6 +49,8 @@
 | J4-S7 | As an Approver, I tick "Remember me on this device" so that reloading the admin page does not ask for the admin secret again | `POST /api/v1/admin/approvals/session` exchanges the secret for a sealed `HttpOnly` cookie valid 30 days (absolute, never extended) plus a readable CSRF companion; the page then authenticates by cookie, sends `X-Lucifer-CSRF` on every write, and stops holding the secret | `covered` — `register_approval_routes.session.test.ts`, `admin_session.test.ts`, `approval_page_dom.test.ts` |
 | J4-S8 | As an Approver, I sign out so that this device stops being remembered | `DELETE /api/v1/admin/approvals/session` expires both cookies and the page returns to the login form | `covered` — `register_approval_routes.session.test.ts`, `approval_page_dom.test.ts` |
 | J4-S9 | As an Approver, I am returned to the login form — not locked out — when my remembered session no longer works | An expired, tampered, or foreign-instance cookie yields `401` and the page falls back to the login form; a visit with no session marker sends no probe at all, so reloads never consume the five-failure lockout | `covered` — `register_approval_routes.session.test.ts`, `admin_session.test.ts`, `approval_page_dom.test.ts` |
+| J4-S10 | As an Approver, I turn on new-request alerts so that a request arriving while the admin tab is in the background or unfocused gets my attention | After "🔔 Enable notifications" (which asks for browser permission), each `new_request` event raises an OS notification titled `Lucifer: approval needed (<RISK>)` with a ~40-character command summary and the API key name, plays a synthesised alert sound (mutable, and still played when OS notifications are blocked), and adds to a `(N) Lucifer Approvals` tab-title counter that resets on focus; nothing fires while the tab is focused or for requests delivered by `init` | `covered` — `approval_page_dom.test.ts` |
+| J4-S11 | As an Approver, I click a notification to jump to the request, and stale notifications disappear | Clicking focuses the tab, scrolls to and highlights the request's card; a `request_decided` event from any channel closes that request's notification and drops it from the title counter | `covered` — `approval_page_dom.test.ts` |
 
 ## J5: Multi-Channel Approval
 
@@ -65,6 +67,6 @@
 
 | Status | Count |
 |---|---|
-| `covered` | 21 |
+| `covered` | 23 |
 | `partial` | 0 |
 | `uncovered` | 0 |

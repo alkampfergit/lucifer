@@ -78,7 +78,39 @@ A denial only needs:
 Send `Authorization: Bearer YOUR_ADMIN_SECRET` for direct API calls. The
 browser UI handles the ticket exchange and decision calls for you.
 
-## 5. Stay signed in (optional)
+## 5. Get alerted about new requests (optional)
+
+Click **🔔 Enable notifications** in the header. The browser asks for
+permission to show notifications; the choice is remembered on this device.
+
+From then on, when a request arrives while the admin tab is in the background
+or its window is not focused:
+
+- an OS notification appears, titled `Lucifer: approval needed (<RISK>)`, with
+  a short summary of the command (about 40 characters) and the API key name.
+  The full command is only shown on the card inside the page, because
+  notifications can appear on the lock screen and stay in the OS history;
+- a short alert sound plays. Use the 🔊 / 🔇 button to mute it;
+- the tab title counts the requests you missed, e.g. `(2) Lucifer Approvals`,
+  until you come back to the tab.
+
+Clicking the notification brings the tab forward and highlights the request.
+A notification closes by itself once the request is decided, here, in another
+tab or on Telegram. `danger` requests stay on screen until dismissed. Nothing
+fires while you are looking at the page, or for requests that were already
+pending when it loaded.
+
+Limitations:
+
+- Browsers only show notifications over **HTTPS** or on `http://localhost`.
+  Opened over plain HTTP on another address, the button reads **Sound alerts
+  only** and the sound and title counter still work. See the
+  [`tls` configuration](../specs/tls.md) to serve the page over HTTPS.
+- The admin page must be open in some tab (it may be in the background).
+- If the browser has blocked notifications for the site, re-allow them in the
+  site settings; until then only the sound plays.
+
+## 6. Stay signed in (optional)
 
 Tick **Remember me on this device** on the login form. The server then issues
 an encrypted, `HttpOnly` cookie and the page skips the login screen on the next
