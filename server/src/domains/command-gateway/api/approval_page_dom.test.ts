@@ -45,8 +45,41 @@ function pendingAnswers(status: number, code: string): Route {
   return (url) => (url.includes('/pending') ? { status, body: { code } } : happyRoutes(url));
 }
 
+/** A `new Notification(...)` the page created, as the fake records it. */
+interface ShownNotification {
+  title: string;
+  options: NotificationOptions;
+  closed: boolean;
+  onclick: (() => void) | null;
+  close(): void;
+}
+
+/** Browser state the alert code reads: permission, focus and stored preferences. */
+interface AlertEnv {
+  /** `absent` removes the Notification API altogether. */
+  permission: NotificationPermission | 'absent';
+  /** What `requestPermission()` resolves to when the page asks. */
+  permissionAnswer: NotificationPermission;
+  hidden: boolean;
+  focused: boolean;
+  storage: Record<string, string>;
+}
+
+interface PageOptions {
+  route?: Route;
+  cookie?: string;
+  alerts?: Partial<AlertEnv>;
+}
+
 interface LoadedPage {
   window: DOMWindow;
+  env: AlertEnv;
+  notifications: ShownNotification[];
+  /** How many alert sounds started (one per `playAlertSound`, which plays two tones). */
+  sounds(): number;
+  permissionRequests(): number;
+  /** Deliver a server-sent event to the page's open stream. */
+  emit(type: string, data: unknown): void;
   calls: FetchCall[];
   /** jsdom's report of an attempted navigation, which is how `location.reload()` surfaces. */
   navigations: string[];
@@ -64,10 +97,22 @@ interface LoadedPage {
  * document is constructed, so `settle()` is awaited before the handle is
  * returned: every assertion sees the page as a user would find it.
  */
-async function loadPage(options: { route?: Route; cookie?: string } = {}): Promise<LoadedPage> {
+async function loadPage(options: PageOptions = {}): Promise<LoadedPage> {
   const route = options.route ?? happyRoutes;
   const calls: FetchCall[] = [];
   const navigations: string[] = [];
+  const env: AlertEnv = {
+    permission: 'default',
+    permissionAnswer: 'granted',
+    hidden: true,
+    focused: false,
+    storage: {},
+    ...options.alerts,
+  };
+  const notifications: ShownNotification[] = [];
+  const listeners = new Map<string, (event: { data: string }) => void>();
+  let oscillatorsStarted = 0;
+  let permissionRequests = 0;
 
   const virtualConsole = new VirtualConsole();
   // `window.location.reload()` is not implemented in jsdom and is reported
@@ -94,9 +139,57 @@ async function loadPage(options: { route?: Route; cookie?: string } = {}): Promi
       // The page opens an SSE stream as soon as it is authenticated.
       window.EventSource = class {
         close = vi.fn();
-        addEventListener = vi.fn();
+        addEventListener = (type: string, listener: (event: { data: string }) => void): void => {
+          listeners.set(type, listener);
+        };
         onerror: (() => void) | null = null;
       } as unknown as typeof EventSource;
+
+      for (const [key, value] of Object.entries(env.storage)) window.localStorage.setItem(key, value);
+      Object.defineProperty(window.document, 'hidden', { get: () => env.hidden, configurable: true });
+      Object.defineProperty(window.document, 'hasFocus', { value: () => env.focused, configurable: true });
+
+      if (env.permission !== 'absent') {
+        const FakeNotification = class implements ShownNotification {
+          static get permission(): NotificationPermission {
+            return env.permission as NotificationPermission;
+          }
+          static async requestPermission(): Promise<NotificationPermission> {
+            permissionRequests++;
+            env.permission = env.permissionAnswer;
+            return env.permissionAnswer;
+          }
+          closed = false;
+          onclick: (() => void) | null = null;
+          onclose: (() => void) | null = null;
+          constructor(public title: string, public options: NotificationOptions = {}) {
+            notifications.push(this);
+          }
+          close(): void {
+            this.closed = true;
+            this.onclose?.();
+          }
+        };
+        (window as unknown as { Notification: unknown }).Notification = FakeNotification;
+      }
+
+      (window as unknown as { AudioContext: unknown }).AudioContext = class {
+        state = 'running';
+        currentTime = 0;
+        destination = {};
+        resume = async (): Promise<void> => {};
+        createGain = () => ({
+          connect: vi.fn(),
+          gain: { setValueAtTime: vi.fn(), exponentialRampToValueAtTime: vi.fn() },
+        });
+        createOscillator = () => ({
+          type: '',
+          frequency: { value: 0 },
+          connect: vi.fn(),
+          start: () => { oscillatorsStarted++; },
+          stop: vi.fn(),
+        });
+      };
     },
   });
 
@@ -107,6 +200,11 @@ async function loadPage(options: { route?: Route; cookie?: string } = {}): Promi
 
   return {
     window: dom.window,
+    env,
+    notifications,
+    sounds: () => oscillatorsStarted / 2,
+    permissionRequests: () => permissionRequests,
+    emit: (type, data) => listeners.get(type)!({ data: JSON.stringify(data) }),
     calls,
     navigations,
     settle,
@@ -121,6 +219,9 @@ interface PageGlobals {
   doLogin(): Promise<void>;
   doSignOut(): Promise<void>;
   decide(requestId: string, action: string, matchType: string, duration: string): Promise<void>;
+  toggleAlerts(): Promise<void>;
+  toggleSound(): void;
+  summarizeCommand(command: string): string;
 }
 
 function globals(page: LoadedPage): PageGlobals {
@@ -130,7 +231,7 @@ function globals(page: LoadedPage): PageGlobals {
 describe('approval page session flow', () => {
   let open: LoadedPage | undefined;
 
-  async function load(options: { route?: Route; cookie?: string } = {}): Promise<LoadedPage> {
+  async function load(options: PageOptions = {}): Promise<LoadedPage> {
     open = await loadPage(options);
     return open;
   }
@@ -309,6 +410,226 @@ describe('approval page session flow', () => {
       expect(signOut!.headers['X-Lucifer-CSRF']).toBe('csrf-token-1');
       // The in-memory secret only goes away with the reload.
       expect(page.navigations.some((message) => message.includes('navigation'))).toBe(true);
+    });
+  });
+
+  // ------------------------------------------------------------------
+  // New-request alerts (#62)
+  // ------------------------------------------------------------------
+  describe('new-request alerts', () => {
+    const SIGNED_IN = `${CSRF_COOKIE}=csrf-token-1`;
+    const ALERTS_ON = { 'lucifer.alerts': 'on' };
+
+    function request(requestId: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+      return {
+        requestId,
+        command: 'git push origin main',
+        apiKeyName: 'agent-1',
+        ip: '127.0.0.1',
+        createdAt: '2026-09-26T10:00:00.000Z',
+        riskAnalysis: { level: 'warning', warnings: [] },
+        ...overrides,
+      };
+    }
+
+    async function signedIn(alerts: Partial<AlertEnv> = {}): Promise<LoadedPage> {
+      const page = await load({
+        cookie: SIGNED_IN,
+        alerts: { permission: 'granted', storage: ALERTS_ON, ...alerts },
+      });
+      page.emit('init', { pending: [] });
+      return page;
+    }
+
+    it('newRequest_tabInBackground_showsANotificationPlaysTheSoundAndCountsInTheTitle', async () => {
+      const page = await signedIn();
+
+      page.emit('new_request', request('req-1', { command: 'npm publish --access public' }));
+
+      expect(page.notifications).toHaveLength(1);
+      const [shown] = page.notifications;
+      expect(shown.title).toBe('Lucifer: approval needed (WARNING)');
+      expect(shown.options.body).toBe('npm publish --access public\nKey: agent-1');
+      expect(shown.options.tag).toBe('req-1');
+      expect(shown.options.requireInteraction).toBe(false);
+      expect(page.sounds()).toBe(1);
+      expect(page.window.document.title).toBe('(1) Lucifer Approvals');
+    });
+
+    it('newRequest_dangerRisk_keepsTheNotificationUntilDismissed', async () => {
+      const page = await signedIn();
+
+      page.emit('new_request', request('req-1', { riskAnalysis: { level: 'danger', warnings: ['rm'] } }));
+
+      expect(page.notifications[0].title).toBe('Lucifer: approval needed (DANGER)');
+      expect(page.notifications[0].options.requireInteraction).toBe(true);
+    });
+
+    it('newRequest_longCommand_notifiesWithASummaryNotTheFullCommand', async () => {
+      const page = await signedIn();
+      const command = 'curl -H "Authorization: Bearer sk-live-123456789" https://api.example.com/v1/charge';
+
+      page.emit('new_request', request('req-1', { command }));
+
+      const body = page.notifications[0].options.body!;
+      expect(body).not.toContain('sk-live-123456789');
+      expect(body.split('\n')[0]).toBe('curl -H "Authorization: Bearer …');
+    });
+
+    it('newRequest_tabFocused_raisesNoAlert', async () => {
+      const page = await signedIn({ hidden: false, focused: true });
+
+      page.emit('new_request', request('req-1'));
+
+      expect(page.notifications).toHaveLength(0);
+      expect(page.sounds()).toBe(0);
+      expect(page.window.document.title).toBe('Lucifer Approvals');
+    });
+
+    it('newRequest_tabVisibleButWindowUnfocused_alerts', async () => {
+      const page = await signedIn({ hidden: false, focused: false });
+
+      page.emit('new_request', request('req-1'));
+
+      expect(page.notifications).toHaveLength(1);
+    });
+
+    it('init_existingPendingRequests_raisesNoAlert', async () => {
+      // `init` is the initial list and every reconnect: nothing in it is new.
+      const page = await load({ cookie: SIGNED_IN, alerts: { permission: 'granted', storage: ALERTS_ON } });
+
+      page.emit('init', { pending: [request('req-1'), request('req-2')] });
+
+      expect(page.notifications).toHaveLength(0);
+      expect(page.sounds()).toBe(0);
+      expect(page.window.document.title).toBe('Lucifer Approvals');
+    });
+
+    it('newRequest_sameRequestTwice_alertsOnce', async () => {
+      const page = await signedIn();
+
+      page.emit('new_request', request('req-1'));
+      page.emit('new_request', request('req-1'));
+
+      expect(page.notifications).toHaveLength(1);
+      expect(page.sounds()).toBe(1);
+    });
+
+    it('newRequest_alertsNotEnabled_onlyCountsInTheTitle', async () => {
+      const page = await signedIn({ storage: {} });
+
+      page.emit('new_request', request('req-1'));
+
+      expect(page.notifications).toHaveLength(0);
+      expect(page.sounds()).toBe(0);
+      expect(page.window.document.title).toBe('(1) Lucifer Approvals');
+    });
+
+    it('newRequest_notificationPermissionDenied_stillPlaysTheSound', async () => {
+      const page = await signedIn({ permission: 'denied' });
+
+      page.emit('new_request', request('req-1'));
+
+      expect(page.notifications).toHaveLength(0);
+      expect(page.sounds()).toBe(1);
+      const button = page.window.document.getElementById('notify-btn')!;
+      expect(button.textContent).toBe('🔔 Sound alerts only');
+      expect(button.title).toMatch(/blocked/);
+    });
+
+    it('newRequest_notificationApiMissing_stillPlaysTheSound', async () => {
+      const page = await signedIn({ permission: 'absent' });
+
+      page.emit('new_request', request('req-1'));
+
+      expect(page.sounds()).toBe(1);
+      expect(page.window.document.getElementById('notify-btn')!.title).toMatch(/cannot show/);
+    });
+
+    it('newRequest_soundMuted_notifiesSilently', async () => {
+      const page = await signedIn({ storage: { ...ALERTS_ON, 'lucifer.alerts.muted': 'true' } });
+
+      page.emit('new_request', request('req-1'));
+
+      expect(page.notifications).toHaveLength(1);
+      expect(page.sounds()).toBe(0);
+      expect(page.window.document.getElementById('sound-btn')!.textContent).toBe('🔇');
+    });
+
+    it('requestDecided_closesItsNotificationAndDropsItFromTheTitle', async () => {
+      const page = await signedIn();
+      page.emit('new_request', request('req-1'));
+      page.emit('new_request', request('req-2'));
+
+      page.emit('request_decided', { requestId: 'req-1', decision: 'approved' });
+
+      expect(page.notifications[0].closed).toBe(true);
+      expect(page.notifications[1].closed).toBe(false);
+      expect(page.window.document.title).toBe('(1) Lucifer Approvals');
+    });
+
+    it('focus_afterMissedRequests_resetsTheTitleCounter', async () => {
+      const page = await signedIn();
+      page.emit('new_request', request('req-1'));
+
+      page.env.hidden = false;
+      page.env.focused = true;
+      page.window.dispatchEvent(new page.window.Event('focus'));
+
+      expect(page.window.document.title).toBe('Lucifer Approvals');
+    });
+
+    it('notificationClick_focusesTheTabAndHighlightsTheCard', async () => {
+      const page = await signedIn();
+      const focus = vi.spyOn(page.window, 'focus').mockImplementation(() => {});
+      page.emit('new_request', request('req-1'));
+
+      page.notifications[0].onclick!();
+
+      expect(focus).toHaveBeenCalled();
+      expect(page.window.document.getElementById('card-req-1')!.classList.contains('highlight')).toBe(true);
+      expect(page.notifications[0].closed).toBe(true);
+    });
+
+    it('toggleAlerts_permissionNotYetAsked_asksTurnsAlertsOnAndPlaysASample', async () => {
+      const page = await load({ cookie: SIGNED_IN });
+      const button = page.window.document.getElementById('notify-btn')!;
+      expect(button.textContent).toBe('🔔 Enable notifications');
+      expect(page.isVisible('sound-btn')).toBe(false);
+
+      await globals(page).toggleAlerts();
+
+      expect(page.permissionRequests()).toBe(1);
+      expect(page.window.localStorage.getItem('lucifer.alerts')).toBe('on');
+      expect(button.textContent).toBe('🔔 Notifications on');
+      expect(page.isVisible('sound-btn')).toBe(true);
+      expect(page.sounds()).toBe(1);
+
+      await globals(page).toggleAlerts();
+
+      expect(page.window.localStorage.getItem('lucifer.alerts')).toBe('off');
+      expect(button.textContent).toBe('🔔 Enable notifications');
+    });
+
+    it('toggleSound_mutesAndUnmutesAndRemembersTheChoice', async () => {
+      const page = await signedIn();
+
+      globals(page).toggleSound();
+      expect(page.window.localStorage.getItem('lucifer.alerts.muted')).toBe('true');
+      expect(page.sounds()).toBe(0);
+
+      globals(page).toggleSound();
+      expect(page.window.localStorage.getItem('lucifer.alerts.muted')).toBe('false');
+      expect(page.sounds()).toBe(1);
+    });
+
+    it('summarizeCommand_cutsLongCommandsAtAWordAndKeepsShortOnesWhole', async () => {
+      const page = await load();
+      const { summarizeCommand } = globals(page);
+
+      expect(summarizeCommand('  ls   -la  ')).toBe('ls -la');
+      expect(summarizeCommand('git push origin feature/a-very-long-branch-name-here')).toBe('git push origin …');
+      expect(summarizeCommand('x'.repeat(60))).toBe('x'.repeat(39) + '…');
     });
   });
 });

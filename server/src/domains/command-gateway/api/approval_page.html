@@ -31,6 +31,7 @@
   .login-remember input { margin: 0; width: auto; }
   .btn-signout { background: #21262d; border: 1px solid #30363d; border-radius: 6px; color: #8b949e; cursor: pointer; font-size: 12px; padding: 4px 10px; }
   .btn-signout:hover { background: #30363d; color: #c9d1d9; }
+  .btn-signout.active { border-color: #1f6feb; color: #58a6ff; }
   .empty-state { text-align: center; padding: 80px 24px; color: #8b949e; font-size: 15px; }
   .loading { text-align: center; padding: 80px 24px; color: #8b949e; }
   .error-banner { background: #2d1215; border: 1px solid #f85149; border-radius: 6px; padding: 12px 16px; margin-bottom: 16px; color: #ff7b72; font-size: 13px; display: none; }
@@ -42,6 +43,7 @@
   .card.deciding { opacity: 0.6; pointer-events: none; }
   .card.approved { border-color: #3fb950; background: #3fb95010; }
   .card.denied { border-color: #f85149; background: #f8514910; }
+  .card.highlight { border-color: #58a6ff; box-shadow: 0 0 0 2px #58a6ff66; }
   .card.slide-out { opacity: 0; transform: translateX(100px); max-height: 0; margin-bottom: 0; padding: 0; }
   .card-body { padding: 16px; }
   .command-line { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 15px; color: #f0f6fc; background: #0d1117; padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; word-break: break-all; display: flex; align-items: flex-start; gap: 10px; }
@@ -95,6 +97,8 @@
     <div class="status">
       <div class="status-dot connecting" id="status-dot"></div>
       <span id="status-text">Connecting...</span>
+      <button class="btn-signout" id="notify-btn" onclick="toggleAlerts()">🔔 Enable notifications</button>
+      <button class="btn-signout" id="sound-btn" onclick="toggleSound()" style="display:none">🔊</button>
       <button class="btn-signout" id="signout-btn" onclick="doSignOut()" style="display:none">Sign out</button>
     </div>
   </div>
@@ -126,6 +130,16 @@ let historyRefreshTimer = null;
 const pending = new Map();
 
 const CSRF_COOKIE = 'lucifer_admin_csrf';
+
+// New-request alerts (#62): OS notification, alert sound and a tab-title
+// counter, raised only while the approver is looking elsewhere.
+const ALERTS_KEY = 'lucifer.alerts';
+const SOUND_MUTED_KEY = 'lucifer.alerts.muted';
+const BASE_TITLE = 'Lucifer Approvals';
+const COMMAND_SUMMARY_MAX = 40;
+const notifications = new Map();
+const unseen = new Set();
+let audioCtx = null;
 
 function readCookie(name) {
   for (const part of document.cookie.split(';')) {
@@ -161,6 +175,201 @@ function writeHeaders(extra) {
 
 function apiFetch(path, init) {
   return fetch(path, { credentials: 'same-origin', ...init });
+}
+
+function readSetting(key) {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+
+function writeSetting(key, value) {
+  try { localStorage.setItem(key, value); } catch { /* Private mode: the choice lasts for this tab only. */ }
+}
+
+function alertsEnabled() { return readSetting(ALERTS_KEY) === 'on'; }
+function soundMuted() { return readSetting(SOUND_MUTED_KEY) === 'true'; }
+
+/** `granted`, `default` or `denied` from the browser, or why notifications cannot work here. */
+function notificationSupport() {
+  if (typeof Notification === 'undefined') return 'unsupported';
+  if (window.isSecureContext === false) return 'insecure';
+  return Notification.permission;
+}
+
+const SOUND_ONLY_REASONS = {
+  unsupported: 'This browser cannot show desktop notifications, so only the alert sound plays.',
+  insecure: 'Browsers only show notifications on HTTPS or http://localhost. Enable TLS to get them here; until then only the alert sound plays.',
+  denied: 'Notifications are blocked for this site in the browser settings, so only the alert sound plays.',
+  default: 'Click to allow desktop notifications.'
+};
+
+function updateAlertControls() {
+  const btn = document.getElementById('notify-btn');
+  const soundBtn = document.getElementById('sound-btn');
+  const enabled = alertsEnabled();
+  const support = notificationSupport();
+
+  btn.classList.toggle('active', enabled);
+  if (!enabled) {
+    btn.textContent = '🔔 Enable notifications';
+    btn.title = 'Alert me when a new request arrives while this tab is in the background';
+  } else if (support === 'granted') {
+    btn.textContent = '🔔 Notifications on';
+    btn.title = 'Click to turn new-request alerts off';
+  } else {
+    btn.textContent = '🔔 Sound alerts only';
+    btn.title = SOUND_ONLY_REASONS[support];
+  }
+
+  soundBtn.style.display = enabled ? 'inline-block' : 'none';
+  soundBtn.textContent = soundMuted() ? '🔇' : '🔊';
+  soundBtn.title = soundMuted() ? 'Unmute the alert sound' : 'Mute the alert sound';
+}
+
+/** Runs from a click, which is the user gesture browsers require for both permission and audio. */
+async function toggleAlerts() {
+  const support = notificationSupport();
+  if (alertsEnabled() && support !== 'default') {
+    writeSetting(ALERTS_KEY, 'off');
+    updateAlertControls();
+    return;
+  }
+  writeSetting(ALERTS_KEY, 'on');
+  unlockAudio();
+  if (support === 'default') {
+    try {
+      await Notification.requestPermission();
+    } catch {
+      // Refusing to ask is the same as a denial: sound alerts still work.
+    }
+  }
+  updateAlertControls();
+  if (!soundMuted()) playAlertSound();
+}
+
+function toggleSound() {
+  writeSetting(SOUND_MUTED_KEY, soundMuted() ? 'false' : 'true');
+  updateAlertControls();
+  if (!soundMuted()) {
+    unlockAudio();
+    playAlertSound();
+  }
+}
+
+function getAudioContext() {
+  if (audioCtx) return audioCtx;
+  const Ctor = window.AudioContext || window.webkitAudioContext;
+  if (!Ctor) return null;
+  try { audioCtx = new Ctor(); } catch { return null; }
+  return audioCtx;
+}
+
+/** Audio stays suspended until a gesture, including after a reload with alerts already on. */
+function unlockAudio() {
+  const ctx = getAudioContext();
+  if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
+}
+
+/** Two short tones synthesised on the fly, so there is no audio file to ship. */
+function playAlertSound() {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+  [880, 1320].forEach((frequency, i) => {
+    const start = ctx.currentTime + i * 0.18;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = frequency;
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(0.2, start + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.16);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(start);
+    osc.stop(start + 0.17);
+  });
+}
+
+function isApproverAway() {
+  return document.hidden || !document.hasFocus();
+}
+
+/**
+ * Executable plus the start of its arguments. The full command can hold
+ * secrets and notifications outlive the page on the lock screen and in the OS
+ * history, so only the card inside the page shows all of it.
+ */
+function summarizeCommand(command) {
+  const text = String(command).trim().replaceAll(/\s+/g, ' ');
+  if (text.length <= COMMAND_SUMMARY_MAX) return text;
+  const kept = [];
+  let length = 0;
+  for (const word of text.split(' ')) {
+    if (length + word.length > COMMAND_SUMMARY_MAX - 2) break;
+    kept.push(word);
+    length += word.length + 1;
+  }
+  return kept.length > 0 ? kept.join(' ') + ' …' : text.slice(0, COMMAND_SUMMARY_MAX - 1) + '…';
+}
+
+function updateTitle() {
+  document.title = unseen.size > 0 ? '(' + unseen.size + ') ' + BASE_TITLE : BASE_TITLE;
+}
+
+function markSeen() {
+  unseen.clear();
+  updateTitle();
+}
+
+function alertNewRequest(req) {
+  if (!isApproverAway()) return;
+  unseen.add(req.requestId);
+  updateTitle();
+  if (!alertsEnabled()) return;
+  if (!soundMuted()) playAlertSound();
+  showNotification(req);
+}
+
+function showNotification(req) {
+  if (notificationSupport() !== 'granted') return;
+  const risk = (req.riskAnalysis && req.riskAnalysis.level) || 'safe';
+  let notification;
+  try {
+    notification = new Notification('Lucifer: approval needed (' + risk.toUpperCase() + ')', {
+      body: summarizeCommand(req.command) + '\nKey: ' + req.apiKeyName,
+      // One notification per request, even if the browser sees it twice.
+      tag: req.requestId,
+      requireInteraction: risk === 'danger'
+    });
+  } catch {
+    // Some mobile browsers only allow notifications from a service worker;
+    // the sound and the title counter still announce the request.
+    return;
+  }
+  notification.onclick = () => {
+    window.focus();
+    focusCard(req.requestId);
+    notification.close();
+  };
+  notification.onclose = () => {
+    if (notifications.get(req.requestId) === notification) notifications.delete(req.requestId);
+  };
+  notifications.set(req.requestId, notification);
+}
+
+function closeNotification(requestId) {
+  const notification = notifications.get(requestId);
+  if (!notification) return;
+  notifications.delete(requestId);
+  notification.close();
+}
+
+function focusCard(requestId) {
+  const card = document.getElementById('card-' + requestId);
+  if (!card) return;
+  if (card.scrollIntoView) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  card.classList.add('highlight');
+  setTimeout(() => card.classList.remove('highlight'), 2000);
 }
 
 function showLogin() {
@@ -241,6 +450,7 @@ function showApp() {
   document.getElementById('login-view').style.display = 'none';
   document.getElementById('app-view').style.display = 'block';
   document.getElementById('signout-btn').style.display = hasCookieSession ? 'inline-block' : 'none';
+  updateAlertControls();
   loadHistory();
   startHistoryRefresh();
   connectSSE();
@@ -307,14 +517,19 @@ async function connectSSE() {
 
     evtSource.addEventListener('new_request', (e) => {
       const req = JSON.parse(e.data);
+      const isNew = !pending.has(req.requestId);
       pending.set(req.requestId, req);
       renderCards();
       loadHistory();
+      if (isNew) alertNewRequest(req);
     });
 
     evtSource.addEventListener('request_decided', (e) => {
       const data = JSON.parse(e.data);
       loadHistory();
+      // Decided here, in another tab or on Telegram: the alert is stale.
+      closeNotification(data.requestId);
+      if (unseen.delete(data.requestId)) updateTitle();
       const card = document.getElementById('card-' + data.requestId);
       if (card) {
         card.classList.add(data.decision === 'approved' ? 'approved' : 'denied');
@@ -482,6 +697,15 @@ async function init() {
   document.getElementById('secret-input').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') doLogin();
   });
+
+  window.addEventListener('focus', markSeen);
+  document.addEventListener('visibilitychange', () => {
+    if (!isApproverAway()) markSeen();
+  });
+  // With alerts already on from a previous visit, the first interaction lets audio play.
+  const unlockIfAlerting = () => { if (alertsEnabled()) unlockAudio(); };
+  document.addEventListener('pointerdown', unlockIfAlerting, { once: true });
+  document.addEventListener('keydown', unlockIfAlerting, { once: true });
 
   if (await tryCookieSession()) {
     showApp();

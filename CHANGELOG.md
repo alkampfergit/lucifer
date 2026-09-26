@@ -14,6 +14,9 @@ Target content for 1.0 (tracked in [`docs/quality/PRE-1.0-CHECKPOINT.md`](docs/q
 - Stabilise the public HTTP surface on `command-gateway` and `request-proxy`.
 - Lock the layered dependency direction (Types → Config → Repository → Service → Runtime → UI/API) as a hard CI invariant.
 
+### Added
+- **New-request alerts on `/admin/approvals` (#62).** Click **🔔 Enable notifications** in the header and, whenever a request arrives while the admin tab is hidden or unfocused, the page raises an OS notification (`Lucifer: approval needed (<RISK>)`, a ~40-character command summary and the API key name — never the full command, which can hold secrets and would linger on the lock screen), plays a short alert sound synthesised with the Web Audio API (🔊 / 🔇 mute toggle), and counts missed requests in the tab title as `(N) Lucifer Approvals` until the tab regains focus. Clicking a notification focuses the tab and highlights the request's card; deciding the request anywhere closes its notification. `danger` requests stay on screen until dismissed. Browser-only: no server or API change. Browsers only allow notifications over HTTPS or on `http://localhost`, so elsewhere the page falls back to sound alerts and says why; alerts need the page open in some tab.
+
 ## [0.11.0] — 2026-09-23
 
 ### Added
