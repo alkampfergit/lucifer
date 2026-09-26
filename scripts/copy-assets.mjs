@@ -4,7 +4,9 @@ import path from 'node:path'
 // `tsc` emits only .js for .ts inputs, so any non-TypeScript file the server
 // reads at runtime has to be mirrored into the build output separately. Without
 // this step the published package ships code that cannot find its own assets.
-const assetExtensions = new Set(['.html'])
+// Server code is TypeScript only, so a `.js` under the source tree is always a
+// browser script served as-is (e.g. the approval page's alert module).
+const assetExtensions = new Set(['.html', '.js'])
 
 function readArg(name, fallback) {
   const prefix = `--${name}=`

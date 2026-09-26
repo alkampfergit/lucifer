@@ -83,11 +83,21 @@ describe('approval page asset', () => {
     // holds for both `tsx` development runs and the compiled `dist` tree.
     const checkedPaths = existsSync.mock.calls.map((call) => String(call[0]));
     expect(checkedPaths).toContain(path.join(import.meta.dirname, 'approval_page.html'));
+    expect(checkedPaths).toContain(path.join(import.meta.dirname, 'approval_page_alerts.js'));
+  });
+
+  it('registerApprovalRoutes_alertScriptMissingFromBuild_throwsNamingIt', () => {
+    const realExistsSync = fs.existsSync;
+    vi.spyOn(fs, 'existsSync').mockImplementation(
+      (candidate) => !String(candidate).endsWith('approval_page_alerts.js') && realExistsSync(candidate),
+    );
+
+    expect(() => registerWithFreshDeps()).toThrow(/approval_page_alerts\.js/);
   });
 });
 
 describe('copy-assets build step', () => {
-  it('copyAssets_htmlUnderServerSrc_mirrorsItIntoTheOutputTree', () => {
+  it('copyAssets_pageAssetsUnderServerSrc_mirrorsThemIntoTheOutputTree', () => {
     const repoRoot = path.resolve(import.meta.dirname, '../../../../..');
     const outRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'lucifer-assets-'));
 
@@ -112,6 +122,9 @@ describe('copy-assets build step', () => {
       expect(html).toContain('/api/v1/admin/approvals/history');
       expect(html).toContain('setInterval(loadHistory, 60_000)');
       expect(html).toMatch(/request_decided[\s\S]*loadHistory\(\)/);
+
+      const alerts = path.join(outRoot, 'domains', 'command-gateway', 'api', 'approval_page_alerts.js');
+      expect(fs.readFileSync(alerts, 'utf8')).toContain('window.LuciferAlerts');
     } finally {
       fs.rmSync(outRoot, { recursive: true, force: true });
     }

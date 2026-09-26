@@ -5,6 +5,7 @@ import { defineConfig } from 'eslint/config'
 
 const nodeFiles = ['server/**/*.ts', 'scripts/**/*.mjs']
 const testFiles = ['**/*.test.{ts,tsx}']
+const browserFiles = ['server/src/**/*.js']
 
 export default defineConfig([
   {
@@ -18,6 +19,17 @@ export default defineConfig([
       sourceType: 'module',
       globals: {
         ...globals.node,
+      },
+    },
+  },
+  {
+    files: browserFiles,
+    extends: [js.configs.recommended],
+    languageOptions: {
+      ecmaVersion: 'latest',
+      sourceType: 'script',
+      globals: {
+        ...globals.browser,
       },
     },
   },
