@@ -270,6 +270,24 @@ export interface ApprovalRouteDeps {
   adminSession?: AdminSessionSealer;
 }
 
+/**
+ * The build mirrors runtime assets into `dist`, so the page files always sit
+ * next to this module -- both under `tsx` in development and in the compiled
+ * tree. When the web UI is the only approval channel a missing asset means
+ * nobody can approve anything, so refuse to start instead of serving a stub
+ * that looks like a working server.
+ */
+function readPageAsset(fileName: string): string {
+  const assetPath = path.join(__dirname, fileName);
+  if (!fs.existsSync(assetPath)) {
+    throw new Error(
+      `Approval page asset missing at ${assetPath}. ` +
+      `The build did not copy ${fileName} into the output tree; run "npm run build".`,
+    );
+  }
+  return fs.readFileSync(assetPath, 'utf8');
+}
+
 export function registerApprovalRoutes(deps: ApprovalRouteDeps): void {
   const { router, adminSecretHash, adminSecretSalt, webChannel, approvalStore, auditLog, adminSession } = deps;
 
@@ -287,18 +305,17 @@ export function registerApprovalRoutes(deps: ApprovalRouteDeps): void {
   // When the web UI is the only approval channel a missing page means nobody can
   // approve anything, so refuse to start instead of serving a stub that looks
   // like a working server.
-  const htmlPath = path.join(__dirname, 'approval_page.html');
-  if (!fs.existsSync(htmlPath)) {
-    throw new Error(
-      `Approval page asset missing at ${htmlPath}. ` +
-      'The build did not copy approval_page.html into the output tree; run "npm run build".',
-    );
-  }
-  const approvalPageHtml = fs.readFileSync(htmlPath, 'utf8');
+  const approvalPageHtml = readPageAsset('approval_page.html');
+  const approvalAlertsJs = readPageAsset('approval_page_alerts.js');
 
   // Serve the admin HTML page (no auth - page handles login client-side)
   router.get('/admin/approvals', (_req: Request, res: Response) => {
     res.type('html').send(approvalPageHtml);
+  });
+
+  // The page's new-request alert script, kept out of the HTML to keep both legible.
+  router.get('/admin/approvals/alerts.js', (_req: Request, res: Response) => {
+    res.type('application/javascript').send(approvalAlertsJs);
   });
 
   // Cookie-backed sessions. Registered only when a sealer is wired in, so a

@@ -13,7 +13,12 @@ import { JSDOM, VirtualConsole, type DOMWindow } from 'jsdom';
  * instead of only breaking in a browser.
  */
 
-const PAGE = fs.readFileSync(path.join(import.meta.dirname, 'approval_page.html'), 'utf8');
+const ALERTS_TAG = '<script src="/admin/approvals/alerts.js"></script>';
+const ALERTS_SCRIPT = fs.readFileSync(path.join(import.meta.dirname, 'approval_page_alerts.js'), 'utf8');
+const PAGE_HTML = fs.readFileSync(path.join(import.meta.dirname, 'approval_page.html'), 'utf8');
+if (!PAGE_HTML.includes(ALERTS_TAG)) throw new Error('approval_page.html no longer loads the alert script');
+// jsdom does not fetch sub-resources here, so the served alert script is inlined in its place.
+const PAGE = PAGE_HTML.replace(ALERTS_TAG, () => `<script>${ALERTS_SCRIPT}</script>`);
 
 const PAGE_URL = 'http://localhost:3001/admin/approvals';
 const CSRF_COOKIE = 'lucifer_admin_csrf';
@@ -63,6 +68,8 @@ interface AlertEnv {
   hidden: boolean;
   focused: boolean;
   storage: Record<string, string>;
+  /** Make every `localStorage` access throw, as sandboxed or private pages do. */
+  storageBlocked: boolean;
 }
 
 interface PageOptions {
@@ -107,6 +114,7 @@ async function loadPage(options: PageOptions = {}): Promise<LoadedPage> {
     hidden: true,
     focused: false,
     storage: {},
+    storageBlocked: false,
     ...options.alerts,
   };
   const notifications: ShownNotification[] = [];
@@ -146,6 +154,12 @@ async function loadPage(options: PageOptions = {}): Promise<LoadedPage> {
       } as unknown as typeof EventSource;
 
       for (const [key, value] of Object.entries(env.storage)) window.localStorage.setItem(key, value);
+      if (env.storageBlocked) {
+        Object.defineProperty(window, 'localStorage', {
+          get: () => { throw new window.DOMException('The operation is insecure.', 'SecurityError'); },
+          configurable: true,
+        });
+      }
       Object.defineProperty(window.document, 'hidden', { get: () => env.hidden, configurable: true });
       Object.defineProperty(window.document, 'hasFocus', { value: () => env.focused, configurable: true });
 
@@ -219,9 +233,11 @@ interface PageGlobals {
   doLogin(): Promise<void>;
   doSignOut(): Promise<void>;
   decide(requestId: string, action: string, matchType: string, duration: string): Promise<void>;
-  toggleAlerts(): Promise<void>;
-  toggleSound(): void;
-  summarizeCommand(command: string): string;
+  LuciferAlerts: {
+    toggleAlerts(): Promise<void>;
+    toggleSound(): void;
+    summarizeCommand(command: string): string;
+  };
 }
 
 function globals(page: LoadedPage): PageGlobals {
@@ -473,7 +489,7 @@ describe('approval page session flow', () => {
 
       const body = page.notifications[0].options.body!;
       expect(body).not.toContain('sk-live-123456789');
-      expect(body.split('\n')[0]).toBe('curl -H "Authorization: Bearer …');
+      expect(body.split('\n')[0]).toBe('curl -H ••• …');
     });
 
     it('newRequest_tabFocused_raisesNoAlert', async () => {
@@ -597,7 +613,7 @@ describe('approval page session flow', () => {
       expect(button.textContent).toBe('🔔 Enable notifications');
       expect(page.isVisible('sound-btn')).toBe(false);
 
-      await globals(page).toggleAlerts();
+      await globals(page).LuciferAlerts.toggleAlerts();
 
       expect(page.permissionRequests()).toBe(1);
       expect(page.window.localStorage.getItem('lucifer.alerts')).toBe('on');
@@ -605,7 +621,7 @@ describe('approval page session flow', () => {
       expect(page.isVisible('sound-btn')).toBe(true);
       expect(page.sounds()).toBe(1);
 
-      await globals(page).toggleAlerts();
+      await globals(page).LuciferAlerts.toggleAlerts();
 
       expect(page.window.localStorage.getItem('lucifer.alerts')).toBe('off');
       expect(button.textContent).toBe('🔔 Enable notifications');
@@ -614,22 +630,77 @@ describe('approval page session flow', () => {
     it('toggleSound_mutesAndUnmutesAndRemembersTheChoice', async () => {
       const page = await signedIn();
 
-      globals(page).toggleSound();
+      globals(page).LuciferAlerts.toggleSound();
       expect(page.window.localStorage.getItem('lucifer.alerts.muted')).toBe('true');
       expect(page.sounds()).toBe(0);
 
-      globals(page).toggleSound();
+      globals(page).LuciferAlerts.toggleSound();
       expect(page.window.localStorage.getItem('lucifer.alerts.muted')).toBe('false');
       expect(page.sounds()).toBe(1);
     });
 
     it('summarizeCommand_cutsLongCommandsAtAWordAndKeepsShortOnesWhole', async () => {
       const page = await load();
-      const { summarizeCommand } = globals(page);
+      const { summarizeCommand } = globals(page).LuciferAlerts;
 
       expect(summarizeCommand('  ls   -la  ')).toBe('ls -la');
       expect(summarizeCommand('git push origin feature/a-very-long-branch-name-here')).toBe('git push origin …');
-      expect(summarizeCommand('x'.repeat(60))).toBe('x'.repeat(39) + '…');
+    });
+
+    it('summarizeCommand_firstWordTooLongToShowWhole_showsOnlyAnEllipsis', async () => {
+      const page = await load();
+      const { summarizeCommand } = globals(page).LuciferAlerts;
+
+      // Slicing the word would put a prefix of a possible token on the lock screen.
+      expect(summarizeCommand('/opt/' + 'x'.repeat(60) + '/run --fast')).toBe('…');
+    });
+
+    it('summarizeCommand_shortCommandsWithCredentials_masksThem', async () => {
+      const page = await load();
+      const { summarizeCommand } = globals(page).LuciferAlerts;
+
+      expect(summarizeCommand('echo $TOKEN')).toBe('echo •••');
+      expect(summarizeCommand("curl -H 'X: y'")).toBe('curl -H •••');
+      expect(summarizeCommand('curl -u admin:hunter2 x')).toBe('curl -u ••• x');
+      expect(summarizeCommand('mysql --password=hunter2')).toBe('mysql --password=•••');
+      expect(summarizeCommand('API_KEY=abc ./deploy')).toBe('API_KEY=••• ./deploy');
+      expect(summarizeCommand('git clone https://u:p@host/r')).toBe('git clone •••');
+      expect(summarizeCommand('login bearer abc')).toBe('login ••• •••');
+      expect(summarizeCommand('use sk9f8a7b6c5d4e3f2a1b0c9d8e7f')).toBe('use •••');
+    });
+
+    it('summarizeCommand_credentialAsFirstWord_masksIt', async () => {
+      const page = await load();
+      const { summarizeCommand } = globals(page).LuciferAlerts;
+
+      expect(summarizeCommand('GITHUB_TOKEN=ghp_abc123 gh pr list')).toBe('GITHUB_TOKEN=••• gh pr list');
+      expect(summarizeCommand('$SECRET_CMD --run')).toBe('••• --run');
+    });
+
+    it('newRequest_localStorageUnavailable_alertsStillWorkAfterEnabling', async () => {
+      const page = await load({ cookie: SIGNED_IN, alerts: { permission: 'granted', storageBlocked: true } });
+      page.emit('init', { pending: [] });
+
+      await globals(page).LuciferAlerts.toggleAlerts();
+      page.emit('new_request', request('req-1'));
+
+      expect(page.window.document.getElementById('notify-btn')!.textContent).toBe('🔔 Notifications on');
+      expect(page.notifications).toHaveLength(1);
+      // One sample on enabling, one for the request.
+      expect(page.sounds()).toBe(2);
+    });
+
+    it('init_afterReconnect_dropsAlertsForRequestsDecidedWhileDisconnected', async () => {
+      const page = await signedIn();
+      page.emit('new_request', request('req-1'));
+      page.emit('new_request', request('req-2'));
+
+      // req-1 was decided on Telegram while the stream was down.
+      page.emit('init', { pending: [request('req-2')] });
+
+      expect(page.notifications[0].closed).toBe(true);
+      expect(page.notifications[1].closed).toBe(false);
+      expect(page.window.document.title).toBe('(1) Lucifer Approvals');
     });
   });
 });

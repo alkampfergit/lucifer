@@ -19,8 +19,10 @@ Resolve `manual_approve` command requests through a common approval contract.
 - Uses bearer auth for admin APIs, with an optional cookie session (below).
 - Streams pending requests over SSE.
 - Stores approvals in SQLite.
-- The page is served from `approval_page.html`, which the build copies next to the
-  compiled module. Startup fails if that asset is missing — an unreachable UI on
+- The page is served from `approval_page.html`, and its new-request alert
+  script from `approval_page_alerts.js` at `/admin/approvals/alerts.js`. The
+  build copies both next to the compiled module. Startup fails if either asset
+  is missing — an unreachable UI on
   the only configured channel means no request can ever be approved.
 
 #### Admin cookie sessions
@@ -103,7 +105,8 @@ On by default; disable with `"adminCookieSession": { "enabled": false }` in
   not evidence that the session is gone.
 - **Page coverage**: the login form, the reload probe, the CSRF header wiring
   and sign-out are exercised against a DOM in `approval_page_dom.test.ts`, which
-  runs the real `approval_page.html` script rather than asserting on its text.
+  runs the real `approval_page.html` script (with `approval_page_alerts.js`
+  inlined in place of its `<script src>`) rather than asserting on its text.
 
 ### Auto-Approve
 

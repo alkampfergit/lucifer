@@ -207,6 +207,17 @@ describe('register_approval_routes', () => {
       expect(res.text).toContain('<title>Lucifer Approvals</title>');
       expect(res.text).toContain('id="login-view"');
       expect(res.text).toContain('id="app-view"');
+      expect(res.text).toContain('<script src="/admin/approvals/alerts.js"></script>');
+    });
+  });
+
+  describe('GET /admin/approvals/alerts.js', () => {
+    it('getAlertsScript_noAuth_servesTheAlertModuleAsJavaScript', async () => {
+      const res = await request(app).get('/admin/approvals/alerts.js');
+
+      expect(res.status).toBe(200);
+      expect(res.headers['content-type']).toMatch(/application\/javascript/);
+      expect(res.text).toContain('window.LuciferAlerts');
     });
   });
 

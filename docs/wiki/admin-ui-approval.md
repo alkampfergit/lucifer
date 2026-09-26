@@ -88,15 +88,19 @@ or its window is not focused:
 
 - an OS notification appears, titled `Lucifer: approval needed (<RISK>)`, with
   a short summary of the command (about 40 characters) and the API key name.
-  The full command is only shown on the card inside the page, because
-  notifications can appear on the lock screen and stay in the OS history;
+  Anything that looks like a credential is masked as `•••` (values after
+  flags such as `-H`, `-u` or `--password`, `NAME=value` assignments, `$VAR`
+  references, URLs with a user and password, long key-like strings), and a
+  first word too long to show whole becomes just `…`. The full command is only
+  shown on the card inside the page, because notifications can appear on the
+  lock screen and stay in the OS history;
 - a short alert sound plays. Use the 🔊 / 🔇 button to mute it;
 - the tab title counts the requests you missed, e.g. `(2) Lucifer Approvals`,
   until you come back to the tab.
 
 Clicking the notification brings the tab forward and highlights the request.
 A notification closes by itself once the request is decided, here, in another
-tab or on Telegram. `danger` requests stay on screen until dismissed. Nothing
+tab or on Telegram, including while the page was briefly disconnected. `danger` requests stay on screen until dismissed. Nothing
 fires while you are looking at the page, or for requests that were already
 pending when it loaded.
 
@@ -109,6 +113,8 @@ Limitations:
 - The admin page must be open in some tab (it may be in the background).
 - If the browser has blocked notifications for the site, re-allow them in the
   site settings; until then only the sound plays.
+- Where the browser refuses `localStorage` (some private or sandboxed
+  windows), alerts still work but the choice lasts only for the current tab.
 
 ## 6. Stay signed in (optional)
 
