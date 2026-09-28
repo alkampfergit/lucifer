@@ -14,12 +14,10 @@ Target content for 1.0 (tracked in [`docs/quality/PRE-1.0-CHECKPOINT.md`](docs/q
 - Stabilise the public HTTP surface on `command-gateway` and `request-proxy`.
 - Lock the layered dependency direction (Types → Config → Repository → Service → Runtime → UI/API) as a hard CI invariant.
 
+## [0.11.0] - 2026-09-27
+
 ### Added
 - **New-request alerts on `/admin/approvals` (#62).** Click **🔔 Enable notifications** in the header and, whenever a request arrives while the admin tab is hidden or unfocused, the page raises an OS notification (`Lucifer: approval needed (<RISK>)`, a ~40-character command summary with credential-looking arguments masked as `•••`, and the API key name — never the full command, which can hold secrets and would linger on the lock screen), plays a short alert sound synthesised with the Web Audio API (🔊 / 🔇 mute toggle), and counts missed requests in the tab title as `(N) Lucifer Approvals` until the tab regains focus. Clicking a notification focuses the tab and highlights the request's card; deciding the request anywhere closes its notification. `danger` requests stay on screen until dismissed. The alert code ships as a separate browser script served at `/admin/approvals/alerts.js`; no API change. Browsers only allow notifications over HTTPS or on `http://localhost`, so elsewhere the page falls back to sound alerts and says why; alerts need the page open in some tab.
-
-## [0.11.0] — 2026-09-23
-
-### Added
 - **Cookie-backed admin sessions for `/admin/approvals` (#58).** Tick "Remember me on this device" on the login form and the server issues an AES-256-GCM sealed, `HttpOnly` cookie so the page stops asking for the admin secret on every visit. Two new routes: `POST /api/v1/admin/approvals/session` (bearer in, cookie out) and `DELETE …/session` (sign out). The cookie holds a session assertion — `{ v, sub, aud, iat, exp, csrf }` — never the admin secret, and lasts **30 days absolute**; activity does not extend it. On by default; disable with `"adminCookieSession": { "enabled": false }` in `lucifer.json`, which unregisters the session routes entirely. See [ADR-013](docs/context/DECISIONS.md).
 - `LUCIFER_ADMIN_COOKIE_KEY` environment variable (64 hex characters) to manage the session sealing key yourself. Otherwise the key is resolved from the OS keychain (Windows Credential Manager / macOS Keychain / Linux Secret Service, via the new optional `@napi-rs/keyring` dependency) and finally from a new `server_secrets` table in `lucifer.db`.
 - `trustProxy` in `lucifer.json`, passed verbatim to Express's `trust proxy` setting (hop count, boolean, named range, or address list). Set it when a reverse proxy you control terminates TLS in front of Lucifer, so admin session cookies are marked `Secure`. Unset by default, which is what keeps forwarding headers unspoofable.
