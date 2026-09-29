@@ -8,6 +8,9 @@
     "maxRunsPerTick": 2,
     "prompts": {
       "prWork": "do-work-pr-work.md"
+    },
+    "models": {
+      "claude": "sonnet"
     }
   },
   "allowedUsers": [
